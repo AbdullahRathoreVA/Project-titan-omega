@@ -6,6 +6,7 @@ All routes are mounted under ``/api``. Responses use the pydantic schemas in
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -26,9 +27,10 @@ from ..domain.schemas import (
     FeedEvent,
     Forecast,
     Opportunity,
+    ScheduledPost,
     StrategicPlan,
 )
-from ..engines import deliverables, execution, opportunity
+from ..engines import deliverables, execution, opportunity, publisher
 from ..store import STORE, AgentRuntime
 
 router = APIRouter(prefix="/api")
@@ -223,6 +225,34 @@ def deliverable_from_opportunity(opportunity_id: str) -> Deliverable:
     if opportunity_id not in STORE.opportunities:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return Deliverable(**deliverables.from_opportunity(opportunity_id, STORE))
+
+
+# --- publishing -----------------------------------------------------------
+
+class SchedulePostRequest(BaseModel):
+    content: str = Field(..., min_length=1)
+    channels: List[str] = Field(default_factory=lambda: ["linkedin"])
+    image_url: Optional[str] = None
+    scheduled_at: Optional[datetime] = None
+
+
+@router.get("/posts", response_model=List[ScheduledPost], tags=["publishing"])
+def list_posts() -> List[ScheduledPost]:
+    return [ScheduledPost(**p) for p in publisher.listing(STORE)]
+
+
+@router.post("/posts", response_model=ScheduledPost, tags=["publishing"])
+def schedule_post(req: SchedulePostRequest) -> ScheduledPost:
+    return ScheduledPost(
+        **publisher.schedule(req.content, req.channels, req.image_url, req.scheduled_at, store=STORE)
+    )
+
+
+@router.post("/posts/{post_id}/publish", response_model=ScheduledPost, tags=["publishing"])
+def publish_post(post_id: str) -> ScheduledPost:
+    if post_id not in STORE.posts:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return ScheduledPost(**publisher.publish(post_id, STORE))
 
 
 # --- live feed ------------------------------------------------------------

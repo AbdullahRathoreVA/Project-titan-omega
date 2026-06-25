@@ -21,18 +21,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from .api.router import router
 from .connectors import github
 from .core import executive
-from .engines import opportunity
+from .engines import opportunity, publisher
 from .store import STORE, seed
 
 HEARTBEAT_SECONDS = float(os.getenv("TITAN_HEARTBEAT_SECONDS", "5"))
 
 
 async def _heartbeat_loop() -> None:
-    """Drive autonomous activity on a fixed cadence until cancelled."""
+    """Drive autonomous activity on a fixed cadence until cancelled.
+
+    Each tick advances agent activity and auto-publishes any scheduled posts whose
+    time has come — so the empire keeps working and posting around the clock.
+    """
     while True:
         await asyncio.sleep(HEARTBEAT_SECONDS)
         with contextlib.suppress(Exception):
             executive.heartbeat(STORE)
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(publisher.run_due, STORE)
 
 
 @asynccontextmanager

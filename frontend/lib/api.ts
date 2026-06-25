@@ -14,6 +14,7 @@ import type {
   FeedEvent,
   IntelligenceStatus,
   Opportunity,
+  ScheduledPost,
 } from "./types";
 import { MOCK } from "./mock";
 
@@ -35,6 +36,35 @@ export const api = {
   feed: (limit = 40) => get<FeedEvent[]>(`/feed?limit=${limit}`, MOCK.feed),
   deliverables: () => get<Deliverable[]>("/deliverables", []),
   connectors: () => get<Connector[]>("/connectors", []),
+  posts: () => get<ScheduledPost[]>("/posts", []),
+
+  async schedulePost(
+    content: string,
+    channels: string[],
+    image_url?: string | null,
+  ): Promise<ScheduledPost | null> {
+    try {
+      const res = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, channels, image_url: image_url ?? null }),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return (await res.json()) as ScheduledPost;
+    } catch {
+      return null;
+    }
+  },
+
+  async publishPost(id: string): Promise<ScheduledPost | null> {
+    try {
+      const res = await fetch(`/api/posts/${id}/publish`, { method: "POST" });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return (await res.json()) as ScheduledPost;
+    } catch {
+      return null;
+    }
+  },
   intelligence: () =>
     get<IntelligenceStatus>("/intelligence", {
       claude_connected: false,

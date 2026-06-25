@@ -109,3 +109,15 @@ export interface Connector {
   last_sync: string | null;
   metrics: Record<string, number>;
 }
+
+export interface ScheduledPost {
+  id: string;
+  content: string;
+  channels: string[];
+  image_url: string | null;
+  agent_id: string;
+  scheduled_at: string;
+  status: "scheduled" | "queued" | "published" | "failed";
+  results: { channel: string; status: string; detail?: string }[];
+  created_at: string;
+}

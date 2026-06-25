@@ -9,12 +9,14 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from datetime import timedelta, timezone
+
 from app.core import executive, llm
 from app.domain.enums import AutonomyLevel, Horizon
 from app.domain.network import AGENT_NETWORK, division_summary
-from app.engines import deliverables, execution, opportunity
+from app.engines import deliverables, execution, opportunity, publisher
 from app.main import app
-from app.store import STORE, seed
+from app.store import STORE, now, seed
 
 
 @pytest.fixture(autouse=True)
@@ -209,3 +211,53 @@ def test_github_refresh_degrades_when_unreachable(monkeypatch):
         ConnectorStatus.ERROR,
         ConnectorStatus.DISCONNECTED,
     )
+
+
+# --- publishing pipeline (offline) ----------------------------------------
+
+def test_schedule_queues_post_without_webhook(monkeypatch):
+    monkeypatch.delenv("TITAN_PUBLISH_WEBHOOK", raising=False)
+    STORE.posts.clear()
+    post = publisher.schedule("Try Career Mind AI free!", ["linkedin", "pinterest"], store=STORE)
+    out = publisher.publish(post["id"], STORE)
+    # No webhook → safely queued, nothing lost, marked ready per channel.
+    assert out["status"] == "queued"
+    assert {r["channel"] for r in out["results"]} == {"linkedin", "pinterest"}
+
+
+def test_publish_uses_webhook_when_set(monkeypatch):
+    monkeypatch.setenv("TITAN_PUBLISH_WEBHOOK", "https://hook.example/catch")
+    STORE.posts.clear()
+
+    class _Resp:
+        status_code = 200
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, url, json): return _Resp()
+
+    import httpx
+    monkeypatch.setattr(httpx, "Client", _Client)
+
+    post = publisher.schedule("Launch post", ["facebook"], store=STORE)
+    out = publisher.publish(post["id"], STORE)
+    assert out["status"] == "published"
+
+
+def test_run_due_publishes_only_past_scheduled():
+    STORE.posts.clear()
+    publisher.schedule("future", ["linkedin"], scheduled_at=now() + timedelta(hours=1), store=STORE)
+    publisher.schedule("past", ["linkedin"], scheduled_at=now() - timedelta(minutes=1), store=STORE)
+    published = publisher.run_due(STORE)
+    assert published == 1
+
+
+def test_api_schedule_and_list_posts():
+    client = TestClient(app)
+    with client:
+        res = client.post("/api/posts", json={"content": "hello world", "channels": ["pinterest"]})
+        assert res.status_code == 200
+        assert res.json()["channels"] == ["pinterest"]
+        assert len(client.get("/api/posts").json()) >= 1

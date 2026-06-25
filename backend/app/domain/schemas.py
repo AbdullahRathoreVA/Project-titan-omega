@@ -107,6 +107,18 @@ class Deliverable(BaseModel):
     created_at: datetime
 
 
+class ScheduledPost(BaseModel):
+    id: str
+    content: str
+    channels: List[str]
+    image_url: Optional[str] = None
+    agent_id: str
+    scheduled_at: datetime
+    status: str  # scheduled | queued | published | failed
+    results: List[dict] = Field(default_factory=list)
+    created_at: datetime
+
+
 class FeedEvent(BaseModel):
     id: str
     timestamp: datetime

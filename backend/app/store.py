@@ -50,6 +50,7 @@ class Store:
     executions: Dict[str, dict] = field(default_factory=dict)
     connectors: Dict[str, dict] = field(default_factory=dict)
     deliverables: Dict[str, dict] = field(default_factory=dict)
+    posts: Dict[str, dict] = field(default_factory=dict)
     feed: List[dict] = field(default_factory=list)
     metrics: Dict[str, float] = field(default_factory=dict)
 

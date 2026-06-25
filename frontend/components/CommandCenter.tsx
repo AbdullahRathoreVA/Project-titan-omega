@@ -18,6 +18,7 @@ import type {
   FeedEvent,
   IntelligenceStatus,
   Opportunity,
+  ScheduledPost,
 } from "@/lib/types";
 import { compact, money } from "@/lib/format";
 import { StatusBar } from "./StatusBar";
@@ -29,6 +30,7 @@ import { ExecutionFeed } from "./ExecutionFeed";
 import { AgentActivity } from "./AgentActivity";
 import { Deliverables } from "./Deliverables";
 import { ConnectedAssets } from "./ConnectedAssets";
+import { Publishing } from "./Publishing";
 
 const POLL_MS = 5000;
 
@@ -40,6 +42,7 @@ export function CommandCenter() {
   const [feed, setFeed] = useState<FeedEvent[]>([]);
   const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [posts, setPosts] = useState<ScheduledPost[]>([]);
   const [intel, setIntel] = useState<IntelligenceStatus | null>(null);
   const [online, setOnline] = useState(false);
 
@@ -54,7 +57,7 @@ export function CommandCenter() {
     }
     setOnline(isOnline);
 
-    const [s, d, a, o, f, dv, cn, ig] = await Promise.all([
+    const [s, d, a, o, f, dv, cn, ps, ig] = await Promise.all([
       api.status(),
       api.divisions(),
       api.agents(),
@@ -62,6 +65,7 @@ export function CommandCenter() {
       api.feed(40),
       api.deliverables(),
       api.connectors(),
+      api.posts(),
       api.intelligence(),
     ]);
     setStatus(s);
@@ -71,12 +75,29 @@ export function CommandCenter() {
     setFeed(f);
     setDeliverables(dv);
     setConnectors(cn);
+    setPosts(ps);
     setIntel(ig);
   }, []);
 
   const executeOpportunity = useCallback(
     async (id: string) => {
       await api.executeOpportunity(id);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const schedulePost = useCallback(
+    async (content: string, channels: string[]) => {
+      await api.schedulePost(content, channels);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const publishPost = useCallback(
+    async (id: string) => {
+      await api.publishPost(id);
       await refresh();
     },
     [refresh],
@@ -137,6 +158,10 @@ export function CommandCenter() {
 
       <div className="mt-4">
         <ConnectedAssets connectors={connectors} />
+      </div>
+
+      <div className="mt-4">
+        <Publishing posts={posts} onSchedule={schedulePost} onPublish={publishPost} />
       </div>
 
       {/* main grid */}
