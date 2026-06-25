@@ -24,7 +24,14 @@ You need two free tools installed first: **Python** and **Node.js**. If you
 don't have them, install Python from python.org and Node from nodejs.org, then
 come back.
 
-### The easy way
+### Windows (easiest — just double-click)
+
+After installing **Python** (python.org) and **Node.js** (nodejs.org),
+**double-click `run-windows.bat`** in this folder. Two windows open, and your
+browser opens the dashboard at **http://localhost:3000**. Local runs need no
+login. Close the two windows to stop.
+
+### Mac / Linux
 
 Open a terminal **in this folder** and run:
 
@@ -34,8 +41,12 @@ make dev        # starts the whole thing
 ```
 
 Then open **http://localhost:3000** in your browser. That's your command center.
-
 To stop it, press `Ctrl + C` in the terminal.
+
+### Want to open it from anywhere (phone, other computers)?
+
+Deploy it free and get a real URL with a login — see **[DEPLOY.md](DEPLOY.md)**.
+You set your own username and password as host settings (never in the code).
 
 ### If `make` isn't available
 

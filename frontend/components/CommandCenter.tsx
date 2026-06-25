@@ -4,7 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Banknote,
   Bot,
+  FileBarChart,
   Globe2,
+  RefreshCw,
+  Radar as RadarIcon,
   Target,
   Zap,
 } from "lucide-react";
@@ -103,6 +106,21 @@ export function CommandCenter() {
     [refresh],
   );
 
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const runAction = useCallback(
+    async (key: string, fn: () => Promise<unknown>) => {
+      if (actionBusy) return;
+      setActionBusy(key);
+      try {
+        await fn();
+        await refresh();
+      } finally {
+        setActionBusy(null);
+      }
+    },
+    [actionBusy, refresh],
+  );
+
   useEffect(() => {
     void refresh();
     const id = setInterval(() => void refresh(), POLL_MS);
@@ -154,6 +172,25 @@ export function CommandCenter() {
 
       <div className="mt-4">
         <CommandBar onDispatched={refresh} />
+      </div>
+
+      {/* quick action buttons */}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {[
+          { key: "scan", label: "Scan opportunities", icon: RadarIcon, fn: () => api.scanOpportunities() },
+          { key: "refresh", label: "Refresh assets", icon: RefreshCw, fn: () => api.refreshConnectors() },
+          { key: "report", label: "Generate weekly report", icon: FileBarChart, fn: () => api.weeklyReport() },
+        ].map(({ key, label, icon: Icon, fn }) => (
+          <button
+            key={key}
+            onClick={() => runAction(key, fn)}
+            disabled={actionBusy === key}
+            className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel/80 px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-hud-cyan/40 hover:text-hud-cyan disabled:opacity-50"
+          >
+            <Icon className={`h-3.5 w-3.5 ${actionBusy === key ? "animate-spin" : ""}`} />
+            {actionBusy === key ? "Working…" : label}
+          </button>
+        ))}
       </div>
 
       <div className="mt-4">

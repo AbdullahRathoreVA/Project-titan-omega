@@ -11,6 +11,7 @@ venv/
 node_modules/
 .next/
 out/
+frontend/out/
 *.tsbuildinfo
 next-env.d.ts
 

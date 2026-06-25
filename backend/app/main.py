@@ -15,12 +15,14 @@ import contextlib
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .api.router import router
 from .connectors import github
-from .core import executive
+from .core import auth, executive
 from .engines import opportunity, publisher
 from .store import STORE, seed
 
@@ -79,6 +81,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Gate the data API behind the login token when TITAN_REQUIRE_AUTH=1 (set on the
+# public deploy). /api/login, /api/auth and /health stay open so the login screen
+# and health checks work. Off by default — local runs need no login.
+_OPEN_PATHS = {"/api/login", "/api/auth", "/health"}
+
+
+@app.middleware("http")
+async def auth_guard(request: Request, call_next):
+    path = request.url.path
+    if auth.require_auth() and path.startswith("/api") and path not in _OPEN_PATHS:
+        token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not auth.valid_token(token):
+            return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    return await call_next(request)
+
+
 app.include_router(router)
 
 
@@ -87,11 +105,19 @@ def health() -> dict:
     return {"status": "online", "service": "titan-omega-core", "agents": len(STORE.agents)}
 
 
-@app.get("/", tags=["system"])
-def root() -> dict:
-    return {
-        "name": "Project Titan Omega",
-        "tagline": "Autonomous Founder Empire Operating System",
-        "docs": "/docs",
-        "api": "/api",
-    }
+# Serve the built dashboard (single-container deploy). When the static export
+# exists at ../frontend/out, mount it at "/" so one URL serves UI + API. In dev
+# the frontend runs separately, so this mount is simply absent.
+_FRONTEND_OUT = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "out")
+if os.path.isdir(_FRONTEND_OUT):
+    app.mount("/", StaticFiles(directory=_FRONTEND_OUT, html=True), name="dashboard")
+else:
+
+    @app.get("/", tags=["system"])
+    def root() -> dict:
+        return {
+            "name": "Project Titan Omega",
+            "tagline": "Autonomous Founder Empire Operating System",
+            "docs": "/docs",
+            "api": "/api",
+        }

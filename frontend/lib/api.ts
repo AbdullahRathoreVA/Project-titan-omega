@@ -18,13 +18,44 @@ import type {
 } from "./types";
 import { MOCK } from "./mock";
 
+const TOKEN_KEY = "titan_token";
+
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(TOKEN_KEY);
+}
+export function setToken(token: string | null) {
+  if (typeof window === "undefined") return;
+  if (token) window.localStorage.setItem(TOKEN_KEY, token);
+  else window.localStorage.removeItem(TOKEN_KEY);
+}
+
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const token = getToken();
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
+
 async function get<T>(path: string, fallback: T): Promise<T> {
   try {
-    const res = await fetch(`/api${path}`, { cache: "no-store" });
+    const res = await fetch(`/api${path}`, { cache: "no-store", headers: authHeaders() });
     if (!res.ok) throw new Error(`${res.status}`);
     return (await res.json()) as T;
   } catch {
     return fallback;
+  }
+}
+
+async function post<T>(path: string, body?: unknown): Promise<T | null> {
+  try {
+    const res = await fetch(`/api${path}`, {
+      method: "POST",
+      headers: authHeaders(body ? { "Content-Type": "application/json" } : {}),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) throw new Error(`${res.status}`);
+    return (await res.json()) as T;
+  } catch {
+    return null;
   }
 }
 
@@ -37,34 +68,6 @@ export const api = {
   deliverables: () => get<Deliverable[]>("/deliverables", []),
   connectors: () => get<Connector[]>("/connectors", []),
   posts: () => get<ScheduledPost[]>("/posts", []),
-
-  async schedulePost(
-    content: string,
-    channels: string[],
-    image_url?: string | null,
-  ): Promise<ScheduledPost | null> {
-    try {
-      const res = await fetch("/api/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, channels, image_url: image_url ?? null }),
-      });
-      if (!res.ok) throw new Error(`${res.status}`);
-      return (await res.json()) as ScheduledPost;
-    } catch {
-      return null;
-    }
-  },
-
-  async publishPost(id: string): Promise<ScheduledPost | null> {
-    try {
-      const res = await fetch(`/api/posts/${id}/publish`, { method: "POST" });
-      if (!res.ok) throw new Error(`${res.status}`);
-      return (await res.json()) as ScheduledPost;
-    } catch {
-      return null;
-    }
-  },
   intelligence: () =>
     get<IntelligenceStatus>("/intelligence", {
       claude_connected: false,
@@ -72,36 +75,42 @@ export const api = {
       mode: "free",
     }),
 
-  async executeOpportunity(id: string): Promise<Deliverable | null> {
-    try {
-      const res = await fetch(`/api/deliverables/from-opportunity/${id}`, {
-        method: "POST",
-      });
-      if (!res.ok) throw new Error(`${res.status}`);
-      return (await res.json()) as Deliverable;
-    } catch {
-      return null;
-    }
+  // auth
+  authStatus: () =>
+    get<{ required: boolean; demo: boolean }>("/auth", { required: false, demo: true }),
+  async login(username: string, password: string): Promise<boolean> {
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { token: string };
+    setToken(data.token);
+    return true;
   },
+  logout: () => setToken(null),
+
+  // actions (all auth-aware via post())
+  schedulePost: (content: string, channels: string[], image_url?: string | null) =>
+    post<ScheduledPost>("/posts", { content, channels, image_url: image_url ?? null }),
+  publishPost: (id: string) => post<ScheduledPost>(`/posts/${id}/publish`),
+  executeOpportunity: (id: string) => post<Deliverable>(`/deliverables/from-opportunity/${id}`),
+  scanOpportunities: () => post<Opportunity[]>("/opportunities/scan"),
+  refreshConnectors: () => post<Connector[]>("/connectors/refresh"),
+  weeklyReport: () => post<Deliverable>("/report/weekly"),
 
   async command(text: string): Promise<CommandResponse> {
-    try {
-      const res = await fetch("/api/command", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!res.ok) throw new Error(`${res.status}`);
-      return (await res.json()) as CommandResponse;
-    } catch {
-      return {
+    const res = await post<CommandResponse>("/command", { text });
+    return (
+      res ?? {
         understood: true,
         intent: "offline",
         response:
           "Core unreachable — command queued locally. Start the backend to dispatch it.",
         routed_to: null,
         actions: [],
-      };
-    }
+      }
+    );
   },
 };

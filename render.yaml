@@ -1,0 +1,25 @@
+# One-click free deploy on Render (https://render.com). After connecting this
+# repo, Render reads this file and builds the Dockerfile. Set your own username
+# and password in the Render dashboard — they are never stored in the repo.
+services:
+  - type: web
+    name: titan-omega
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: TITAN_REQUIRE_AUTH
+        value: "1"
+      - key: TITAN_USERNAME
+        sync: false          # set in the Render dashboard
+      - key: TITAN_PASSWORD
+        sync: false          # set in the Render dashboard (choose a NEW password)
+      - key: TITAN_SECRET
+        generateValue: true  # Render generates a random signing secret
+      # Optional — unlock Claude reasoning + live auto-posting:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: TITAN_PUBLISH_WEBHOOK
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false

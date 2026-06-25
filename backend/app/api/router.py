@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from pydantic import BaseModel, Field
 
-from ..core import executive, llm
+from ..core import auth, executive, llm
 from ..domain.enums import Horizon
 from ..domain.schemas import (
     AgentView,
@@ -34,6 +34,26 @@ from ..engines import deliverables, execution, opportunity, publisher
 from ..store import STORE, AgentRuntime
 
 router = APIRouter(prefix="/api")
+
+
+# --- auth -----------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@router.get("/auth", tags=["auth"])
+def auth_status() -> dict:
+    """Tells the dashboard whether a login is required before showing data."""
+    return {"required": auth.require_auth(), "demo": auth.using_demo_credentials()}
+
+
+@router.post("/login", tags=["auth"])
+def login(req: LoginRequest) -> dict:
+    if not auth.check_login(req.username, req.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    return {"token": auth.make_token(req.username), "username": req.username}
 
 
 # --- serialization helpers ------------------------------------------------
@@ -225,6 +245,22 @@ def deliverable_from_opportunity(opportunity_id: str) -> Deliverable:
     if opportunity_id not in STORE.opportunities:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return Deliverable(**deliverables.from_opportunity(opportunity_id, STORE))
+
+
+@router.post("/report/weekly", response_model=Deliverable, tags=["deliverables"])
+def weekly_report() -> Deliverable:
+    """Generate a weekly empire report deliverable from the current plan + status."""
+    plan = executive.generate_plan(Horizon.WEEKLY, STORE)
+    status = executive.empire_status(STORE)
+    brief = (
+        f"Weekly empire report. MRR ${status['mrr']:,.0f}, traffic {status['traffic']:,}, "
+        f"{status['active_agents']}/{status['total_agents']} agents active, "
+        f"{status['open_opportunities']} open opportunities.\nTop objectives: "
+        + "; ".join(i["title"] for i in plan["items"])
+    )
+    return Deliverable(
+        **deliverables.generate("business_report", brief, "executive-board-reporting-analyst", store=STORE)
+    )
 
 
 # --- publishing -----------------------------------------------------------
