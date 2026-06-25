@@ -190,6 +190,15 @@ def list_connectors() -> List[Connector]:
     return [Connector(**c) for c in STORE.connectors.values()]
 
 
+@router.post("/connectors/refresh", response_model=List[Connector], tags=["connectors"])
+def refresh_connectors() -> List[Connector]:
+    """Re-sync live connectors (GitHub repos) on demand."""
+    from ..connectors import github
+
+    github.refresh(STORE)
+    return [Connector(**c) for c in STORE.connectors.values()]
+
+
 # --- deliverables ---------------------------------------------------------
 
 class DraftRequest(BaseModel):

@@ -168,3 +168,44 @@ def test_llm_complete_is_none_without_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     assert llm.available() is False
     assert llm.complete("system", "prompt") is None
+
+
+# --- live GitHub connector (offline, mapping + fallback) ------------------
+
+def test_github_refresh_maps_live_metrics(monkeypatch):
+    from app.connectors import github
+
+    fake = {
+        "full_name": "AbdullahRathoreVA/career-mind",
+        "html_url": "https://github.com/AbdullahRathoreVA/career-mind",
+        "stargazers_count": 3,
+        "forks_count": 1,
+        "open_issues_count": 4,
+        "subscribers_count": 2,
+        "size": 1200,
+        "pushed_at": "2026-06-21T16:42:53Z",
+    }
+    monkeypatch.setattr(github, "WATCHED", [("AbdullahRathoreVA", "career-mind")])
+    monkeypatch.setattr(github, "fetch_repo", lambda o, r: fake)
+
+    conns = github.refresh(STORE)
+    assert len(conns) == 1
+    c = conns[0]
+    assert c["status"].value == "connected"
+    assert c["metrics"]["open_issues"] == 4.0
+    assert c["metrics"]["days_since_push"] >= 0
+
+
+def test_github_refresh_degrades_when_unreachable(monkeypatch):
+    from app.connectors import github
+    from app.domain.enums import ConnectorStatus
+
+    monkeypatch.setattr(github, "WATCHED", [("owner", "missing")])
+    monkeypatch.setattr(github, "fetch_repo", lambda o, r: None)
+
+    github.refresh(STORE)
+    cid = "gh-owner-missing"
+    assert STORE.connectors[cid]["status"] in (
+        ConnectorStatus.ERROR,
+        ConnectorStatus.DISCONNECTED,
+    )

@@ -98,3 +98,14 @@ export interface IntelligenceStatus {
   model: string | null;
   mode: "claude" | "free";
 }
+
+export interface Connector {
+  id: string;
+  name: string;
+  kind: string;
+  status: string;
+  url: string | null;
+  discovered_at: string;
+  last_sync: string | null;
+  metrics: Record<string, number>;
+}

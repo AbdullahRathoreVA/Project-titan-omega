@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.router import router
+from .connectors import github
 from .core import executive
 from .engines import opportunity
 from .store import STORE, seed
@@ -36,16 +37,24 @@ async def _heartbeat_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Cold start: stand up the org, surface opportunities, begin the heartbeat.
+    # Cold start: stand up the org and surface opportunities (instant), then sync
+    # live connectors in the background so boot isn't blocked on the network.
     seed(STORE)
     opportunity.discover(STORE)
+
+    async def _initial_sync() -> None:
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(github.refresh, STORE)
+
+    sync_task = asyncio.create_task(_initial_sync())
     task = asyncio.create_task(_heartbeat_loop())
     try:
         yield
     finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        for t in (task, sync_task):
+            t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
 
 
 app = FastAPI(

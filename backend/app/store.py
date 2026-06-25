@@ -171,14 +171,13 @@ def _sample_task(spec: AgentSpec, rng: random.Random) -> Optional[str]:
 
 
 def _seed_connectors(store: Store) -> None:
+    # GitHub repos are synced live by app.connectors.github at startup; these two
+    # are placeholders for analytics/marketplace sources you'll connect later.
     seeds = [
         ("Career Mind AI", ConnectorKind.WEB_APP, "https://careermind.ai",
          {"traffic": 142000, "signups": 3800, "conversion": 4.1, "retention": 61.0}),
         ("Fiverr Gig Network", ConnectorKind.MARKETPLACE, "https://fiverr.com",
          {"impressions": 92000, "clicks": 4100, "orders": 210, "conversion": 5.1}),
-        ("project-titan-omega", ConnectorKind.GITHUB,
-         "https://github.com/abdullahrathoreva/project-titan-omega",
-         {"stars": 0, "open_issues": 0, "commits": 1}),
     ]
     for name, kind, url, metrics in seeds:
         cid = store.new_id("conn")

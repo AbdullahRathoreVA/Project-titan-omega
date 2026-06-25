@@ -11,6 +11,7 @@ import {
 import { api } from "@/lib/api";
 import type {
   AgentView,
+  Connector,
   Deliverable,
   DivisionView,
   EmpireStatus,
@@ -27,6 +28,7 @@ import { OpportunityRadar } from "./OpportunityRadar";
 import { ExecutionFeed } from "./ExecutionFeed";
 import { AgentActivity } from "./AgentActivity";
 import { Deliverables } from "./Deliverables";
+import { ConnectedAssets } from "./ConnectedAssets";
 
 const POLL_MS = 5000;
 
@@ -37,6 +39,7 @@ export function CommandCenter() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [feed, setFeed] = useState<FeedEvent[]>([]);
   const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
+  const [connectors, setConnectors] = useState<Connector[]>([]);
   const [intel, setIntel] = useState<IntelligenceStatus | null>(null);
   const [online, setOnline] = useState(false);
 
@@ -51,13 +54,14 @@ export function CommandCenter() {
     }
     setOnline(isOnline);
 
-    const [s, d, a, o, f, dv, ig] = await Promise.all([
+    const [s, d, a, o, f, dv, cn, ig] = await Promise.all([
       api.status(),
       api.divisions(),
       api.agents(),
       api.opportunities(),
       api.feed(40),
       api.deliverables(),
+      api.connectors(),
       api.intelligence(),
     ]);
     setStatus(s);
@@ -66,6 +70,7 @@ export function CommandCenter() {
     setOpportunities(o);
     setFeed(f);
     setDeliverables(dv);
+    setConnectors(cn);
     setIntel(ig);
   }, []);
 
@@ -128,6 +133,10 @@ export function CommandCenter() {
 
       <div className="mt-4">
         <CommandBar onDispatched={refresh} />
+      </div>
+
+      <div className="mt-4">
+        <ConnectedAssets connectors={connectors} />
       </div>
 
       {/* main grid */}

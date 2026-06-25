@@ -7,6 +7,7 @@
 import type {
   AgentView,
   CommandResponse,
+  Connector,
   Deliverable,
   DivisionView,
   EmpireStatus,
@@ -33,6 +34,7 @@ export const api = {
   opportunities: () => get<Opportunity[]>("/opportunities", MOCK.opportunities),
   feed: (limit = 40) => get<FeedEvent[]>(`/feed?limit=${limit}`, MOCK.feed),
   deliverables: () => get<Deliverable[]>("/deliverables", []),
+  connectors: () => get<Connector[]>("/connectors", []),
   intelligence: () =>
     get<IntelligenceStatus>("/intelligence", {
       claude_connected: false,
