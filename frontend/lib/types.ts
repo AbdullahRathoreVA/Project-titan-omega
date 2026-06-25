@@ -80,3 +80,21 @@ export interface CommandResponse {
   routed_to: string | null;
   actions: string[];
 }
+
+export interface Deliverable {
+  id: string;
+  title: string;
+  kind: string;
+  agent_id: string;
+  agent_name: string;
+  opportunity_id: string | null;
+  content: string;
+  source: "ai" | "template";
+  created_at: string;
+}
+
+export interface IntelligenceStatus {
+  claude_connected: boolean;
+  model: string | null;
+  mode: "claude" | "free";
+}

@@ -95,6 +95,18 @@ class Connector(BaseModel):
     metrics: Dict[str, float] = Field(default_factory=dict)
 
 
+class Deliverable(BaseModel):
+    id: str
+    title: str
+    kind: str
+    agent_id: str
+    agent_name: str
+    opportunity_id: Optional[str] = None
+    content: str
+    source: str  # "ai" (Claude-generated) | "template" (no key configured)
+    created_at: datetime
+
+
 class FeedEvent(BaseModel):
     id: str
     timestamp: datetime

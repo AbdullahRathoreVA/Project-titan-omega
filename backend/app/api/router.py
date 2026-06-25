@@ -10,13 +10,16 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from ..core import executive
+from pydantic import BaseModel, Field
+
+from ..core import executive, llm
 from ..domain.enums import Horizon
 from ..domain.schemas import (
     AgentView,
     CommandRequest,
     CommandResponse,
     Connector,
+    Deliverable,
     DivisionView,
     EmpireStatus,
     ExecutionAction,
@@ -25,7 +28,7 @@ from ..domain.schemas import (
     Opportunity,
     StrategicPlan,
 )
-from ..engines import execution, opportunity
+from ..engines import deliverables, execution, opportunity
 from ..store import STORE, AgentRuntime
 
 router = APIRouter(prefix="/api")
@@ -187,8 +190,46 @@ def list_connectors() -> List[Connector]:
     return [Connector(**c) for c in STORE.connectors.values()]
 
 
+# --- deliverables ---------------------------------------------------------
+
+class DraftRequest(BaseModel):
+    kind: str = Field(..., description="e.g. outreach_email, seo_plan, growth_strategy")
+    brief: str = Field(..., min_length=1)
+    agent_id: str = "executive-head"
+
+
+@router.get("/deliverables", response_model=List[Deliverable], tags=["deliverables"])
+def list_deliverables() -> List[Deliverable]:
+    return [Deliverable(**d) for d in deliverables.listing(STORE)]
+
+
+@router.post("/deliverables/draft", response_model=Deliverable, tags=["deliverables"])
+def draft_deliverable(req: DraftRequest) -> Deliverable:
+    return Deliverable(**deliverables.generate(req.kind, req.brief, req.agent_id, store=STORE))
+
+
+@router.post("/deliverables/from-opportunity/{opportunity_id}",
+             response_model=Deliverable, tags=["deliverables"])
+def deliverable_from_opportunity(opportunity_id: str) -> Deliverable:
+    if opportunity_id not in STORE.opportunities:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    return Deliverable(**deliverables.from_opportunity(opportunity_id, STORE))
+
+
 # --- live feed ------------------------------------------------------------
 
 @router.get("/feed", response_model=List[FeedEvent], tags=["feed"])
 def get_feed(limit: int = Query(default=50, ge=1, le=200)) -> List[FeedEvent]:
     return [FeedEvent(**e) for e in STORE.recent_feed(limit)]
+
+
+# --- intelligence status --------------------------------------------------
+
+@router.get("/intelligence", tags=["system"])
+def intelligence_status() -> dict:
+    """Tells the dashboard whether agents are thinking with Claude or in free mode."""
+    return {
+        "claude_connected": llm.available(),
+        "model": llm.MODEL if llm.available() else None,
+        "mode": "claude" if llm.available() else "free",
+    }

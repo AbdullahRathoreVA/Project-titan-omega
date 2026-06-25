@@ -7,9 +7,11 @@
 import type {
   AgentView,
   CommandResponse,
+  Deliverable,
   DivisionView,
   EmpireStatus,
   FeedEvent,
+  IntelligenceStatus,
   Opportunity,
 } from "./types";
 import { MOCK } from "./mock";
@@ -30,6 +32,25 @@ export const api = {
   agents: () => get<AgentView[]>("/agents", MOCK.agents),
   opportunities: () => get<Opportunity[]>("/opportunities", MOCK.opportunities),
   feed: (limit = 40) => get<FeedEvent[]>(`/feed?limit=${limit}`, MOCK.feed),
+  deliverables: () => get<Deliverable[]>("/deliverables", []),
+  intelligence: () =>
+    get<IntelligenceStatus>("/intelligence", {
+      claude_connected: false,
+      model: null,
+      mode: "free",
+    }),
+
+  async executeOpportunity(id: string): Promise<Deliverable | null> {
+    try {
+      const res = await fetch(`/api/deliverables/from-opportunity/${id}`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return (await res.json()) as Deliverable;
+    } catch {
+      return null;
+    }
+  },
 
   async command(text: string): Promise<CommandResponse> {
     try {

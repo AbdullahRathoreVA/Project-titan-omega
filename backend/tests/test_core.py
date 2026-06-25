@@ -9,10 +9,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core import executive
+from app.core import executive, llm
 from app.domain.enums import AutonomyLevel, Horizon
 from app.domain.network import AGENT_NETWORK, division_summary
-from app.engines import execution, opportunity
+from app.engines import deliverables, execution, opportunity
 from app.main import app
 from app.store import STORE, seed
 
@@ -136,3 +136,35 @@ def test_api_command_endpoint():
         res = client.post("/api/command", json={"text": "find new revenue opportunities"})
         assert res.status_code == 200
         assert res.json()["understood"] is True
+
+
+# --- deliverables (fallback / template mode) ------------------------------
+
+def test_deliverable_from_opportunity_produces_artifact():
+    top = opportunity.ranked(STORE)[0]
+    d = deliverables.from_opportunity(top["id"], STORE)
+    assert d["content"].strip()                      # a real artifact exists
+    assert d["opportunity_id"] == top["id"]
+    # Without a key configured, generation falls back to a template.
+    if not llm.available():
+        assert d["source"] == "template"
+
+
+def test_draft_deliverable_defaults_unknown_kind():
+    d = deliverables.generate("not_a_real_kind", "Launch a referral program", store=STORE)
+    assert d["kind"] == "business_report"
+    assert d["content"].strip()
+
+
+def test_intelligence_endpoint_reports_mode():
+    client = TestClient(app)
+    with client:
+        body = client.get("/api/intelligence").json()
+        assert body["mode"] in ("claude", "free")
+        assert body["claude_connected"] is llm.available()
+
+
+def test_llm_complete_is_none_without_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert llm.available() is False
+    assert llm.complete("system", "prompt") is None

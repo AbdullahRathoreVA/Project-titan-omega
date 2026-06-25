@@ -6,6 +6,10 @@ fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
 
+# AI — real Claude reasoning when ANTHROPIC_API_KEY is set; the platform runs
+# without it (deterministic fallback), so this is the only AI dependency needed.
+anthropic>=0.40.0
+
 # Dev / test
 httpx==0.28.1
 pytest==8.3.4

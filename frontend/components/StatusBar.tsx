@@ -1,15 +1,18 @@
 "use client";
 
-import { Hexagon, Wifi, WifiOff } from "lucide-react";
-import type { EmpireStatus } from "@/lib/types";
+import { BrainCircuit, Hexagon, Wifi, WifiOff } from "lucide-react";
+import type { EmpireStatus, IntelligenceStatus } from "@/lib/types";
 
 export function StatusBar({
   status,
   online,
+  intel,
 }: {
   status: EmpireStatus | null;
   online: boolean;
+  intel: IntelligenceStatus | null;
 }) {
+  const claude = intel?.claude_connected ?? false;
   return (
     <header className="flex flex-col gap-3 border-b border-edge/70 pb-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
@@ -41,6 +44,22 @@ export function StatusBar({
           <span className="font-mono text-sm text-hud-emerald">
             {status ? status.health.toFixed(0) : "––"}
           </span>
+        </div>
+
+        <div
+          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${
+            claude
+              ? "border-hud-violet/40 text-hud-violet"
+              : "border-edge text-slate-400"
+          }`}
+          title={
+            claude
+              ? `Agents thinking with ${intel?.model}`
+              : "Free mode — set ANTHROPIC_API_KEY to enable Claude reasoning"
+          }
+        >
+          <BrainCircuit className="h-3.5 w-3.5" />
+          {claude ? "Claude online" : "Free mode"}
         </div>
 
         <div

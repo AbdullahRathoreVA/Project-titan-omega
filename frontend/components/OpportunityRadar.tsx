@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Radar, TrendingUp } from "lucide-react";
+import { Play, Radar, TrendingUp } from "lucide-react";
 import type { Opportunity } from "@/lib/types";
 import { money } from "@/lib/format";
 
@@ -16,8 +17,25 @@ function blip(i: number, total: number, priority: number) {
   };
 }
 
-export function OpportunityRadar({ opportunities }: { opportunities: Opportunity[] }) {
+export function OpportunityRadar({
+  opportunities,
+  onExecute,
+}: {
+  opportunities: Opportunity[];
+  onExecute?: (id: string) => Promise<void> | void;
+}) {
   const top = opportunities.slice(0, 8);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function execute(id: string) {
+    if (busy) return;
+    setBusy(id);
+    try {
+      await onExecute?.(id);
+    } finally {
+      setBusy(null);
+    }
+  }
   return (
     <section className="panel flex h-full flex-col">
       <header className="panel-header">
@@ -70,12 +88,22 @@ export function OpportunityRadar({ opportunities }: { opportunities: Opportunity
                 {o.priority_score.toFixed(0)}
               </span>
             </div>
-            <div className="mt-1.5 flex items-center gap-3 text-[10px] text-slate-400">
-              <span className="flex items-center gap-1 text-hud-emerald">
-                <TrendingUp className="h-3 w-3" /> {money(o.expected_revenue)}
-              </span>
-              <span>risk {o.risk.toFixed(0)}</span>
-              <span>{o.time_estimate_days.toFixed(0)}d</span>
+            <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] text-slate-400">
+              <div className="flex items-center gap-3">
+                <span className="flex items-center gap-1 text-hud-emerald">
+                  <TrendingUp className="h-3 w-3" /> {money(o.expected_revenue)}
+                </span>
+                <span>risk {o.risk.toFixed(0)}</span>
+                <span>{o.time_estimate_days.toFixed(0)}d</span>
+              </div>
+              <button
+                onClick={() => execute(o.id)}
+                disabled={busy === o.id}
+                className="flex items-center gap-1 rounded border border-hud-emerald/40 bg-hud-emerald/10 px-1.5 py-0.5 font-medium text-hud-emerald transition-colors hover:bg-hud-emerald/20 disabled:opacity-50"
+              >
+                <Play className="h-2.5 w-2.5" />
+                {busy === o.id ? "Working…" : "Execute"}
+              </button>
             </div>
           </div>
         ))}

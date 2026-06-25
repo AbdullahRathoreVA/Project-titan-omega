@@ -11,9 +11,11 @@ import {
 import { api } from "@/lib/api";
 import type {
   AgentView,
+  Deliverable,
   DivisionView,
   EmpireStatus,
   FeedEvent,
+  IntelligenceStatus,
   Opportunity,
 } from "@/lib/types";
 import { compact, money } from "@/lib/format";
@@ -24,6 +26,7 @@ import { DivisionGrid } from "./DivisionGrid";
 import { OpportunityRadar } from "./OpportunityRadar";
 import { ExecutionFeed } from "./ExecutionFeed";
 import { AgentActivity } from "./AgentActivity";
+import { Deliverables } from "./Deliverables";
 
 const POLL_MS = 5000;
 
@@ -33,6 +36,8 @@ export function CommandCenter() {
   const [agents, setAgents] = useState<AgentView[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [feed, setFeed] = useState<FeedEvent[]>([]);
+  const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
+  const [intel, setIntel] = useState<IntelligenceStatus | null>(null);
   const [online, setOnline] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -46,19 +51,31 @@ export function CommandCenter() {
     }
     setOnline(isOnline);
 
-    const [s, d, a, o, f] = await Promise.all([
+    const [s, d, a, o, f, dv, ig] = await Promise.all([
       api.status(),
       api.divisions(),
       api.agents(),
       api.opportunities(),
       api.feed(40),
+      api.deliverables(),
+      api.intelligence(),
     ]);
     setStatus(s);
     setDivisions(d);
     setAgents(a);
     setOpportunities(o);
     setFeed(f);
+    setDeliverables(dv);
+    setIntel(ig);
   }, []);
+
+  const executeOpportunity = useCallback(
+    async (id: string) => {
+      await api.executeOpportunity(id);
+      await refresh();
+    },
+    [refresh],
+  );
 
   useEffect(() => {
     void refresh();
@@ -68,7 +85,7 @@ export function CommandCenter() {
 
   return (
     <main className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6">
-      <StatusBar status={status} online={online} />
+      <StatusBar status={status} online={online} intel={intel} />
 
       {/* headline metrics */}
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -126,9 +143,15 @@ export function CommandCenter() {
             </div>
           </div>
         </div>
-        <div className="xl:col-span-4">
-          <div className="h-full min-h-[560px]">
-            <OpportunityRadar opportunities={opportunities} />
+        <div className="space-y-4 xl:col-span-4">
+          <div className="h-[560px]">
+            <OpportunityRadar
+              opportunities={opportunities}
+              onExecute={executeOpportunity}
+            />
+          </div>
+          <div className="h-[420px]">
+            <Deliverables items={deliverables} />
           </div>
         </div>
       </div>

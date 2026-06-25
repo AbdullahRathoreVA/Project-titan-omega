@@ -25,6 +25,7 @@ from ..domain.enums import (
 from ..domain.network import AGENTS_BY_ID, division_summary
 from ..engines import opportunity
 from ..store import STORE, Store, now
+from . import llm
 
 
 # --- Empire snapshot ------------------------------------------------------
@@ -241,13 +242,30 @@ def route_command(text: str, store: Store = STORE) -> dict:
     return {
         "understood": True,
         "intent": intent,
-        "response": (
-            f"Understood. Tasking the {matched.value} division (lead: {head_name}). "
-            f"The team will draft an execution plan and report progress to the feed."
-        ),
+        "response": _command_reply(text, matched.value, head_name),
         "routed_to": head_id,
         "actions": [f"dispatched_to:{head_id}"],
     }
+
+
+def _command_reply(text: str, division: str, head_name: str) -> str:
+    """Craft the operator-facing reply — with Claude when available, else canned."""
+    smart = llm.complete(
+        system=(
+            f"You are the {head_name}, head of the {division} division inside Titan "
+            "Omega, an autonomous company OS reporting to the founder. Reply in 2–3 "
+            "sentences: confirm the task, name the first concrete step your team will "
+            "take, and what you'll report back. Be confident and specific, no preamble."
+        ),
+        prompt=f'The founder said: "{text}"',
+        max_tokens=400,
+    )
+    if smart:
+        return smart
+    return (
+        f"Understood. Tasking the {division} division (lead: {head_name}). "
+        f"The team will draft an execution plan and report progress to the feed."
+    )
 
 
 # --- Heartbeat ------------------------------------------------------------
