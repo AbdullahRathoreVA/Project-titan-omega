@@ -1,0 +1,11 @@
+# Titan Omega — Executive Intelligence Core
+# The runnable foundation needs only the web stack below. Production extras
+# (PostgreSQL, Redis, Celery, vector DB, model SDKs) are documented in the README
+# and slot in behind the store/engine interfaces.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+
+# Dev / test
+httpx==0.28.1
+pytest==8.3.4
