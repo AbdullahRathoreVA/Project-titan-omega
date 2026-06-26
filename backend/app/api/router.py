@@ -30,7 +30,7 @@ from ..domain.schemas import (
     ScheduledPost,
     StrategicPlan,
 )
-from ..engines import deliverables, execution, opportunity, publisher
+from ..engines import deliverables, evolution, execution, opportunity, publisher
 from ..store import STORE, AgentRuntime
 
 router = APIRouter(prefix="/api")
@@ -214,10 +214,11 @@ def list_connectors() -> List[Connector]:
 
 @router.post("/connectors/refresh", response_model=List[Connector], tags=["connectors"])
 def refresh_connectors() -> List[Connector]:
-    """Re-sync live connectors (GitHub repos) on demand."""
-    from ..connectors import github
+    """Re-sync all live connectors (GitHub repos + Career Mind AI) on demand."""
+    from ..connectors import careermind, github
 
     github.refresh(STORE)
+    careermind.refresh(STORE)
     return [Connector(**c) for c in STORE.connectors.values()]
 
 
@@ -302,9 +303,32 @@ def get_feed(limit: int = Query(default=50, ge=1, le=200)) -> List[FeedEvent]:
 
 @router.get("/intelligence", tags=["system"])
 def intelligence_status() -> dict:
-    """Tells the dashboard whether agents are thinking with Claude or in free mode."""
+    """Tells the dashboard which AI provider is active (or 'free' mode)."""
+    p = llm.provider()
     return {
-        "claude_connected": llm.available(),
-        "model": llm.MODEL if llm.available() else None,
-        "mode": "claude" if llm.available() else "free",
+        "claude_connected": p == "claude",   # legacy field — kept for dashboard compat
+        "model":   llm.active_model(),
+        "mode":    p if p != "free" else "free",
+        "provider": p,
+    }
+
+
+# --- self-evolution -------------------------------------------------------
+
+@router.get("/evolution", tags=["system"])
+def evolution_status() -> dict:
+    """Current scoring weights from the Self-Evolution Engine."""
+    w = evolution.weights(STORE)
+    return {
+        "weights": w,
+        "description": {
+            "weight_difficulty": "Penalty applied to high-difficulty opportunities (lower = more optimistic)",
+            "weight_risk":       "Penalty applied to high-risk opportunities (lower = more risk-tolerant)",
+            "weight_time":       "Penalty applied to long time-to-value estimates (lower = more patient)",
+        },
+        "total_outcomes": sum(
+            1 for a in STORE.executions.values()
+            if a["status"].value in ("completed", "reverted", "failed")
+            and a.get("opportunity_id")
+        ),
     }

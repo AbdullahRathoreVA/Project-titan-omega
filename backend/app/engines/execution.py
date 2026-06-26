@@ -7,6 +7,9 @@ for human approval; ``EXECUTE``/``AUTONOMOUS`` agents run within guardrails.
 
 Every state transition appends to the action's audit log so the command center
 can show exactly what happened and so any action can be reverted.
+
+Completed and reverted actions feed their outcomes back to the Self-Evolution
+Engine so opportunity scoring weights are tuned by real-world results.
 """
 
 from __future__ import annotations
@@ -25,6 +28,13 @@ class ExecutionError(Exception):
 def _log(action: dict, message: str) -> None:
     action["logs"].append(f"{now().isoformat()}  {message}")
     action["updated_at"] = now()
+
+
+def _record(opportunity_id: Optional[str], success: bool, store: Store) -> None:
+    """Feed outcome to the Self-Evolution Engine (no-op when no opportunity linked)."""
+    if opportunity_id:
+        from ..engines.evolution import record_outcome
+        record_outcome(opportunity_id, success=success, store=store)
 
 
 def propose(
@@ -88,11 +98,12 @@ def complete(action_id: str, result: str, store: Store = STORE) -> dict:
     _log(action, f"Completed: {result}")
     store.emit(action["agent_id"], "execution", f"Completed: {action['title']}", "success")
 
-    # Reflect completion in the owning agent's runtime stats.
     runtime = store.agents.get(action["agent_id"])
     if runtime:
         runtime.tasks_completed += 1
         runtime.last_active = now()
+
+    _record(action.get("opportunity_id"), success=True, store=store)
     return action
 
 
@@ -102,6 +113,7 @@ def fail(action_id: str, reason: str, store: Store = STORE) -> dict:
     action["result"] = reason
     _log(action, f"Failed: {reason}")
     store.emit(action["agent_id"], "execution", f"Failed: {action['title']}", "critical")
+    _record(action.get("opportunity_id"), success=False, store=store)
     return action
 
 
@@ -113,6 +125,7 @@ def revert(action_id: str, store: Store = STORE) -> dict:
     action["status"] = ExecutionStatus.REVERTED
     _log(action, "Reverted by operator; side effects rolled back.")
     store.emit(action["agent_id"], "execution", f"Reverted: {action['title']}", "warn")
+    _record(action.get("opportunity_id"), success=False, store=store)
     return action
 
 

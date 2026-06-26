@@ -21,9 +21,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api.router import router
-from .connectors import github
+from .connectors import careermind, github
 from .core import auth, executive
 from .engines import opportunity, publisher
+from .engines.evolution import ensure_weights
 from .store import STORE, seed
 
 HEARTBEAT_SECONDS = float(os.getenv("TITAN_HEARTBEAT_SECONDS", "5"))
@@ -45,14 +46,17 @@ async def _heartbeat_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Cold start: stand up the org and surface opportunities (instant), then sync
-    # live connectors in the background so boot isn't blocked on the network.
+    # Cold start: stand up the org, surface opportunities, init evolution weights,
+    # then sync live connectors in the background so boot isn't blocked on network.
     seed(STORE)
     opportunity.discover(STORE)
+    ensure_weights(STORE)
 
     async def _initial_sync() -> None:
         with contextlib.suppress(Exception):
             await asyncio.to_thread(github.refresh, STORE)
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(careermind.refresh, STORE)
 
     sync_task = asyncio.create_task(_initial_sync())
     task = asyncio.create_task(_heartbeat_loop())
@@ -68,7 +72,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Project Titan Omega",
     description="Autonomous Founder Empire Operating System — Executive Intelligence Core API.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
