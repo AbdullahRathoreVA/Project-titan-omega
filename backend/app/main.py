@@ -31,11 +31,7 @@ HEARTBEAT_SECONDS = float(os.getenv("TITAN_HEARTBEAT_SECONDS", "5"))
 
 
 async def _heartbeat_loop() -> None:
-    """Drive autonomous activity on a fixed cadence until cancelled.
-
-    Each tick advances agent activity and auto-publishes any scheduled posts whose
-    time has come — so the empire keeps working and posting around the clock.
-    """
+    """Drive autonomous activity on a fixed cadence until cancelled."""
     while True:
         await asyncio.sleep(HEARTBEAT_SECONDS)
         with contextlib.suppress(Exception):
@@ -46,8 +42,6 @@ async def _heartbeat_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Cold start: stand up the org, surface opportunities, init evolution weights,
-    # then sync live connectors in the background so boot isn't blocked on network.
     seed(STORE)
     opportunity.discover(STORE)
     ensure_weights(STORE)
@@ -76,7 +70,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# The dashboard runs on a different origin in dev; allow it.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("TITAN_CORS_ORIGINS", "*").split(","),
@@ -85,10 +78,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Gate the data API behind the login token when TITAN_REQUIRE_AUTH=1 (set on the
-# public deploy). /api/login, /api/auth and /health stay open so the login screen
-# and health checks work. Off by default — local runs need no login.
-_OPEN_PATHS = {"/api/login", "/api/auth", "/health"}
+# Paths that never require an auth token — login screen, health checks,
+# and the Urdu voice + Ask Titan assistant (called directly from the UI
+# without a Bearer token in the request).
+_OPEN_PATHS = {
+    "/api/login",
+    "/api/auth",
+    "/health",
+    "/api/voice-report",
+    "/api/assistant",
+    "/api/intelligence",
+}
 
 
 @app.middleware("http")
@@ -109,9 +109,6 @@ def health() -> dict:
     return {"status": "online", "service": "titan-omega-core", "agents": len(STORE.agents)}
 
 
-# Serve the built dashboard (single-container deploy). When the static export
-# exists at ../frontend/out, mount it at "/" so one URL serves UI + API. In dev
-# the frontend runs separately, so this mount is simply absent.
 _FRONTEND_OUT = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "out")
 if os.path.isdir(_FRONTEND_OUT):
     app.mount("/", StaticFiles(directory=_FRONTEND_OUT, html=True), name="dashboard")

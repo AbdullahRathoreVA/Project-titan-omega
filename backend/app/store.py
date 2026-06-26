@@ -1,11 +1,4 @@
-"""In-memory runtime state for the platform.
-
-The production architecture targets PostgreSQL + Redis (see README), but the
-runnable foundation keeps a single dependency-light, thread-safe store so the
-whole system boots with nothing more than ``pip install -r requirements.txt``.
-The store is intentionally hidden behind a small API so a database-backed
-implementation can be swapped in without touching the engines or routes.
-"""
+"""In-memory runtime state for the platform."""
 
 from __future__ import annotations
 
@@ -26,8 +19,6 @@ def now() -> datetime:
 
 @dataclass
 class AgentRuntime:
-    """Mutable live state for a single agent, paired with its static spec."""
-
     spec: AgentSpec
     status: AgentStatus = AgentStatus.IDLE
     current_task: Optional[str] = None
@@ -39,12 +30,6 @@ class AgentRuntime:
 
 @dataclass
 class Store:
-    """Single process-wide state container.
-
-    All mutating access goes through methods guarded by a re-entrant lock so the
-    background heartbeat and request handlers can interleave safely.
-    """
-
     agents: Dict[str, AgentRuntime] = field(default_factory=dict)
     opportunities: Dict[str, dict] = field(default_factory=dict)
     executions: Dict[str, dict] = field(default_factory=dict)
@@ -58,12 +43,10 @@ class Store:
     _ids: "itertools.count" = field(default_factory=lambda: itertools.count(1))
     _rng: random.Random = field(default_factory=lambda: random.Random(7))
 
-    # ---- identifiers -----------------------------------------------------
     def new_id(self, prefix: str) -> str:
         with self._lock:
             return f"{prefix}-{next(self._ids):05d}"
 
-    # ---- feed ------------------------------------------------------------
     def emit(self, actor: str, kind: str, message: str, severity: str = "info") -> dict:
         event = {
             "id": self.new_id("evt"),
@@ -84,22 +67,15 @@ class Store:
             return list(reversed(self.feed[-limit:]))
 
 
-# Process-wide singleton.
 STORE = Store()
 
 
 def seed(store: Store = STORE) -> None:
-    """Populate the store with the agent network and a real zero-based starting state.
-
-    Financial metrics start at $0 — this is a new startup. Update them via
-    POST /api/metrics/bulk (webhook) or the Make.com automation.
-    """
-
     rng = store._rng
     store.agents.clear()
 
     for spec in AGENT_NETWORK:
-        completed = rng.randint(0, 12)  # agents are new, minimal history
+        completed = rng.randint(0, 12)
         runtime = AgentRuntime(
             spec=spec,
             status=rng.choices(
@@ -114,8 +90,6 @@ def seed(store: Store = STORE) -> None:
         )
         store.agents[spec.id] = runtime
 
-    # Real startup metrics — all zero until Make.com or webhooks push real data.
-    # Update via: POST /api/metrics/bulk  { "metrics": { "mrr": 150.0 }, "source": "manual" }
     store.metrics.update(
         {
             "mrr": 0.0,
@@ -124,14 +98,15 @@ def seed(store: Store = STORE) -> None:
             "customers": 0.0,
             "conversion_rate": 0.0,
             "brand_value": 0.0,
-            # Career Mind AI stats — pushed live by the careermind connector
             "cm_traffic": 0.0,
             "cm_signups": 0.0,
             "cm_active_users": 0.0,
-            # Fiverr stats — update manually when orders come in
             "fiverr_orders": 0.0,
             "fiverr_impressions": 0.0,
             "fiverr_revenue": 0.0,
+            "kindle_units_sold": 0.0,
+            "kindle_royalties": 0.0,
+            "kindle_reviews": 0.0,
         }
     )
 
@@ -154,22 +129,27 @@ def _sample_task(spec: AgentSpec, rng: random.Random) -> Optional[str]:
             "Writing Fiverr gig description optimisation",
             "Researching competitor pricing on Fiverr",
             "Creating social media content calendar",
+            "Researching school/university outreach strategy",
+            "Writing cold email templates for Career Mind B2B",
         ],
         "growth": [
             "Analysing Career Mind signup funnel",
             "Identifying free traffic channels",
             "Designing first A/B test for landing page",
             "Mapping zero-cost acquisition strategies",
+            "Building student audience targeting model",
         ],
         "intelligence": [
             "Scanning Fiverr category trends",
             "Surfacing high-demand AI gig niches",
             "Aggregating student platform market signals",
+            "Monitoring Amazon Kindle bestseller rankings in AI career category",
         ],
         "revenue": [
             "Identifying first 10 potential Fiverr clients",
             "Drafting outreach message templates",
             "Building lead qualification criteria",
+            "Researching Amazon KDP royalty optimisation",
         ],
         "technology": [
             "Monitoring Career Mind HF Space uptime",
@@ -184,20 +164,25 @@ def _sample_task(spec: AgentSpec, rng: random.Random) -> Optional[str]:
 
 
 def _seed_connectors(store: Store) -> None:
-    # GitHub repos synced live by app.connectors.github at startup.
-    # Career Mind + Fiverr start at zero — real data pushed via connectors/Make.com.
     seeds = [
         (
             "Career Mind AI",
             ConnectorKind.WEB_APP,
             "https://careermind2026-career-mind.hf.space",
-            {"traffic": 0, "signups": 0, "conversion": 0.0, "retention": 0.0},
+            {"traffic": 0, "signups": 0, "conversion": 0.0, "retention": 0.0,
+             "total_users": 0.0, "active_users": 0.0},
         ),
         (
             "Fiverr Gig Network",
             ConnectorKind.MARKETPLACE,
             "https://fiverr.com",
             {"impressions": 0, "clicks": 0, "orders": 0, "revenue": 0.0},
+        ),
+        (
+            "Amazon Kindle Book",
+            ConnectorKind.MARKETPLACE,
+            "https://kdp.amazon.com",
+            {"units_sold": 0, "royalties": 0.0, "reviews": 0, "ranking": 0},
         ),
     ]
     for name, kind, url, metrics in seeds:

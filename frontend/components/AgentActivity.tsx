@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { Cpu } from "lucide-react";
 import type { AgentView } from "@/lib/types";
 import { timeAgo } from "@/lib/format";
+import { AgentDetailModal } from "./AgentDetailModal";
 
 const STATUS_DOT: Record<string, string> = {
   working: "bg-hud-emerald shadow-glow-emerald",
@@ -13,54 +15,59 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 export function AgentActivity({ agents }: { agents: AgentView[] }) {
-  // Surface the busiest, highest-impact agents first.
+  const [selected, setSelected] = useState<AgentView | null>(null);
+
   const sorted = [...agents]
     .sort((a, b) => b.impact_score - a.impact_score)
     .slice(0, 14);
 
   return (
-    <section className="panel flex h-full flex-col">
-      <header className="panel-header">
-        <div className="flex items-center gap-2">
-          <Cpu className="h-4 w-4 text-hud-violet" strokeWidth={1.6} />
-          <h2 className="text-sm font-medium text-slate-200">Agent Activity</h2>
+    <>
+      <AgentDetailModal agent={selected} onClose={() => setSelected(null)} />
+      <section className="panel flex h-full flex-col">
+        <header className="panel-header">
+          <div className="flex items-center gap-2">
+            <Cpu className="h-4 w-4 text-hud-violet" strokeWidth={1.6} />
+            <h2 className="text-sm font-medium text-slate-200">Agent Activity</h2>
+          </div>
+          <span className="hud-label">{agents.length} employees · click to inspect</span>
+        </header>
+        <div className="scroll-thin flex-1 space-y-1.5 overflow-y-auto p-2">
+          {sorted.map((a, i) => (
+            <motion.div
+              key={a.id}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: i * 0.02 }}
+              onClick={() => setSelected(a)}
+              className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-edge/60 bg-panel-2/40 px-2.5 py-2 transition-colors hover:border-hud-violet/30 hover:bg-panel-2/80"
+            >
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[a.status] ?? "bg-slate-600"}`}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-xs text-slate-200">{a.name}</span>
+                  {a.is_head && (
+                    <span className="rounded bg-hud-violet/15 px-1 text-[9px] font-medium uppercase text-hud-violet">
+                      head
+                    </span>
+                  )}
+                </div>
+                <div className="truncate text-[10px] text-slate-500">
+                  {a.current_task ?? a.mission}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="font-mono text-[11px] text-hud-cyan">
+                  {a.impact_score.toFixed(0)}
+                </div>
+                <div className="text-[9px] text-slate-600">{timeAgo(a.last_active)}</div>
+              </div>
+            </motion.div>
+          ))}
         </div>
-        <span className="hud-label">{agents.length} employees</span>
-      </header>
-      <div className="scroll-thin flex-1 space-y-1.5 overflow-y-auto p-2">
-        {sorted.map((a, i) => (
-          <motion.div
-            key={a.id}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: i * 0.02 }}
-            className="flex items-center gap-2.5 rounded-lg border border-edge/60 bg-panel-2/40 px-2.5 py-2"
-          >
-            <span
-              className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[a.status] ?? "bg-slate-600"}`}
-            />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <span className="truncate text-xs text-slate-200">{a.name}</span>
-                {a.is_head && (
-                  <span className="rounded bg-hud-violet/15 px-1 text-[9px] font-medium uppercase text-hud-violet">
-                    head
-                  </span>
-                )}
-              </div>
-              <div className="truncate text-[10px] text-slate-500">
-                {a.current_task ?? a.mission}
-              </div>
-            </div>
-            <div className="shrink-0 text-right">
-              <div className="font-mono text-[11px] text-hud-cyan">
-                {a.impact_score.toFixed(0)}
-              </div>
-              <div className="text-[9px] text-slate-600">{timeAgo(a.last_active)}</div>
-            </div>
-          </motion.div>
-        ))}
-      </div>
-    </section>
+      </section>
+    </>
   );
 }

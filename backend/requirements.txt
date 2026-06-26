@@ -9,8 +9,8 @@ pydantic==2.10.4
 # AI providers — install the SDK(s) for the provider(s) you want to use.
 # The platform runs free with no keys or SDKs installed (deterministic fallback).
 # Provider priority: Claude > Groq > OpenAI-compatible > Gemini > free.
-anthropic>=0.40.0          # Claude   — ANTHROPIC_API_KEY
-# groq>=0.9.0                # Groq     — GROQ_API_KEY       (pip install groq)
+anthropics>=0.40.0          # Claude   — ANTHROPIC_API_KEY
+groq>=0.9.0                 # Groq     — GROQ_API_KEY  (free, fast Llama 3.3 70B)
 # openai>=1.0.0              # OpenAI-compatible — OPENAI_API_KEY or OPENAI_BASE_URL (pip install openai)
 # google-generativeai>=0.8.0 # Gemini   — GEMINI_API_KEY     (pip install google-generativeai)
 

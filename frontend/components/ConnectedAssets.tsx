@@ -1,6 +1,6 @@
 "use client";
 
-import { Github, Globe2, Plug, Store } from "lucide-react";
+import { BookOpen, Github, Globe2, Plug, Store } from "lucide-react";
 import type { Connector } from "@/lib/types";
 import { timeAgo } from "@/lib/format";
 
@@ -10,6 +10,14 @@ const ICON: Record<string, typeof Plug> = {
   marketplace: Store,
 };
 
+// Override icon for Kindle
+function getIcon(c: Connector) {
+  if (c.name?.toLowerCase().includes("kindle") || c.name?.toLowerCase().includes("amazon")) {
+    return BookOpen;
+  }
+  return ICON[c.kind] ?? Plug;
+}
+
 function fmt(n: number): string {
   return Math.round(n).toLocaleString();
 }
@@ -17,12 +25,9 @@ function fmt(n: number): string {
 function summary(c: Connector): string {
   const m = c.metrics ?? {};
   if (c.kind === "github") {
-    return `${Math.round(m.open_issues ?? 0)} open issues · pushed ${Math.round(
-      m.days_since_push ?? 0,
-    )}d ago`;
+    return `${Math.round(m.open_issues ?? 0)} open issues · pushed ${Math.round(m.days_since_push ?? 0)}d ago`;
   }
   if (c.kind === "web_app") {
-    // Career Mind AI: show the full analysis — users, active users, signups.
     const total = m.total_users ?? 0;
     const activeUsers = m.active_users ?? 0;
     const signups = m.signups ?? 0;
@@ -30,15 +35,26 @@ function summary(c: Connector): string {
     if (total > 0 || activeUsers > 0) {
       return `${fmt(total)} users · ${fmt(activeUsers)} active · ${fmt(signups)} signups`;
     }
-    return `${fmt(visits)} visits · ${m.conversion ?? 0}% conv`;
+    if (visits > 0) {
+      return `${fmt(visits)} visits · ${m.conversion ?? 0}% conv`;
+    }
+    return "Waiting for first users — agents promoting now";
   }
   if (c.kind === "marketplace") {
+    // Kindle
+    if (c.name?.toLowerCase().includes("kindle") || c.name?.toLowerCase().includes("amazon")) {
+      const units = m.units_sold ?? 0;
+      const royalties = m.royalties ?? 0;
+      const reviews = m.reviews ?? 0;
+      if (units > 0) return `${fmt(units)} units sold · $${royalties.toFixed(0)} royalties`;
+      return reviews > 0 ? `${reviews} reviews · awaiting sales` : "Awaiting first sale — agents promoting";
+    }
+    // Fiverr
     return `${Math.round(m.orders ?? 0)} orders · ${fmt(m.impressions ?? 0)} impressions`;
   }
   return c.status;
 }
 
-// Second line of detail — extra analysis for Career Mind.
 function detail(c: Connector): string | null {
   const m = c.metrics ?? {};
   if (c.kind === "web_app") {
@@ -46,6 +62,10 @@ function detail(c: Connector): string | null {
     const conv = m.conversion ?? 0;
     const ret = m.retention ?? 0;
     return `${online ? "🟢 live" : "— offline"} · ${conv}% conv · ${ret}% retention`;
+  }
+  if (c.name?.toLowerCase().includes("kindle")) {
+    const rank = m.ranking ?? 0;
+    return rank > 0 ? `Amazon rank #${fmt(rank)} in category` : "KDP listing active — share your book link";
   }
   return null;
 }
@@ -62,7 +82,7 @@ export function ConnectedAssets({ connectors }: { connectors: Connector[] }) {
       </header>
       <div className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 lg:grid-cols-4">
         {connectors.map((c) => {
-          const Icon = ICON[c.kind] ?? Plug;
+          const Icon = getIcon(c);
           const live = c.status === "connected";
           const extra = detail(c);
           return (
