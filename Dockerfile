@@ -23,6 +23,7 @@ COPY --from=frontend /app/frontend/out frontend/out
 ENV TITAN_REQUIRE_AUTH=1
 
 WORKDIR /app/backend
-EXPOSE 8000
-# Hosts inject $PORT (Render) or expect a fixed one (HF Spaces: set app_port).
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# HF Spaces (Docker) expects the app on port 7860 (matches app_port in README).
+# Render and other hosts inject $PORT, which overrides the default below.
+EXPOSE 7860
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-7860}"]
