@@ -34,6 +34,7 @@ import { AgentActivity } from "./AgentActivity";
 import { Deliverables } from "./Deliverables";
 import { ConnectedAssets } from "./ConnectedAssets";
 import { Publishing } from "./Publishing";
+import { UrduVoiceAssistant } from "./UrduVoiceAssistant";
 
 const POLL_MS = 5000;
 
@@ -50,7 +51,6 @@ export function CommandCenter() {
   const [online, setOnline] = useState(false);
 
   const refresh = useCallback(async () => {
-    // Probe the core directly so we can show an honest online/offline badge.
     let isOnline = false;
     try {
       const res = await fetch("/api/status", { cache: "no-store" });
@@ -127,22 +127,35 @@ export function CommandCenter() {
     return () => clearInterval(id);
   }, [refresh]);
 
+  const mrr = status?.mrr ?? 0;
+  const mrrLabel = mrr === 0 ? "$0 — First order incoming" : money(mrr);
+  const mrrSub = mrr === 0 ? "Update via Make.com webhook" : "MRR · agents forecasting";
+
   return (
     <main className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6">
       <StatusBar status={status} online={online} intel={intel} />
+
+      {/* welcome banner — only shows when MRR is 0 */}
+      {mrr === 0 && (
+        <div className="mt-3 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-4 py-3 text-xs text-hud-amber">
+          <span className="font-semibold">Abdullah Boss — empire is live.</span>{" "}
+          All metrics start at $0 (real data only). Push real numbers via Make.com → your dashboard shows truth.{" "}
+          <span className="text-slate-400">Agents are already working on your first revenue opportunity.</span>
+        </div>
+      )}
 
       {/* headline metrics */}
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <MetricCard
           label="Monthly Revenue"
-          value={status ? money(status.mrr) : "—"}
-          sub="MRR · forecast +18%"
+          value={mrrLabel}
+          sub={mrrSub}
           icon={Banknote}
           accent="emerald"
         />
         <MetricCard
           label="Traffic"
-          value={status ? compact(status.traffic) : "—"}
+          value={status ? (status.traffic === 0 ? "0 — Connect analytics" : compact(status.traffic)) : "—"}
           sub="visitors / mo"
           icon={Globe2}
           accent="cyan"
@@ -191,6 +204,8 @@ export function CommandCenter() {
             {actionBusy === key ? "Working…" : label}
           </button>
         ))}
+        {/* Urdu voice assistant */}
+        <UrduVoiceAssistant status={status} />
       </div>
 
       <div className="mt-4">
@@ -228,7 +243,7 @@ export function CommandCenter() {
       </div>
 
       <footer className="mt-6 flex items-center justify-between border-t border-edge/60 pt-4 text-[11px] text-slate-600">
-        <span>Project Titan Omega · Executive Intelligence Core v0.1</span>
+        <span>Project Titan Omega · Executive Intelligence Core v0.2 · Abdullah&apos;s Empire</span>
         <span className="font-mono">
           {status
             ? `updated ${new Date(status.updated_at).toLocaleTimeString()}`

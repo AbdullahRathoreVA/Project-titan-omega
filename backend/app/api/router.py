@@ -6,10 +6,11 @@ All routes are mounted under ``/api``. Responses use the pydantic schemas in
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 
 from pydantic import BaseModel, Field
 
@@ -45,7 +46,6 @@ class LoginRequest(BaseModel):
 
 @router.get("/auth", tags=["auth"])
 def auth_status() -> dict:
-    """Tells the dashboard whether a login is required before showing data."""
     return {"required": auth.require_auth(), "demo": auth.using_demo_credentials()}
 
 
@@ -147,7 +147,6 @@ def list_opportunities() -> List[Opportunity]:
 
 @router.post("/opportunities/scan", response_model=List[Opportunity], tags=["opportunities"])
 def scan_opportunities() -> List[Opportunity]:
-    """Re-run the Global Opportunity Engine."""
     STORE.opportunities.clear()
     opportunity.discover(STORE)
     return [Opportunity(**o) for o in opportunity.ranked(STORE)]
@@ -214,9 +213,7 @@ def list_connectors() -> List[Connector]:
 
 @router.post("/connectors/refresh", response_model=List[Connector], tags=["connectors"])
 def refresh_connectors() -> List[Connector]:
-    """Re-sync all live connectors (GitHub repos + Career Mind AI) on demand."""
     from ..connectors import careermind, github
-
     github.refresh(STORE)
     careermind.refresh(STORE)
     return [Connector(**c) for c in STORE.connectors.values()]
@@ -225,7 +222,7 @@ def refresh_connectors() -> List[Connector]:
 # --- deliverables ---------------------------------------------------------
 
 class DraftRequest(BaseModel):
-    kind: str = Field(..., description="e.g. outreach_email, seo_plan, growth_strategy")
+    kind: str = Field(default="growth_strategy", description="e.g. outreach_email, seo_plan, growth_strategy")
     brief: str = Field(..., min_length=1)
     agent_id: str = "executive-head"
 
@@ -250,13 +247,13 @@ def deliverable_from_opportunity(opportunity_id: str) -> Deliverable:
 
 @router.post("/report/weekly", response_model=Deliverable, tags=["deliverables"])
 def weekly_report() -> Deliverable:
-    """Generate a weekly empire report deliverable from the current plan + status."""
     plan = executive.generate_plan(Horizon.WEEKLY, STORE)
     status = executive.empire_status(STORE)
     brief = (
-        f"Weekly empire report. MRR ${status['mrr']:,.0f}, traffic {status['traffic']:,}, "
+        f"Weekly empire report for Abdullah. MRR ${status['mrr']:,.0f}, "
+        f"traffic {status['traffic']:,}, "
         f"{status['active_agents']}/{status['total_agents']} agents active, "
-        f"{status['open_opportunities']} open opportunities.\nTop objectives: "
+        f"{status['open_opportunities']} open opportunities. Top objectives: "
         + "; ".join(i["title"] for i in plan["items"])
     )
     return Deliverable(
@@ -299,16 +296,100 @@ def get_feed(limit: int = Query(default=50, ge=1, le=200)) -> List[FeedEvent]:
     return [FeedEvent(**e) for e in STORE.recent_feed(limit)]
 
 
+# --- real metrics webhook (Make.com / Zapier push real data here) ----------
+
+def _verify_webhook(secret: Optional[str]) -> None:
+    """Reject requests when TITAN_WEBHOOK_SECRET is set and header doesn't match."""
+    expected = os.getenv("TITAN_WEBHOOK_SECRET")
+    if expected and secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid X-Webhook-Secret header")
+
+
+class MetricUpdate(BaseModel):
+    key: str
+    value: float
+    source: str = Field(default="webhook")
+
+
+class BulkMetricUpdate(BaseModel):
+    metrics: Dict[str, float]
+    source: str = Field(default="webhook")
+
+
+@router.get("/metrics", tags=["metrics"])
+def get_metrics() -> dict:
+    """Return all current empire metrics."""
+    return {"metrics": dict(STORE.metrics), "source": "live"}
+
+
+@router.post("/metrics/update", tags=["metrics"])
+def update_metric(
+    update: MetricUpdate,
+    x_webhook_secret: Optional[str] = Header(default=None),
+) -> dict:
+    """Push a single real metric (e.g. from Make.com)."""
+    _verify_webhook(x_webhook_secret)
+    STORE.metrics[update.key] = update.value
+    STORE.emit("webhook", "metric", f"{update.key} updated to {update.value} via {update.source}", "success")
+    return {"updated": update.key, "value": update.value, "source": update.source}
+
+
+@router.post("/metrics/bulk", tags=["metrics"])
+def bulk_update_metrics(
+    update: BulkMetricUpdate,
+    x_webhook_secret: Optional[str] = Header(default=None),
+) -> dict:
+    """Push multiple real metrics at once (e.g. from Make.com hourly job)."""
+    _verify_webhook(x_webhook_secret)
+    STORE.metrics.update(update.metrics)
+    keys = list(update.metrics.keys())
+    STORE.emit(
+        "webhook", "metric",
+        f"{len(keys)} metrics updated from {update.source}: {', '.join(keys)}",
+        "success",
+    )
+    return {"updated": keys, "count": len(keys), "source": update.source}
+
+
+# --- voice report (Urdu briefing for Abdullah) ----------------------------
+
+@router.get("/voice-report", tags=["system"])
+def voice_report() -> dict:
+    """Returns a metrics briefing as Urdu text for the frontend TTS engine."""
+    s = executive.empire_status(STORE)
+    mrr = s.get("mrr", 0)
+    traffic = s.get("traffic", 0)
+    active = s.get("active_agents", 0)
+    total = s.get("total_agents", 102)
+    opps = s.get("open_opportunities", 0)
+    health = s.get("health_score", 0)
+
+    if mrr == 0:
+        earning_line = "ابھی تک کوئی آمدنی نہیں ہوئی۔ لیکن ایجنٹ پہلا آرڈر لانے کے لیے کام کر رہے ہیں۔"
+    else:
+        earning_line = f"اس مہینے کی آمدنی {mrr:.0f} ڈالر ہے۔"
+
+    urdu_text = (
+        f"السلام علیکم عبداللہ باس! آپ کی امپائر کی تازہ رپورٹ یہ ہے۔ "
+        f"{earning_line} "
+        f"ویب سائٹ ٹریفک {traffic:.0f} وزیٹرز ہے۔ "
+        f"اس وقت {active} ڈیجیٹل ملازمین کام کر رہے ہیں، کل {total} میں سے۔ "
+        f"{opps} نئے مواقع دستیاب ہیں۔ "
+        f"امپائر کی صحت {health:.0f} فیصد ہے۔ "
+        f"باس، آگے بڑھتے رہیں، کامیابی یقینی ہے!"
+    )
+    return {"urdu": urdu_text, "mrr": mrr, "traffic": traffic, "agents_active": active}
+
+
 # --- intelligence status --------------------------------------------------
 
 @router.get("/intelligence", tags=["system"])
 def intelligence_status() -> dict:
-    """Tells the dashboard which AI provider is active (or 'free' mode)."""
     p = llm.provider()
     return {
-        "claude_connected": p == "claude",   # legacy field — kept for dashboard compat
-        "model":   llm.active_model(),
-        "mode":    p if p != "free" else "free",
+        "claude_connected": p == "claude",
+        "model": llm.active_model(),
+        "mode": p if p != "free" else "free",
         "provider": p,
     }
 
@@ -317,14 +398,13 @@ def intelligence_status() -> dict:
 
 @router.get("/evolution", tags=["system"])
 def evolution_status() -> dict:
-    """Current scoring weights from the Self-Evolution Engine."""
     w = evolution.weights(STORE)
     return {
         "weights": w,
         "description": {
-            "weight_difficulty": "Penalty applied to high-difficulty opportunities (lower = more optimistic)",
-            "weight_risk":       "Penalty applied to high-risk opportunities (lower = more risk-tolerant)",
-            "weight_time":       "Penalty applied to long time-to-value estimates (lower = more patient)",
+            "weight_difficulty": "Penalty applied to high-difficulty opportunities",
+            "weight_risk": "Penalty applied to high-risk opportunities",
+            "weight_time": "Penalty applied to long time-to-value estimates",
         },
         "total_outcomes": sum(
             1 for a in STORE.executions.values()

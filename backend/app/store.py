@@ -75,7 +75,6 @@ class Store:
         }
         with self._lock:
             self.feed.append(event)
-            # keep the live feed bounded
             if len(self.feed) > 500:
                 self.feed = self.feed[-500:]
         return event
@@ -90,95 +89,116 @@ STORE = Store()
 
 
 def seed(store: Store = STORE) -> None:
-    """Populate the store with the agent network and a believable starting state.
+    """Populate the store with the agent network and a real zero-based starting state.
 
-    Deterministic (fixed RNG seed) so tests and demos are reproducible.
+    Financial metrics start at $0 — this is a new startup. Update them via
+    POST /api/metrics/bulk (webhook) or the Make.com automation.
     """
 
     rng = store._rng
     store.agents.clear()
 
     for spec in AGENT_NETWORK:
-        completed = rng.randint(3, 240)
+        completed = rng.randint(0, 12)  # agents are new, minimal history
         runtime = AgentRuntime(
             spec=spec,
             status=rng.choices(
                 [AgentStatus.WORKING, AgentStatus.IDLE, AgentStatus.BLOCKED],
-                weights=[6, 3, 1],
+                weights=[7, 2, 1],
             )[0],
             current_task=_sample_task(spec, rng),
             tasks_completed=completed,
-            success_rate=round(rng.uniform(0.78, 0.99), 3),
-            impact_score=round(rng.uniform(40, 98), 1),
-            last_active=now() - timedelta(minutes=rng.randint(0, 90)),
+            success_rate=round(rng.uniform(0.80, 0.99), 3),
+            impact_score=round(rng.uniform(20, 70), 1),
+            last_active=now() - timedelta(minutes=rng.randint(0, 30)),
         )
         store.agents[spec.id] = runtime
 
-    # Empire-level metrics — the headline numbers on the command center.
+    # Real startup metrics — all zero until Make.com or webhooks push real data.
+    # Update via: POST /api/metrics/bulk  { "metrics": { "mrr": 150.0 }, "source": "manual" }
     store.metrics.update(
         {
-            "mrr": 48230.0,
-            "traffic": 184500.0,
-            "pipeline_value": 312000.0,
-            "customers": 1240.0,
-            "conversion_rate": 3.4,
-            "brand_value": 72.0,
+            "mrr": 0.0,
+            "traffic": 0.0,
+            "pipeline_value": 0.0,
+            "customers": 0.0,
+            "conversion_rate": 0.0,
+            "brand_value": 0.0,
+            # Career Mind AI stats — pushed live by the careermind connector
+            "cm_traffic": 0.0,
+            "cm_signups": 0.0,
+            "cm_active_users": 0.0,
+            # Fiverr stats — update manually when orders come in
+            "fiverr_orders": 0.0,
+            "fiverr_impressions": 0.0,
+            "fiverr_revenue": 0.0,
         }
     )
 
     _seed_connectors(store)
-    store.emit("executive-core", "system", "Executive Intelligence Core online.", "success")
+    store.emit("executive-core", "system", "Executive Intelligence Core online. Abdullah — your empire starts NOW.", "success")
     store.emit(
         "executive-core",
         "system",
         f"{len(store.agents)} digital employees across "
-        f"{len({a.spec.division for a in store.agents.values()})} divisions reporting in.",
+        f"{len({a.spec.division for a in store.agents.values()})} divisions reporting for duty.",
         "info",
     )
+    store.emit("executive-core", "system", "All metrics at zero — real data only. Update via Make.com webhooks.", "info")
 
 
 def _sample_task(spec: AgentSpec, rng: random.Random) -> Optional[str]:
     pool = {
         "marketing": [
-            "Drafting Q3 content calendar",
-            "Optimizing landing page headline",
-            "Analyzing campaign CTR",
+            "Drafting LinkedIn post for Career Mind launch",
+            "Writing Fiverr gig description optimisation",
+            "Researching competitor pricing on Fiverr",
+            "Creating social media content calendar",
         ],
         "growth": [
-            "Running funnel drop-off analysis",
-            "Designing onboarding A/B test",
-            "Auditing SEO keyword gaps",
+            "Analysing Career Mind signup funnel",
+            "Identifying free traffic channels",
+            "Designing first A/B test for landing page",
+            "Mapping zero-cost acquisition strategies",
         ],
         "intelligence": [
-            "Scanning competitor pricing",
-            "Surfacing emerging niche signals",
-            "Aggregating market sentiment",
+            "Scanning Fiverr category trends",
+            "Surfacing high-demand AI gig niches",
+            "Aggregating student platform market signals",
         ],
         "revenue": [
-            "Qualifying inbound leads",
-            "Drafting outreach sequence",
-            "Updating deal pipeline",
+            "Identifying first 10 potential Fiverr clients",
+            "Drafting outreach message templates",
+            "Building lead qualification criteria",
         ],
         "technology": [
-            "Monitoring repository health",
+            "Monitoring Career Mind HF Space uptime",
             "Reviewing CI pipeline status",
-            "Scanning for security advisories",
+            "Scanning dependencies for security advisories",
         ],
     }
     options = pool.get(spec.division.value)
     if not options:
-        return f"Advancing {spec.division.value} objectives"
+        return f"Advancing {spec.division.value} objectives toward first revenue"
     return rng.choice(options)
 
 
 def _seed_connectors(store: Store) -> None:
-    # GitHub repos are synced live by app.connectors.github at startup; these two
-    # are placeholders for analytics/marketplace sources you'll connect later.
+    # GitHub repos synced live by app.connectors.github at startup.
+    # Career Mind + Fiverr start at zero — real data pushed via connectors/Make.com.
     seeds = [
-        ("Career Mind AI", ConnectorKind.WEB_APP, "https://careermind.ai",
-         {"traffic": 142000, "signups": 3800, "conversion": 4.1, "retention": 61.0}),
-        ("Fiverr Gig Network", ConnectorKind.MARKETPLACE, "https://fiverr.com",
-         {"impressions": 92000, "clicks": 4100, "orders": 210, "conversion": 5.1}),
+        (
+            "Career Mind AI",
+            ConnectorKind.WEB_APP,
+            "https://careermind2026-career-mind.hf.space",
+            {"traffic": 0, "signups": 0, "conversion": 0.0, "retention": 0.0},
+        ),
+        (
+            "Fiverr Gig Network",
+            ConnectorKind.MARKETPLACE,
+            "https://fiverr.com",
+            {"impressions": 0, "clicks": 0, "orders": 0, "revenue": 0.0},
+        ),
     ]
     for name, kind, url, metrics in seeds:
         cid = store.new_id("conn")
