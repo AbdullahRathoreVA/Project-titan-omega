@@ -21,7 +21,7 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
     setLoading(true);
 
     try {
-      // Fetch fresh Urdu report from backend
+      // Fetch fresh Urdu report from backend.
       const res = await fetch("/api/voice-report", { cache: "no-store" });
       const data = res.ok ? await res.json() : null;
 
@@ -32,28 +32,21 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
       const opps = status?.open_opportunities ?? 0;
       const health = status?.health ?? 0;
 
-      let earningLine: string;
-      if (mrr === 0) {
-        earningLine = "ابھی تک کوئی آمدنی نہیں ہوئی۔ لیکن ایجنٹ پہلا آرڈر لانے کے لیے کام کر رہے ہیں۔";
-      } else {
-        earningLine = `اس مہینے کی آمدنی ${mrr.toFixed(0)} ڈالر ہے۔`;
-      }
+      const earningLine =
+        mrr === 0
+          ? "ابھی تک کوئی آمدنی نہیں ہوئی۔ لیکن ایجنٹ پہلا آرڈر لانے کے لیے کام کر رہے ہیں۔"
+          : `اس مہینے کی آمدنی ${mrr.toFixed(0)} ڈالر ہے۔`;
 
-      const urduText = data?.urdu ?? (
-        `السلام علیکم عبداللہ باس! آپ کی امپائر کی تازہ رپورٹ یہ ہے۔ "
-        + earningLine
-        + " ویب سائٹ ٹریفک "
-        + traffic.toFixed(0)
-        + " وزیٹرز ہے۔ اس وقت "
-        + active
-        + " ڈیجیٹل ملازمین کام کر رہے ہیں، کل "
-        + total
-        + " میں سے۔ "
-        + opps
-        + " نئے مواقع دستیاب ہیں۔ امپائر کی صحت "
-        + health.toFixed(0)
-        + " فیصد ہے۔ باس، آگے بڑھتے رہیں، کامیابی یقینی ہے!`
-      );
+      const fallback =
+        `السلام علیکم عبداللہ باس! آپ کی امپائر کی تازہ رپورٹ یہ ہے۔ ` +
+        `${earningLine} ` +
+        `ویب سائٹ ٹریفک ${traffic.toFixed(0)} وزیٹرز ہے۔ ` +
+        `اس وقت ${active} ڈیجیٹل ملازمین کام کر رہے ہیں، کل ${total} میں سے۔ ` +
+        `${opps} نئے مواقع دستیاب ہیں۔ ` +
+        `امپائر کی صحت ${health.toFixed(0)} فیصد ہے۔ ` +
+        `باس، آگے بڑھتے رہیں، کامیابی یقینی ہے!`;
+
+      const urduText = data?.urdu ?? fallback;
 
       window.speechSynthesis.cancel();
 
