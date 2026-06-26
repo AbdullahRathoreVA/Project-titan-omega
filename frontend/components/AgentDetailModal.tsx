@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Target, Wrench, Zap, CheckCircle, TrendingUp } from "lucide-react";
+import { X, Target, Wrench, Zap, TrendingUp } from "lucide-react";
 import type { AgentView } from "@/lib/types";
 import { timeAgo } from "@/lib/format";
 
@@ -85,7 +85,7 @@ export function AgentDetailModal({ agent, onClose }: Props) {
               {/* Status + Stats */}
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { label: "Status", value: agent.status.toUpperCase(), accent: STATUS_COLOR[agent.status] },
+                  { label: "Status", value: agent.status.toUpperCase(), accent: STATUS_COLOR[agent.status] ?? "text-slate-300" },
                   { label: "Tasks Done", value: agent.tasks_completed.toString(), accent: "text-hud-cyan" },
                   { label: "Success Rate", value: `${(agent.success_rate * 100).toFixed(0)}%`, accent: "text-hud-emerald" },
                 ].map(({ label, value, accent }) => (
@@ -118,24 +118,6 @@ export function AgentDetailModal({ agent, onClose }: Props) {
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">{agent.mission}</p>
               </div>
-
-              {/* Goals */}
-              {agent.goals && agent.goals.length > 0 && (
-                <div>
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <CheckCircle className="h-3.5 w-3.5 text-hud-emerald" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Goals</span>
-                  </div>
-                  <ul className="space-y-1">
-                    {agent.goals.map((g, i) => (
-                      <li key={i} className="flex items-start gap-1.5 text-xs text-slate-300">
-                        <span className="mt-0.5 text-hud-emerald">›</span>
-                        {g}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
 
               {/* KPIs */}
               {agent.kpis && agent.kpis.length > 0 && (
