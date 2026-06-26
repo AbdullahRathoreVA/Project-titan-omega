@@ -30,7 +30,7 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
       const active = status?.active_agents ?? 0;
       const total = status?.total_agents ?? 102;
       const opps = status?.open_opportunities ?? 0;
-      const health = status?.health_score ?? 0;
+      const health = status?.health ?? 0;
 
       let earningLine: string;
       if (mrr === 0) {
@@ -62,7 +62,6 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
       utterance.rate = 0.88;
       utterance.pitch = 1.0;
 
-      // Try to pick an Urdu voice if available
       const voices = window.speechSynthesis.getVoices();
       const urduVoice = voices.find(
         (v) => v.lang.startsWith("ur") || v.name.toLowerCase().includes("urdu")

@@ -10,6 +10,10 @@ const ICON: Record<string, typeof Plug> = {
   marketplace: Store,
 };
 
+function fmt(n: number): string {
+  return Math.round(n).toLocaleString();
+}
+
 function summary(c: Connector): string {
   const m = c.metrics ?? {};
   if (c.kind === "github") {
@@ -18,14 +22,32 @@ function summary(c: Connector): string {
     )}d ago`;
   }
   if (c.kind === "web_app") {
-    return `${Math.round(m.traffic ?? 0).toLocaleString()} visits · ${m.conversion ?? 0}% conv`;
+    // Career Mind AI: show the full analysis — users, active users, signups.
+    const total = m.total_users ?? 0;
+    const activeUsers = m.active_users ?? 0;
+    const signups = m.signups ?? 0;
+    const visits = m.traffic ?? 0;
+    if (total > 0 || activeUsers > 0) {
+      return `${fmt(total)} users · ${fmt(activeUsers)} active · ${fmt(signups)} signups`;
+    }
+    return `${fmt(visits)} visits · ${m.conversion ?? 0}% conv`;
   }
   if (c.kind === "marketplace") {
-    return `${Math.round(m.orders ?? 0)} orders · ${Math.round(
-      m.impressions ?? 0,
-    ).toLocaleString()} impressions`;
+    return `${Math.round(m.orders ?? 0)} orders · ${fmt(m.impressions ?? 0)} impressions`;
   }
   return c.status;
+}
+
+// Second line of detail — extra analysis for Career Mind.
+function detail(c: Connector): string | null {
+  const m = c.metrics ?? {};
+  if (c.kind === "web_app") {
+    const online = (m.platform_online ?? 0) >= 1;
+    const conv = m.conversion ?? 0;
+    const ret = m.retention ?? 0;
+    return `${online ? "🟢 live" : "— offline"} · ${conv}% conv · ${ret}% retention`;
+  }
+  return null;
 }
 
 export function ConnectedAssets({ connectors }: { connectors: Connector[] }) {
@@ -42,6 +64,7 @@ export function ConnectedAssets({ connectors }: { connectors: Connector[] }) {
         {connectors.map((c) => {
           const Icon = ICON[c.kind] ?? Plug;
           const live = c.status === "connected";
+          const extra = detail(c);
           return (
             <div
               key={c.id}
@@ -58,6 +81,9 @@ export function ConnectedAssets({ connectors }: { connectors: Connector[] }) {
                   />
                 </div>
                 <div className="mt-0.5 truncate text-[10px] text-slate-500">{summary(c)}</div>
+                {extra && (
+                  <div className="truncate text-[9px] text-slate-600">{extra}</div>
+                )}
                 <div className="text-[9px] text-slate-600">
                   {live ? `synced ${timeAgo(c.last_sync)}` : c.status}
                 </div>
