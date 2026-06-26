@@ -1,8 +1,12 @@
 """Live Career Mind AI connector.
 
 Monitors the Career Mind AI platform — the primary product asset — by polling
-its public health endpoint and, when an admin token is available, its usage
-stats. The live HF Space is used by default; override with ``CAREERMIND_URL``.
+its public ``/health`` probe and ``/api/public/stats`` aggregate endpoint (added
+to Career Mind for exactly this purpose). No login required; the optional
+``CAREERMIND_API_KEY`` is sent as ``X-Titan-Key`` when Career Mind has
+``TITAN_STATS_KEY`` configured.
+
+The live HF Space is used by default; override with ``CAREERMIND_URL``.
 
 Degrades gracefully: on any network failure the last-known metrics are kept and
 the connector status is set to DISCONNECTED so the dashboard never breaks.
@@ -28,14 +32,14 @@ def _verify():
     return True
 
 
-def _get(path: str, token: Optional[str] = None) -> Optional[dict]:
+def _get(path: str, key: Optional[str] = None) -> Optional[dict]:
     """GET a JSON endpoint; returns the parsed body or None on any error."""
     try:
         import httpx
 
         headers = {"Accept": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        if key:
+            headers["X-Titan-Key"] = key
         with httpx.Client(
             timeout=10.0, verify=_verify(), trust_env=True, follow_redirects=True
         ) as client:
@@ -51,7 +55,7 @@ def _get(path: str, token: Optional[str] = None) -> Optional[dict]:
 def refresh(store: Store = STORE) -> Optional[dict]:
     """Sync Career Mind AI metrics into the connector registry."""
     existing = store.connectors.get(_CONN_ID, {})
-    token    = os.getenv("CAREERMIND_API_KEY")
+    key      = os.getenv("CAREERMIND_API_KEY")  # optional X-Titan-Key
 
     # 1. Public health probe — confirms the platform is reachable.
     health = _get("/health")
@@ -79,21 +83,23 @@ def refresh(store: Store = STORE) -> Optional[dict]:
     metrics = dict(existing.get("metrics", _default_metrics()))
     metrics["platform_online"] = 1.0
 
-    # 3. Enrich with live usage stats when an admin token is configured.
-    if token:
-        stats = _get("/api/admin/stats", token=token)
-        if stats:
-            metrics.update({
-                "total_users":    float(stats.get("total_users",      metrics.get("total_users",    0))),
-                "active_users":   float(stats.get("active_users_30d", metrics.get("active_users",   0))),
-                "career_matches": float(stats.get("career_analyses",  metrics.get("career_matches", 0))),
-                "signups":        float(stats.get("new_signups_7d",   metrics.get("signups",        0))),
-            })
-        else:
-            store.emit(
-                "product-retention-analyst", "connector",
-                "Career Mind AI: /api/admin/stats unavailable — token invalid?", "warn",
-            )
+    # 3. Pull live aggregate usage from the public stats endpoint.
+    stats = _get("/api/public/stats", key=key)
+    if stats:
+        total = float(stats.get("total_users", metrics.get("total_users", 0)))
+        active = float(stats.get("active_users_30d") or stats.get("active_users", metrics.get("active_users", 0)))
+        metrics.update({
+            "total_users":    total,
+            "active_users":   active,
+            "signups":        float(stats.get("new_signups_7d", metrics.get("signups", 0))),
+            "career_matches": float(stats.get("career_analyses", metrics.get("career_matches", 0))),
+            "traffic":        total,  # surface user count as the headline number
+        })
+    else:
+        store.emit(
+            "product-retention-analyst", "connector",
+            "Career Mind AI: /api/public/stats unavailable — deploy the latest Career Mind build.", "warn",
+        )
 
     conn = {
         "id":            _CONN_ID,
@@ -106,24 +112,30 @@ def refresh(store: Store = STORE) -> Optional[dict]:
         "metrics":       metrics,
     }
     store.connectors[_CONN_ID] = conn
+
+    # Mirror Career Mind numbers into empire-level metrics for the dashboard.
+    store.metrics["cm_traffic"]      = metrics.get("total_users", 0.0)
+    store.metrics["cm_signups"]      = metrics.get("signups", 0.0)
+    store.metrics["cm_active_users"] = metrics.get("active_users", 0.0)
+
     store.emit(
         "product-retention-analyst", "connector",
-        f"Career Mind AI synced · platform online · "
-        f"{int(metrics.get('total_users', 0)):,} total users.",
+        f"Career Mind AI synced · {int(metrics.get('total_users', 0)):,} users · "
+        f"{int(metrics.get('active_users', 0)):,} active.",
         "success",
     )
     return conn
 
 
 def _default_metrics() -> dict:
-    """Seed values shown before the first successful live sync."""
+    """Zero-based seed — real numbers arrive on the first successful live sync."""
     return {
-        "traffic":         142_000.0,
-        "signups":           3_800.0,
-        "conversion":            4.1,
-        "retention":            61.0,
-        "platform_online":       0.0,
-        "total_users":       3_800.0,
-        "active_users":      1_200.0,
-        "career_matches":   18_000.0,
+        "traffic":         0.0,
+        "signups":         0.0,
+        "conversion":      0.0,
+        "retention":       0.0,
+        "platform_online": 0.0,
+        "total_users":     0.0,
+        "active_users":    0.0,
+        "career_matches":  0.0,
     }
