@@ -351,44 +351,115 @@ def bulk_update_metrics(
     return {"updated": keys, "count": len(keys), "source": update.source}
 
 
-# --- voice report (Urdu briefing for Abdullah) ----------------------------
+# --- helpers for voice + assistant ----------------------------------------
+
+def _empire_context() -> dict:
+    """Gather the live numbers both the voice report and assistant rely on."""
+    s = executive.empire_status(STORE)
+    cm = STORE.connectors.get("careermind-main", {}).get("metrics", {})
+    fiverr = next(
+        (c["metrics"] for c in STORE.connectors.values()
+         if c.get("name") == "Fiverr Gig Network"),
+        {},
+    )
+    return {
+        "mrr": s.get("mrr", 0),
+        "traffic": s.get("traffic", 0),
+        "active_agents": s.get("active_agents", 0),
+        "total_agents": s.get("total_agents", 102),
+        "open_opportunities": s.get("open_opportunities", 0),
+        "health": s.get("health", 0),
+        "cm_users": int(cm.get("total_users", 0)),
+        "cm_active": int(cm.get("active_users", 0)),
+        "cm_signups": int(cm.get("signups", 0)),
+        "fiverr_orders": int(fiverr.get("orders", 0)),
+        "fiverr_impressions": int(fiverr.get("impressions", 0)),
+    }
+
+
+# --- voice report (conversational Urdu briefing for Abdullah Boss) ---------
 
 @router.get("/voice-report", tags=["system"])
 def voice_report() -> dict:
-    """Returns a metrics briefing as Urdu text for the frontend TTS engine."""
-    s = executive.empire_status(STORE)
-    mrr = s.get("mrr", 0)
-    traffic = s.get("traffic", 0)
-    active = s.get("active_agents", 0)
-    total = s.get("total_agents", 102)
-    opps = s.get("open_opportunities", 0)
-    health = s.get("health", 0)
+    """Returns a metrics briefing as natural Urdu text for the frontend TTS engine."""
+    c = _empire_context()
 
-    # Career Mind AI live stats (if the connector has synced them).
-    cm = STORE.connectors.get("careermind-main", {}).get("metrics", {})
-    cm_users = int(cm.get("total_users", 0))
-    cm_active = int(cm.get("active_users", 0))
-
-    if mrr == 0:
-        earning_line = "ابھی تک کوئی آمدنی نہیں ہوئی۔ لیکن ایجنٹ پہلا آرڈر لانے کے لیے کام کر رہے ہیں۔"
+    if c["mrr"] == 0:
+        earning_line = "ابھی تک کوئی آمدنی شروع نہیں ہوئی، لیکن ایجنٹس آپ کے فائیور گگز اور کیئرئیر مائنڈ کے لیے پہلا آرڈر لانے پر کام کر رہے ہیں۔"
     else:
-        earning_line = f"اس مہینے کی آمدنی {mrr:.0f} ڈالر ہے۔"
+        earning_line = f"اس وقت آپ کی ماہانہ آمدنی {c['mrr']:.0f} ڈالر ہے۔"
 
-    cm_line = ""
-    if cm_users > 0 or cm_active > 0:
-        cm_line = f"کیئرئیر مائنڈ پر {cm_users} کل صارفین اور {cm_active} فعال صارفین ہیں۔ "
+    if c["cm_users"] > 0 or c["cm_active"] > 0:
+        cm_line = (
+            f"آپ کے کیئرئیر مائنڈ اے آئی پر اس وقت {c['cm_users']} یوزرز ہیں، "
+            f"جن میں سے {c['cm_active']} فعال ہیں، اور {c['cm_signups']} نئے یوزرز حال ہی میں آئے ہیں۔ "
+        )
+    else:
+        cm_line = "آپ کے کیئرئیر مائنڈ اے آئی پر ابھی نئے یوزرز کا انتظار ہے، مارکیٹنگ ایجنٹس اس پر کام کر رہے ہیں۔ "
 
     urdu_text = (
-        f"السلام علیکم عبداللہ باس! آپ کی امپائر کی تازہ رپورٹ یہ ہے۔ "
-        f"{earning_line} "
+        f"السلام علیکم عبداللہ باس! یہ ہے آپ کی پچھلے کچھ گھنٹوں کی رپورٹ۔ "
         f"{cm_line}"
-        f"ویب سائٹ ٹریفک {traffic:.0f} وزیٹرز ہے۔ "
-        f"اس وقت {active} ڈیجیٹل ملازمین کام کر رہے ہیں، کل {total} میں سے۔ "
-        f"{opps} نئے مواقع دستیاب ہیں۔ "
-        f"امپائر کی صحت {health:.0f} فیصد ہے۔ "
-        f"باس، آگے بڑھتے رہیں، کامیابی یقینی ہے!"
+        f"{earning_line} "
+        f"اس وقت آپ کے {c['active_agents']} ڈیجیٹل ملازمین نئی مارکیٹنگ حکمت عملی پر کام کر رہے ہیں، کل {c['total_agents']} میں سے۔ "
+        f"{c['open_opportunities']} نئے کاروباری مواقع دستیاب ہیں۔ "
+        f"امپائر کی صحت {c['health']:.0f} فیصد ہے۔ "
+        f"باس، ہم آپ کو بلین ڈالر کمپنی بنانے کی طرف لے جا رہے ہیں۔ آگے بڑھتے رہیں!"
     )
-    return {"urdu": urdu_text, "mrr": mrr, "traffic": traffic, "agents_active": active}
+    return {"urdu": urdu_text, **c}
+
+
+# --- Ask Titan assistant (voice/text, Urdu or English) --------------------
+
+class AssistantRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    lang: str = Field(default="en", description="'en' or 'ur'")
+
+
+@router.post("/assistant", tags=["system"])
+def assistant(req: AssistantRequest) -> dict:
+    """Answer Abdullah's free-form question about his empire, in Urdu or English."""
+    c = _empire_context()
+    is_urdu = req.lang == "ur"
+    lang_name = "Urdu (اردو)" if is_urdu else "English"
+
+    context = (
+        f"Live empire state — "
+        f"Monthly revenue: ${c['mrr']:.0f}. "
+        f"Career Mind AI: {c['cm_users']} total users, {c['cm_active']} active, {c['cm_signups']} new signups. "
+        f"Fiverr: {c['fiverr_orders']} orders, {c['fiverr_impressions']} impressions. "
+        f"{c['active_agents']} of {c['total_agents']} AI agents active. "
+        f"{c['open_opportunities']} open opportunities. Empire health {c['health']:.0f}%."
+    )
+
+    answer = llm.complete(
+        system=(
+            "You are Titan, the AI chief-of-staff for Abdullah's autonomous business "
+            "empire (which runs the Career Mind AI student platform and Fiverr AI gigs). "
+            f"Always address the founder as 'Abdullah Boss'. Answer ONLY in {lang_name}. "
+            "Be concise (2-4 sentences), concrete, and motivating. Use the live data below "
+            "when relevant.\n\n" + context
+        ),
+        prompt=req.question,
+        max_tokens=500,
+    )
+
+    if not answer:
+        # Deterministic fallback when no LLM key is configured.
+        if is_urdu:
+            answer = (
+                f"عبداللہ باس، اس وقت آپ کے کیئرئیر مائنڈ پر {c['cm_users']} یوزرز ہیں اور "
+                f"{c['active_agents']} ایجنٹس کام کر رہے ہیں۔ مفت AI جوابات کے لیے GROQ_API_KEY لگائیں۔"
+            )
+        else:
+            answer = (
+                f"Abdullah Boss, right now Career Mind has {c['cm_users']} users and "
+                f"{c['active_agents']} agents are working. Set GROQ_API_KEY in your Space "
+                f"secrets to unlock full conversational AI answers (free, no card)."
+            )
+
+    STORE.emit("titan-assistant", "command", f'Abdullah asked: "{req.question[:80]}"', "info")
+    return {"answer": answer, "lang": req.lang}
 
 
 # --- intelligence status --------------------------------------------------

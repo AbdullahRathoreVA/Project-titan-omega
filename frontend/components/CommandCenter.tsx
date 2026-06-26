@@ -35,6 +35,7 @@ import { Deliverables } from "./Deliverables";
 import { ConnectedAssets } from "./ConnectedAssets";
 import { Publishing } from "./Publishing";
 import { UrduVoiceAssistant } from "./UrduVoiceAssistant";
+import { AskTitan } from "./AskTitan";
 
 const POLL_MS = 5000;
 
@@ -135,7 +136,6 @@ export function CommandCenter() {
     <main className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6">
       <StatusBar status={status} online={online} intel={intel} />
 
-      {/* welcome banner — only shows when MRR is 0 */}
       {mrr === 0 && (
         <div className="mt-3 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-4 py-3 text-xs text-hud-amber">
           <span className="font-semibold">Abdullah Boss — empire is live.</span>{" "}
@@ -144,7 +144,6 @@ export function CommandCenter() {
         </div>
       )}
 
-      {/* headline metrics */}
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <MetricCard
           label="Monthly Revenue"
@@ -187,7 +186,6 @@ export function CommandCenter() {
         <CommandBar onDispatched={refresh} />
       </div>
 
-      {/* quick action buttons */}
       <div className="mt-3 flex flex-wrap gap-2">
         {[
           { key: "scan", label: "Scan opportunities", icon: RadarIcon, fn: () => api.scanOpportunities() },
@@ -204,8 +202,12 @@ export function CommandCenter() {
             {actionBusy === key ? "Working…" : label}
           </button>
         ))}
-        {/* Urdu voice assistant */}
         <UrduVoiceAssistant status={status} />
+      </div>
+
+      {/* Ask Titan — conversational assistant (voice/text, Urdu/English) */}
+      <div className="mt-4">
+        <AskTitan />
       </div>
 
       <div className="mt-4">
@@ -216,7 +218,6 @@ export function CommandCenter() {
         <Publishing posts={posts} onSchedule={schedulePost} onPublish={publishPost} />
       </div>
 
-      {/* main grid */}
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
         <div className="space-y-4 xl:col-span-8">
           <DivisionGrid divisions={divisions} />
