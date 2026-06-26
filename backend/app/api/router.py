@@ -362,16 +362,26 @@ def voice_report() -> dict:
     active = s.get("active_agents", 0)
     total = s.get("total_agents", 102)
     opps = s.get("open_opportunities", 0)
-    health = s.get("health_score", 0)
+    health = s.get("health", 0)
+
+    # Career Mind AI live stats (if the connector has synced them).
+    cm = STORE.connectors.get("careermind-main", {}).get("metrics", {})
+    cm_users = int(cm.get("total_users", 0))
+    cm_active = int(cm.get("active_users", 0))
 
     if mrr == 0:
         earning_line = "ابھی تک کوئی آمدنی نہیں ہوئی۔ لیکن ایجنٹ پہلا آرڈر لانے کے لیے کام کر رہے ہیں۔"
     else:
         earning_line = f"اس مہینے کی آمدنی {mrr:.0f} ڈالر ہے۔"
 
+    cm_line = ""
+    if cm_users > 0 or cm_active > 0:
+        cm_line = f"کیئرئیر مائنڈ پر {cm_users} کل صارفین اور {cm_active} فعال صارفین ہیں۔ "
+
     urdu_text = (
         f"السلام علیکم عبداللہ باس! آپ کی امپائر کی تازہ رپورٹ یہ ہے۔ "
         f"{earning_line} "
+        f"{cm_line}"
         f"ویب سائٹ ٹریفک {traffic:.0f} وزیٹرز ہے۔ "
         f"اس وقت {active} ڈیجیٹل ملازمین کام کر رہے ہیں، کل {total} میں سے۔ "
         f"{opps} نئے مواقع دستیاب ہیں۔ "
