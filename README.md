@@ -1,5 +1,12 @@
 # Project Titan Omega
-
+---
+title: Project Titan Omega
+emoji: 🚀
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
 **The Autonomous Founder Empire Operating System.**
 
 Titan Omega is a digital company: a hierarchy of autonomous AI divisions that
