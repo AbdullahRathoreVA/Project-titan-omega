@@ -1,0 +1,9 @@
+**/node_modules
+**/.next
+**/out
+**/__pycache__
+**/.pytest_cache
+.git
+*.log
+.env
+.env.local

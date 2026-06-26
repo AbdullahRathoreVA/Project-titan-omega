@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: #05070d;
+  color: #cfe3ff;
+}
+
+/* Faint engineering grid + radial vignette behind the whole command center. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.04) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(
+    ellipse at 50% 0%,
+    rgba(59, 130, 246, 0.12),
+    transparent 60%
+  );
+  pointer-events: none;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-edge bg-panel/80 backdrop-blur-sm;
+  }
+
+  .panel-header {
+    @apply flex items-center justify-between border-b border-edge/70 px-4 py-3;
+  }
+
+  .hud-label {
+    @apply font-mono text-[10px] uppercase tracking-[0.2em] text-hud-cyan/70;
+  }
+
+  .stat-value {
+    @apply font-mono text-2xl font-semibold tracking-tight text-white;
+  }
+
+  /* Thin custom scrollbars to keep the terminal feel. */
+  .scroll-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: rgba(34, 211, 238, 0.25);
+    border-radius: 9999px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}

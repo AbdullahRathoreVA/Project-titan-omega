@@ -1,0 +1,21 @@
+# Titan Omega — Executive Intelligence Core
+# The runnable foundation needs only the web stack below. Production extras
+# (PostgreSQL, Redis, Celery, vector DB) are documented in the README and
+# slot in behind the store/engine interfaces.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+
+# AI providers — install the SDK(s) for the provider(s) you want to use.
+# The platform runs free with no keys or SDKs installed (deterministic fallback).
+# Provider priority: Claude > Groq > OpenAI-compatible > Gemini > free.
+anthropic>=0.40.0          # Claude   — ANTHROPIC_API_KEY
+# groq>=0.9.0                # Groq     — GROQ_API_KEY       (pip install groq)
+# openai>=1.0.0              # OpenAI-compatible — OPENAI_API_KEY or OPENAI_BASE_URL (pip install openai)
+# google-generativeai>=0.8.0 # Gemini   — GEMINI_API_KEY     (pip install google-generativeai)
+
+# Live connectors (GitHub + Career Mind health probe) + test client.
+httpx==0.28.1
+
+# Test
+pytest==8.3.4
