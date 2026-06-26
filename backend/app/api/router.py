@@ -6,11 +6,11 @@ All routes are mounted under ``/api``. Responses use the pydantic schemas in
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
-
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..core import auth, executive, llm
@@ -222,6 +222,80 @@ def refresh_connectors() -> List[Connector]:
     return [Connector(**c) for c in STORE.connectors.values()]
 
 
+# --- real metrics (Make.com / webhooks) -----------------------------------
+
+class MetricUpdate(BaseModel):
+    key: str = Field(
+        ...,
+        description="Metric key: mrr, traffic, customers, pipeline_value, conversion_rate, etc.",
+    )
+    value: float
+    source: str = Field(default="webhook", description="Where this data came from")
+
+
+class BulkMetricUpdate(BaseModel):
+    metrics: Dict[str, float] = Field(
+        ...,
+        description="Dict of metric_key → value, e.g. {\"mrr\": 1250.0, \"traffic\": 8400}",
+    )
+    source: str = Field(default="webhook")
+
+
+def _verify_webhook(secret: Optional[str]) -> None:
+    """Check X-Webhook-Secret header when TITAN_WEBHOOK_SECRET is configured."""
+    expected = os.getenv("TITAN_WEBHOOK_SECRET")
+    if expected and secret != expected:
+        raise HTTPException(status_code=401, detail="Invalid X-Webhook-Secret header")
+
+
+@router.get("/metrics", tags=["metrics"])
+def get_metrics() -> dict:
+    """All current empire metrics — MRR, traffic, customers, evolution weights, etc."""
+    return dict(STORE.metrics)
+
+
+@router.post("/metrics/update", tags=["metrics"])
+def update_metric(
+    update: MetricUpdate,
+    x_webhook_secret: Optional[str] = Header(default=None),
+) -> dict:
+    """Push a single real metric into the live dashboard (called by Make.com).
+
+    Set ``TITAN_WEBHOOK_SECRET`` on your deployment and pass it in the
+    ``X-Webhook-Secret`` header to secure this endpoint.
+    """
+    _verify_webhook(x_webhook_secret)
+    STORE.metrics[update.key] = update.value
+    STORE.emit(
+        "executive-core", "metrics",
+        f"Real metric via {update.source}: {update.key} = {update.value:,.1f}",
+        "success",
+    )
+    return {"updated": True, "key": update.key, "value": update.value}
+
+
+@router.post("/metrics/bulk", tags=["metrics"])
+def bulk_update_metrics(
+    update: BulkMetricUpdate,
+    x_webhook_secret: Optional[str] = Header(default=None),
+) -> dict:
+    """Push multiple real metrics at once — efficient for Make.com scenarios.
+
+    Example body::
+
+        {"metrics": {"mrr": 1250.0, "traffic": 8400, "customers": 142}, "source": "stripe"}
+    """
+    _verify_webhook(x_webhook_secret)
+    STORE.metrics.update(update.metrics)
+    summary = ", ".join(f"{k}={v:,.0f}" for k, v in update.metrics.items())
+    STORE.emit(
+        "executive-core", "metrics",
+        f"Bulk real metrics via {update.source}: {summary}",
+        "success",
+    )
+    return {"updated": True, "count": len(update.metrics), "source": update.source}
+
+
 # --- deliverables ---------------------------------------------------------
 
 class DraftRequest(BaseModel):
@@ -306,9 +380,9 @@ def intelligence_status() -> dict:
     """Tells the dashboard which AI provider is active (or 'free' mode)."""
     p = llm.provider()
     return {
-        "claude_connected": p == "claude",   # legacy field — kept for dashboard compat
-        "model":   llm.active_model(),
-        "mode":    p if p != "free" else "free",
+        "claude_connected": p == "claude",
+        "model":    llm.active_model(),
+        "mode":     p if p != "free" else "free",
         "provider": p,
     }
 
@@ -322,9 +396,9 @@ def evolution_status() -> dict:
     return {
         "weights": w,
         "description": {
-            "weight_difficulty": "Penalty applied to high-difficulty opportunities (lower = more optimistic)",
-            "weight_risk":       "Penalty applied to high-risk opportunities (lower = more risk-tolerant)",
-            "weight_time":       "Penalty applied to long time-to-value estimates (lower = more patient)",
+            "weight_difficulty": "Penalty applied to high-difficulty opportunities",
+            "weight_risk":       "Penalty applied to high-risk opportunities",
+            "weight_time":       "Penalty applied to long time-to-value estimates",
         },
         "total_outcomes": sum(
             1 for a in STORE.executions.values()

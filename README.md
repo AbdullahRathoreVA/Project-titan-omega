@@ -1,3 +1,15 @@
+---
+title: Project Titan Omega
+emoji: 🏢
+colorFrom: purple
+colorTo: cyan
+sdk: docker
+app_port: 7860
+pinned: false
+license: other
+short_description: Autonomous Founder Empire OS — 102 AI agents running your business
+---
+
 # Project Titan Omega
 
 **The Autonomous Founder Empire Operating System.**
@@ -43,9 +55,10 @@ The AI CEO and the Digital Employee Network.
 - **Deliverable Engine** (`app/engines/deliverables.py`): agents produce **real,
   usable artifacts** — outreach emails, SEO plans, landing copy, growth
   strategies, product roadmaps, business reports.
-- **Claude reasoning** (`app/core/llm.py`): with an `ANTHROPIC_API_KEY` set,
-  agents plan, reply, and draft with **Claude (`claude-opus-4-8`)**; with no key
-  they fall back to deterministic logic, so the platform always runs free.
+- **Multi-model AI** (`app/core/llm.py`): Claude → Groq → OpenAI-compatible →
+  Gemini → free fallback. Set any one API key and agents think with that model.
+- **Self-Evolution Engine** (`app/engines/evolution.py`): scoring weights adapt
+  based on real execution outcomes — the system learns what actually works.
 - **Live feed + heartbeat**: a background loop keeps the empire working 24/7 and
   streams activity to the command center.
 
@@ -61,9 +74,7 @@ A dark, animated, Jarvis/cyberpunk command center.
   click on an opportunity's **Execute** button drafts a new one.
 - **Live Execution Feed** streaming agent decisions and actions.
 - **Natural-language command bar** — type or pick a suggestion to task a division.
-- A **Claude / Free mode** badge shows whether agents are reasoning with Claude.
-- Polls the core every 5s; falls back to local mock data (with an honest
-  "Core offline (demo)" badge) so the UI renders even without the backend.
+- Polls the core every 5s; falls back to local mock data when backend is offline.
 
 ---
 
@@ -96,79 +107,81 @@ cp .env.local.example .env.local      # points the proxy at the core
 npm run dev                            # http://localhost:3000
 ```
 
-The dashboard proxies `/api/*` to the core (configurable via `TITAN_API_URL`).
-
-### Tests
+### Enable free AI (Groq — no credit card)
 
 ```bash
-cd backend && python -m pytest        # 14 tests: network, engines, core, API
-cd frontend && npm run build          # type-checks + builds the dashboard
+export GROQ_API_KEY=your_key_here   # get free key at console.groq.com
 ```
+
+The dashboard badge switches from **Free mode** to **Groq online** and
+deliverables become AI-generated automatically.
+
+### Deploy to Hugging Face Spaces (free, always-on)
+
+See **[docs/DEPLOY_HF_SPACES.md](docs/DEPLOY_HF_SPACES.md)** — takes ~10 minutes,
+gives you a public URL you can open from your phone.
+
+### Make.com automation (real data in the dashboard)
+
+See **[docs/MAKECOM_AUTOMATION.md](docs/MAKECOM_AUTOMATION.md)** — 5 ready-to-use
+scenarios that push real Fiverr/Stripe/Career Mind numbers into the dashboard.
 
 ---
 
 ## API surface
 
-| Method | Path                                          | Purpose                                  |
-| ------ | --------------------------------------------- | ---------------------------------------- |
-| GET    | `/api/status`                                 | Empire snapshot (health, MRR, agents…)   |
-| GET    | `/api/divisions`                              | Division org map + health                |
-| GET    | `/api/agents` `?division=&heads_only=`        | Digital Employee Network                 |
-| GET    | `/api/plan/{daily\|weekly\|monthly}`          | Strategic plan                           |
-| GET    | `/api/forecast/{metric}?horizon=`             | Revenue / traffic forecast               |
-| POST   | `/api/command`                                | Route a natural-language command         |
-| GET    | `/api/intelligence`                           | Claude-connected? (mode: claude \| free) |
-| GET    | `/api/opportunities`                          | Ranked opportunities                     |
-| POST   | `/api/opportunities/scan`                     | Re-run the Opportunity Engine            |
-| GET    | `/api/deliverables`                           | Artifacts agents have produced           |
-| POST   | `/api/deliverables/from-opportunity/{id}`     | Have an agent draft an artifact          |
-| POST   | `/api/deliverables/draft`                     | Draft an artifact from a free-text brief |
-| GET    | `/api/executions`                             | Action log                               |
-| POST   | `/api/executions/from-opportunity/{id}`       | Launch an action from an opportunity     |
-| POST   | `/api/executions/{id}/{approve\|complete\|revert}` | Action lifecycle                    |
-| GET    | `/api/connectors`                             | Connected business assets                |
-| GET    | `/api/feed?limit=`                            | Live execution feed                      |
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET | `/api/status` | Empire snapshot (health, MRR, agents…) |
+| GET | `/api/divisions` | Division org map + health |
+| GET | `/api/agents` `?division=&heads_only=` | Digital Employee Network |
+| GET | `/api/plan/{daily\|weekly\|monthly}` | Strategic plan |
+| GET | `/api/forecast/{metric}?horizon=` | Revenue / traffic forecast |
+| POST | `/api/command` | Route a natural-language command |
+| GET | `/api/intelligence` | Active AI provider + mode |
+| GET | `/api/evolution` | Self-evolution scoring weights |
+| GET | `/api/metrics` | All current empire metrics |
+| POST | `/api/metrics/update` | Push a real metric value (Make.com) |
+| POST | `/api/metrics/bulk` | Push multiple real metrics at once |
+| GET | `/api/opportunities` | Ranked opportunities |
+| POST | `/api/opportunities/scan` | Re-run the Opportunity Engine |
+| GET | `/api/deliverables` | Artifacts agents have produced |
+| POST | `/api/deliverables/from-opportunity/{id}` | Have an agent draft an artifact |
+| POST | `/api/deliverables/draft` | Draft an artifact from a free-text brief |
+| GET | `/api/executions` | Action log |
+| POST | `/api/executions/from-opportunity/{id}` | Launch an action from an opportunity |
+| POST | `/api/executions/{id}/{approve\|complete\|revert}` | Action lifecycle |
+| GET | `/api/connectors` | Connected business assets |
+| POST | `/api/connectors/refresh` | Re-sync GitHub + Career Mind live data |
+| GET | `/api/feed?limit=` | Live execution feed |
+| POST | `/api/report/weekly` | Generate weekly empire report |
 
 ---
 
 ## Status — what's built
 
-| Capability                                   | State                                      |
-| -------------------------------------------- | ------------------------------------------ |
-| 100+ agent network across divisions          | ✅ 102 agents, 12 divisions                 |
-| Executive Core: planning, forecasting, routing | ✅ rule-based + Claude-backed              |
-| Global Opportunity Engine + scoring          | ✅                                          |
-| Autonomous Execution Layer (logged/reversible) | ✅                                         |
-| Deliverable Engine (real agent artifacts)    | ✅ Claude-generated, template fallback      |
-| LLM-backed reasoning (Claude `claude-opus-4-8`) | ✅ live when `ANTHROPIC_API_KEY` is set    |
-| Command Center dashboard (live, animated)    | ✅                                          |
-| Business connectors (GitHub/Fiverr/Career Mind) | 🟡 registry + seeded metrics (not live yet) |
-| Gemini / OpenAI / open-source models         | 🟡 same `llm.complete` seam, not wired      |
-| Persistence (PostgreSQL/Redis/Celery)        | 🟡 in-memory store behind a swappable API   |
-| Voice control, mobile/desktop apps           | ⬜ roadmap                                   |
-| Self-Evolution Engine                        | ⬜ roadmap (scoring weights are tunable)     |
-
-### Wiring real models
-
-Claude is already wired in. `app/core/llm.py` exposes a single `complete(system,
-prompt)` seam that every agent reasons through: it uses **`claude-opus-4-8`** with
-adaptive thinking when `ANTHROPIC_API_KEY` is set, and returns `None` (so callers
-fall back to deterministic logic) when it isn't — the platform never requires a
-key to run. Command replies and deliverable generation already flow through it;
-pointing a Gemini/OpenAI/open-source model at the same seam is a localized change.
-
-### Production architecture (target)
-
-The in-memory `Store` (`app/store.py`) is intentionally hidden behind a small
-interface. Swapping in **PostgreSQL** (system of record), **Redis** (live state +
-pub/sub for the feed) and **Celery** (agent task execution) is an implementation
-change behind that interface, not a rewrite of the engines or routes. A vector DB
-+ RAG layer provides the long-term memory referenced in the agent specs.
+| Capability | State |
+| ---------- | ----- |
+| 100+ agent network across divisions | ✅ 102 agents, 12 divisions |
+| Executive Core: planning, forecasting, routing | ✅ rule-based + multi-model AI |
+| Global Opportunity Engine + scoring | ✅ |
+| Autonomous Execution Layer (logged/reversible) | ✅ |
+| Deliverable Engine (real agent artifacts) | ✅ AI-generated, template fallback |
+| Multi-model AI (Claude/Groq/OpenAI-compat/Gemini) | ✅ set any key, agents use it |
+| Self-Evolution Engine | ✅ weights adapt from execution outcomes |
+| Real metrics webhooks (Make.com integration) | ✅ POST /api/metrics/update |
+| Career Mind live connector | ✅ polls HF Space health + stats |
+| GitHub live connector | ✅ live repo stats |
+| Hugging Face Spaces deployment | ✅ one-click Docker deploy |
+| Fiverr live connector | 🟡 seeded metrics (Fiverr has no public API) |
+| Persistence (PostgreSQL/Redis/Celery) | 🟡 in-memory store behind a swappable API |
+| Voice control, mobile/desktop apps | ⬜ roadmap |
 
 ---
 
 ## Tech stack
 
 **Frontend:** Next.js 14 · TypeScript · TailwindCSS · Framer Motion · lucide-react
-**Backend:** Python 3.11 · FastAPI · Pydantic v2 · (PostgreSQL / Redis / Celery on the roadmap)
-**AI (roadmap):** Claude · Gemini · OpenAI · open-source models · vector DB / RAG · multi-agent orchestration · MCP
+**Backend:** Python 3.11 · FastAPI · Pydantic v2
+**AI:** Claude · Groq · OpenAI-compatible · Gemini (any one key; free fallback)
+**Deploy:** Docker · Hugging Face Spaces · Render
