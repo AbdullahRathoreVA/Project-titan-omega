@@ -11,7 +11,6 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query
-
 from pydantic import BaseModel, Field
 
 from ..core import auth, executive, llm
@@ -351,6 +350,131 @@ def bulk_update_metrics(
     return {"updated": keys, "count": len(keys), "source": update.source}
 
 
+# --- REAL revenue ledger (Fiverr orders, Career Mind sales, Kindle, etc.) ---
+
+class RevenueLog(BaseModel):
+    amount: float = Field(..., gt=0, description="Amount earned in USD for this order/sale")
+    source: str = Field(default="fiverr", description="fiverr | career_mind | kindle | other")
+    note: str = Field(default="", description="Optional note, e.g. 'AI resume gig - first order'")
+
+
+@router.get("/revenue", tags=["revenue"])
+def get_revenue() -> dict:
+    """Total real revenue earned + per-source breakdown."""
+    m = STORE.metrics
+    return {
+        "total": float(m.get("mrr", 0.0)),
+        "by_source": {
+            "fiverr": float(m.get("fiverr_revenue", 0.0)),
+            "career_mind": float(m.get("cm_revenue", 0.0)),
+            "kindle": float(m.get("kindle_royalties", 0.0)),
+            "other": float(m.get("other_revenue", 0.0)),
+        },
+        "fiverr_orders": int(m.get("fiverr_orders", 0)),
+    }
+
+
+@router.post("/revenue/log", tags=["revenue"])
+def log_revenue(
+    entry: RevenueLog,
+    x_webhook_secret: Optional[str] = Header(default=None),
+) -> dict:
+    """Record a REAL earned order/sale. Increments the running total so the
+    dashboard shows the truth. Call this from the UI button or from a Make.com
+    scenario that reads your Fiverr / KDP order-confirmation emails.
+    """
+    _verify_webhook(x_webhook_secret)
+    m = STORE.metrics
+
+    # Map source -> per-source revenue key.
+    source = (entry.source or "other").lower()
+    source_key = {
+        "fiverr": "fiverr_revenue",
+        "career_mind": "cm_revenue",
+        "careermind": "cm_revenue",
+        "kindle": "kindle_royalties",
+    }.get(source, "other_revenue")
+
+    m[source_key] = float(m.get(source_key, 0.0)) + entry.amount
+    m["mrr"] = float(m.get("mrr", 0.0)) + entry.amount  # running total earned
+    if source == "fiverr":
+        m["fiverr_orders"] = float(m.get("fiverr_orders", 0)) + 1
+
+    label = entry.note or f"{source} order"
+    STORE.emit(
+        "revenue-tracker", "revenue",
+        f"💰 REAL ORDER: +${entry.amount:.2f} from {source} — {label}. "
+        f"Total earned now ${m['mrr']:.2f}. Abdullah Boss, the empire is EARNING!",
+        "success",
+    )
+    return {
+        "logged": entry.amount,
+        "source": source,
+        "total": m["mrr"],
+        "source_total": m[source_key],
+    }
+
+
+# --- inbox auto-reply drafting (for Make.com DM automation) -----------------
+
+class InboxMessage(BaseModel):
+    message: str = Field(..., min_length=1, description="The incoming DM / message text")
+    platform: str = Field(default="fiverr", description="fiverr | linkedin | instagram | email")
+    lang: str = Field(default="en", description="'en' or 'ur'")
+    sender: str = Field(default="", description="Optional sender name")
+
+
+@router.post("/inbox/auto-reply", tags=["system"])
+def inbox_auto_reply(
+    msg: InboxMessage,
+    x_webhook_secret: Optional[str] = Header(default=None),
+) -> dict:
+    """Draft a professional, sales-savvy reply to an incoming DM.
+
+    Designed to be called by a Make.com scenario watching your Fiverr / LinkedIn
+    inbox. Returns reply text Make.com can send back automatically (or queue for
+    your approval). Uses the LLM when a key is set; otherwise a solid template.
+    """
+    _verify_webhook(x_webhook_secret)
+    is_urdu = msg.lang == "ur"
+    lang_name = "Urdu (اردو)" if is_urdu else "English"
+    fiverr_link = os.getenv("FIVERR_GIG_URL", "my Fiverr gig")
+    cm_link = os.getenv("CAREERMIND_URL", "https://careermind2026-career-mind.hf.space")
+
+    reply = llm.complete(
+        system=(
+            "You are Abdullah's professional sales assistant replying to a potential "
+            f"client on {msg.platform}. Reply ONLY in {lang_name}. Be warm, fast, and "
+            "close the sale. Abdullah sells AI services on Fiverr and runs Career Mind AI "
+            f"(a student career platform at {cm_link}). Fiverr gig: {fiverr_link}. "
+            "Keep it 2-4 sentences, friendly, and end with a clear call to action. "
+            "Never invent prices — invite them to share their requirements."
+        ),
+        prompt=f"Incoming message from {msg.sender or 'a prospect'}: {msg.message}",
+        max_tokens=400,
+    )
+
+    if not reply:
+        if is_urdu:
+            reply = (
+                "اسلام و علیکم! پیغام کا شکریہ۔ جی ہاں، میں آپ کی پوری مدد کر سکتا ہوں۔ "
+                "براہ کرم اپنی ضرورت بتائیں تاکہ میں بہترین آفر دے سکوں۔"
+            )
+        else:
+            reply = (
+                "Hi, thanks so much for reaching out! Yes, I can absolutely help with that. "
+                "Could you share a few details about what you need? I'll get you a tailored "
+                "offer right away — fast delivery and 100% satisfaction guaranteed."
+            )
+
+    STORE.emit(
+        "inbox-responder", "command",
+        f"Drafted auto-reply for {msg.platform} DM from {msg.sender or 'prospect'}.",
+        "info",
+    )
+    return {"reply": reply, "platform": msg.platform, "lang": msg.lang}
+
+
 # --- helpers for voice + assistant ----------------------------------------
 
 def _empire_context() -> dict:
@@ -372,7 +496,7 @@ def _empire_context() -> dict:
         "cm_users": int(cm.get("total_users", 0)),
         "cm_active": int(cm.get("active_users", 0)),
         "cm_signups": int(cm.get("signups", 0)),
-        "fiverr_orders": int(fiverr.get("orders", 0)),
+        "fiverr_orders": int(STORE.metrics.get("fiverr_orders", fiverr.get("orders", 0))),
         "fiverr_impressions": int(fiverr.get("impressions", 0)),
     }
 
@@ -387,23 +511,22 @@ def voice_report() -> dict:
     if c["mrr"] == 0:
         earning_line = "ابھی تک کوئی آمدنی شروع نہیں ہوئی، لیکن ایجنٹس آپ کے فائیور گگز اور کیئرئیر مائنڈ کے لیے پہلا آرڈر لانے پر کام کر رہے ہیں۔"
     else:
-        earning_line = f"اس وقت آپ کی ماہانہ آمدنی {c['mrr']:.0f} ڈالر ہے۔"
+        earning_line = f"اب تک آپ نے کل {c['mrr']:.0f} ڈالر کمائے ہیں۔ مبارک ہو باس!"
 
     if c["cm_users"] > 0 or c["cm_active"] > 0:
         cm_line = (
             f"آپ کے کیئرئیر مائنڈ اے آئی پر اس وقت {c['cm_users']} یوزرز ہیں، "
-            f"جن میں سے {c['cm_active']} فعال ہیں، اور {c['cm_signups']} نئے یوزرز حال ہی میں آئے ہیں۔ "
+            f"جن میں سے {c['cm_active']} فعال ہیں۔ "
         )
     else:
         cm_line = "آپ کے کیئرئیر مائنڈ اے آئی پر ابھی نئے یوزرز کا انتظار ہے، مارکیٹنگ ایجنٹس اس پر کام کر رہے ہیں۔ "
 
     urdu_text = (
-        f"السلام علیکم عبداللہ باس! یہ ہے آپ کی پچھلے کچھ گھنٹوں کی رپورٹ۔ "
+        f"اسلام و علیکم عبداللہ باس! یہ رہی آپ کی تازہ ترین رپورٹ۔ "
         f"{cm_line}"
         f"{earning_line} "
         f"اس وقت آپ کے {c['active_agents']} ڈیجیٹل ملازمین نئی مارکیٹنگ حکمت عملی پر کام کر رہے ہیں، کل {c['total_agents']} میں سے۔ "
         f"{c['open_opportunities']} نئے کاروباری مواقع دستیاب ہیں۔ "
-        f"امپائر کی صحت {c['health']:.0f} فیصد ہے۔ "
         f"باس، ہم آپ کو بلین ڈالر کمپنی بنانے کی طرف لے جا رہے ہیں۔ آگے بڑھتے رہیں!"
     )
     return {"urdu": urdu_text, **c}
@@ -425,7 +548,7 @@ def assistant(req: AssistantRequest) -> dict:
 
     context = (
         f"Live empire state — "
-        f"Monthly revenue: ${c['mrr']:.0f}. "
+        f"Total revenue earned: ${c['mrr']:.0f}. "
         f"Career Mind AI: {c['cm_users']} total users, {c['cm_active']} active, {c['cm_signups']} new signups. "
         f"Fiverr: {c['fiverr_orders']} orders, {c['fiverr_impressions']} impressions. "
         f"{c['active_agents']} of {c['total_agents']} AI agents active. "
@@ -445,15 +568,14 @@ def assistant(req: AssistantRequest) -> dict:
     )
 
     if not answer:
-        # Deterministic fallback when no LLM key is configured.
         if is_urdu:
             answer = (
-                f"عبداللہ باس، اس وقت آپ کے کیئرئیر مائنڈ پر {c['cm_users']} یوزرز ہیں اور "
+                f"عبداللہ باس، اس وقت آپ نے کل {c['mrr']:.0f} ڈالر کمائے ہیں اور "
                 f"{c['active_agents']} ایجنٹس کام کر رہے ہیں۔ مفت AI جوابات کے لیے GROQ_API_KEY لگائیں۔"
             )
         else:
             answer = (
-                f"Abdullah Boss, right now Career Mind has {c['cm_users']} users and "
+                f"Abdullah Boss, you've earned ${c['mrr']:.0f} so far and "
                 f"{c['active_agents']} agents are working. Set GROQ_API_KEY in your Space "
                 f"secrets to unlock full conversational AI answers (free, no card)."
             )
