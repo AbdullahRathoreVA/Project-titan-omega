@@ -11,7 +11,7 @@ import {
   Target,
   Zap,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, authHeaders } from "@/lib/api";
 import type {
   AgentView,
   Connector,
@@ -55,7 +55,8 @@ export function CommandCenter() {
   const refresh = useCallback(async () => {
     let isOnline = false;
     try {
-      const res = await fetch("/api/status", { cache: "no-store" });
+      // Send the auth token so the probe succeeds when login is required.
+      const res = await fetch("/api/status", { cache: "no-store", headers: authHeaders() });
       isOnline = res.ok;
     } catch {
       isOnline = false;

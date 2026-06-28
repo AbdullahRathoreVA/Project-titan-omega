@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { DollarSign, Plus, TrendingUp } from "lucide-react";
+import { api } from "@/lib/api";
 
 type Source = "fiverr" | "career_mind" | "kindle" | "other";
 
@@ -18,17 +19,19 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
   const [source, setSource] = useState<Source>("fiverr");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const submit = useCallback(async () => {
     const value = parseFloat(amount);
     if (!value || value <= 0 || busy) return;
     setBusy(true);
+    setError(null);
     try {
-      await fetch("/api/revenue/log", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: value, source, note }),
-      });
+      const res = await api.logRevenue(value, source, note);
+      if (!res) {
+        setError("Could not save — are you logged in? (Core may need auth.)");
+        return;
+      }
       setAmount("");
       setNote("");
       setOpen(false);
@@ -87,7 +90,7 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
               className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:border-hud-emerald/40 focus:outline-none"
             />
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {SOURCES.map((s) => (
               <button
                 key={s.id}
@@ -109,6 +112,7 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
               {busy ? "Saving…" : "Save"}
             </button>
           </div>
+          {error && <p className="text-[11px] text-hud-rose">{error}</p>}
         </div>
       )}
     </section>

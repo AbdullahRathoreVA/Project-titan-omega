@@ -30,9 +30,21 @@ export function setToken(token: string | null) {
   else window.localStorage.removeItem(TOKEN_KEY);
 }
 
-function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const token = getToken();
   return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
+
+// Confirms the stored token is accepted by the core (used by AuthGate so a stale
+// token can't trap the dashboard in demo mode).
+export async function verifyToken(): Promise<boolean> {
+  if (!getToken()) return false;
+  try {
+    const res = await fetch("/api/status", { cache: "no-store", headers: authHeaders() });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function get<T>(path: string, fallback: T): Promise<T> {
@@ -99,6 +111,12 @@ export const api = {
   scanOpportunities: () => post<Opportunity[]>("/opportunities/scan"),
   refreshConnectors: () => post<Connector[]>("/connectors/refresh"),
   weeklyReport: () => post<Deliverable>("/report/weekly"),
+
+  // revenue ledger
+  logRevenue: (amount: number, source: string, note: string) =>
+    post<{ total: number; source_total: number }>("/revenue/log", { amount, source, note }),
+  revenue: () =>
+    get<{ total: number; fiverr_orders: number }>("/revenue", { total: 0, fiverr_orders: 0 }),
 
   async command(text: string): Promise<CommandResponse> {
     const res = await post<CommandResponse>("/command", { text });
