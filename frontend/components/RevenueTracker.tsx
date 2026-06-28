@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { DollarSign, Plus, TrendingUp } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { DollarSign, Plus, TrendingUp, X } from "lucide-react";
 import { api } from "@/lib/api";
+import type { RevenueEntry } from "@/lib/types";
 
 type Source = "fiverr" | "career_mind" | "kindle" | "other";
 
@@ -13,6 +14,28 @@ const SOURCES: { id: Source; label: string }[] = [
   { id: "other", label: "Other" },
 ];
 
+const SOURCE_LABEL: Record<string, string> = {
+  fiverr: "Fiverr",
+  career_mind: "Career Mind",
+  careermind: "Career Mind",
+  kindle: "Kindle",
+  other: "Other",
+};
+
+function whenLabel(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
 export function RevenueTracker({ total, onLogged }: { total: number; onLogged: () => void }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -20,6 +43,16 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [entries, setEntries] = useState<RevenueEntry[]>([]);
+
+  const loadEntries = useCallback(async () => {
+    setEntries(await api.revenueEntries());
+  }, []);
+
+  // Refresh the ledger whenever the total changes (after a log/cancel) and on mount.
+  useEffect(() => {
+    void loadEntries();
+  }, [loadEntries, total]);
 
   const submit = useCallback(async () => {
     const value = parseFloat(amount);
@@ -35,11 +68,21 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
       setAmount("");
       setNote("");
       setOpen(false);
+      await loadEntries();
       onLogged();
     } finally {
       setBusy(false);
     }
-  }, [amount, source, note, busy, onLogged]);
+  }, [amount, source, note, busy, onLogged, loadEntries]);
+
+  const cancel = useCallback(
+    async (id: string) => {
+      await api.cancelRevenue(id);
+      await loadEntries();
+      onLogged();
+    },
+    [loadEntries, onLogged],
+  );
 
   return (
     <section className="panel">
@@ -86,7 +129,7 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Note (e.g. AI resume gig — first order)"
+              placeholder="Description (e.g. AI resume gig — first order)"
               className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:border-hud-emerald/40 focus:outline-none"
             />
           </div>
@@ -113,6 +156,39 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
             </button>
           </div>
           {error && <p className="text-[11px] text-hud-rose">{error}</p>}
+        </div>
+      )}
+
+      {/* Transaction history — where every dollar came from */}
+      {entries.length > 0 && (
+        <div className="scroll-thin max-h-56 space-y-1.5 overflow-y-auto border-t border-edge/60 p-3">
+          <p className="px-1 text-[9px] uppercase tracking-wide text-slate-600">Earnings history</p>
+          {entries.map((e) => (
+            <div
+              key={e.id}
+              className="group flex items-center gap-2 rounded-lg border border-edge/60 bg-panel-2/40 px-2.5 py-2"
+            >
+              <span className="font-mono text-sm font-semibold text-hud-emerald">
+                +${e.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="rounded bg-hud-cyan/10 px-1.5 text-[9px] font-medium uppercase text-hud-cyan">
+                    {SOURCE_LABEL[e.source] ?? e.source}
+                  </span>
+                  <span className="truncate text-[11px] text-slate-300">{e.note || "—"}</span>
+                </div>
+                <span className="text-[9px] text-slate-600">{whenLabel(e.created_at)}</span>
+              </div>
+              <button
+                onClick={() => cancel(e.id)}
+                title="Cancel / remove this entry"
+                className="rounded p-1 text-slate-600 opacity-0 transition-opacity hover:bg-hud-rose/10 hover:text-hud-rose group-hover:opacity-100"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </section>

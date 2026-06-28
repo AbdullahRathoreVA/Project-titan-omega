@@ -64,6 +64,14 @@ export interface Opportunity {
   discovered_at: string;
 }
 
+export interface RevenueEntry {
+  id: string;
+  amount: number;
+  source: string;
+  note: string;
+  created_at: string;
+}
+
 export interface FeedEvent {
   id: string;
   timestamp: string;

@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import persistence
 from .api.router import router
 from .connectors import careermind, github
 from .core import auth, executive
@@ -43,6 +44,8 @@ async def _heartbeat_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     seed(STORE)
+    # Restore real earnings (metrics + revenue ledger) saved from a prior run.
+    persistence.load(STORE)
     opportunity.discover(STORE)
     ensure_weights(STORE)
 

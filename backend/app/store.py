@@ -38,6 +38,8 @@ class Store:
     posts: Dict[str, dict] = field(default_factory=dict)
     feed: List[dict] = field(default_factory=list)
     metrics: Dict[str, float] = field(default_factory=dict)
+    # Append-only ledger of real earned orders/sales (see api revenue routes).
+    revenue_entries: List[dict] = field(default_factory=list)
 
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _ids: "itertools.count" = field(default_factory=lambda: itertools.count(1))
@@ -104,9 +106,11 @@ def seed(store: Store = STORE) -> None:
             "fiverr_orders": 0.0,
             "fiverr_impressions": 0.0,
             "fiverr_revenue": 0.0,
+            "cm_revenue": 0.0,
             "kindle_units_sold": 0.0,
             "kindle_royalties": 0.0,
             "kindle_reviews": 0.0,
+            "other_revenue": 0.0,
         }
     )
 

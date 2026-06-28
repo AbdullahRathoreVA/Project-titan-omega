@@ -14,6 +14,7 @@ import type {
   FeedEvent,
   IntelligenceStatus,
   Opportunity,
+  RevenueEntry,
   ScheduledPost,
 } from "./types";
 import { MOCK } from "./mock";
@@ -71,6 +72,16 @@ async function post<T>(path: string, body?: unknown): Promise<T | null> {
   }
 }
 
+async function del<T>(path: string): Promise<T | null> {
+  try {
+    const res = await fetch(`/api${path}`, { method: "DELETE", headers: authHeaders() });
+    if (!res.ok) throw new Error(`${res.status}`);
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export const api = {
   status: () => get<EmpireStatus>("/status", MOCK.status),
   divisions: () => get<DivisionView[]>("/divisions", MOCK.divisions),
@@ -114,9 +125,13 @@ export const api = {
 
   // revenue ledger
   logRevenue: (amount: number, source: string, note: string) =>
-    post<{ total: number; source_total: number }>("/revenue/log", { amount, source, note }),
-  revenue: () =>
-    get<{ total: number; fiverr_orders: number }>("/revenue", { total: 0, fiverr_orders: 0 }),
+    post<{ entry: RevenueEntry; total: number; source_total: number }>("/revenue/log", {
+      amount,
+      source,
+      note,
+    }),
+  revenueEntries: () => get<RevenueEntry[]>("/revenue/entries", []),
+  cancelRevenue: (id: string) => del<{ cancelled: string; total: number }>(`/revenue/entry/${id}`),
 
   async command(text: string): Promise<CommandResponse> {
     const res = await post<CommandResponse>("/command", { text });
