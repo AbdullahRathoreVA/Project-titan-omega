@@ -298,7 +298,12 @@ def get_feed(limit: int = Query(default=50, ge=1, le=200)) -> List[FeedEvent]:
 # --- real metrics webhook (Make.com / Zapier push real data here) ----------
 
 def _verify_webhook(secret: Optional[str]) -> None:
-    """Reject requests when TITAN_WEBHOOK_SECRET is set and header doesn't match."""
+    """Reject requests when TITAN_WEBHOOK_SECRET is set and header doesn't match.
+
+    Used ONLY on the external metric-push endpoints that Make.com / Zapier call.
+    In-dashboard buttons (revenue log, inbox reply) do NOT use this — they are
+    same-origin and gated by the normal login token when auth is enabled.
+    """
     expected = os.getenv("TITAN_WEBHOOK_SECRET")
     if expected and secret != expected:
         raise HTTPException(status_code=401, detail="Invalid X-Webhook-Secret header")
@@ -375,15 +380,12 @@ def get_revenue() -> dict:
 
 
 @router.post("/revenue/log", tags=["revenue"])
-def log_revenue(
-    entry: RevenueLog,
-    x_webhook_secret: Optional[str] = Header(default=None),
-) -> dict:
+def log_revenue(entry: RevenueLog) -> dict:
     """Record a REAL earned order/sale. Increments the running total so the
-    dashboard shows the truth. Call this from the UI button or from a Make.com
-    scenario that reads your Fiverr / KDP order-confirmation emails.
+    dashboard shows the truth. Called from the in-dashboard 'Log order' button
+    (same-origin, gated by login when auth is on) or from a Make.com scenario
+    that reads your Fiverr / KDP order-confirmation emails.
     """
-    _verify_webhook(x_webhook_secret)
     m = STORE.metrics
 
     # Map source -> per-source revenue key.
@@ -425,17 +427,14 @@ class InboxMessage(BaseModel):
 
 
 @router.post("/inbox/auto-reply", tags=["system"])
-def inbox_auto_reply(
-    msg: InboxMessage,
-    x_webhook_secret: Optional[str] = Header(default=None),
-) -> dict:
+def inbox_auto_reply(msg: InboxMessage) -> dict:
     """Draft a professional, sales-savvy reply to an incoming DM.
 
     Designed to be called by a Make.com scenario watching your Fiverr / LinkedIn
-    inbox. Returns reply text Make.com can send back automatically (or queue for
-    your approval). Uses the LLM when a key is set; otherwise a solid template.
+    inbox, or from the dashboard. Returns reply text Make.com can send back
+    automatically (or queue for your approval). Uses the LLM when a key is set;
+    otherwise a solid template.
     """
-    _verify_webhook(x_webhook_secret)
     is_urdu = msg.lang == "ur"
     lang_name = "Urdu (اردو)" if is_urdu else "English"
     fiverr_link = os.getenv("FIVERR_GIG_URL", "my Fiverr gig")
