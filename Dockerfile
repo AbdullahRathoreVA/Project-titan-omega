@@ -18,9 +18,14 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 COPY backend/ backend/
 COPY --from=frontend /app/frontend/out frontend/out
 
-# Public deploys should require login. Set TITAN_USERNAME / TITAN_PASSWORD /
-# TITAN_SECRET as host settings (never bake secrets into the image).
-ENV TITAN_REQUIRE_AUTH=1
+# Auth is OFF by default so the dashboard works out of the box.
+# To lock it behind a password LATER, add these as Space variables/secrets
+# (no rebuild or code change needed):
+#   TITAN_REQUIRE_AUTH = 1
+#   TITAN_USERNAME     = <your username>
+#   TITAN_PASSWORD     = <your password>
+#   TITAN_SECRET       = <any long random string>
+# Never bake credentials into the image — always set them as host secrets.
 
 WORKDIR /app/backend
 # HF Spaces (Docker) expects the app on port 7860 (matches app_port in README).
