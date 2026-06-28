@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Mic, MicOff, Send, Sparkles, Volume2 } from "lucide-react";
+import { speakText } from "@/lib/voice";
 
 type Lang = "en" | "ur";
 type Turn = { role: "you" | "titan"; text: string };
@@ -31,20 +32,6 @@ export function AskTitan() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [turns]);
 
-  const speak = useCallback((text: string, l: Lang) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = l === "ur" ? "ur-PK" : "en-US";
-    u.rate = l === "ur" ? 0.9 : 1.0;
-    const voices = window.speechSynthesis.getVoices();
-    const match = voices.find((v) =>
-      l === "ur" ? v.lang.startsWith("ur") : v.lang.startsWith("en")
-    );
-    if (match) u.voice = match;
-    window.speechSynthesis.speak(u);
-  }, []);
-
   const ask = useCallback(
     async (question: string) => {
       const q = question.trim();
@@ -65,7 +52,7 @@ export function AskTitan() {
             ? "معذرت باس، سرور سے جواب نہیں ملا۔ دوبارہ کوشش کریں۔"
             : "Sorry Boss, no answer from the core. Please try again.");
         setTurns((t) => [...t, { role: "titan", text: answer }]);
-        if (voiceOut) speak(answer, lang);
+        if (voiceOut) void speakText(answer, lang);
       } catch {
         setTurns((t) => [
           ...t,
@@ -75,7 +62,7 @@ export function AskTitan() {
         setBusy(false);
       }
     },
-    [busy, lang, voiceOut, speak]
+    [busy, lang, voiceOut]
   );
 
   const toggleMic = useCallback(() => {
@@ -110,7 +97,7 @@ export function AskTitan() {
 
   const placeholder =
     lang === "ur"
-      ? "سوال پوچھیں… مثلاً: آج کتنے نئے یوزرز آئے؟"
+      ? "سوال پوचھیں… مثلاً: آج کتنے نئے یوزرز آئے؟"
       : "Ask anything… e.g. How many new users today?";
 
   return (
@@ -153,7 +140,7 @@ export function AskTitan() {
         {turns.length === 0 && (
           <p className="px-1 py-6 text-center text-xs text-slate-500">
             {lang === "ur"
-              ? "باس، کوئی بھی سوال پوچھیں — آواز یا ٹیکسٹ سے۔"
+              ? "باس، کوئی بھی سوال پوचھیں — آواز یا ٹیکسٹ سے۔"
               : "Boss, ask me anything — by voice or text."}
           </p>
         )}
@@ -176,7 +163,7 @@ export function AskTitan() {
         ))}
         {busy && (
           <div className="mr-auto max-w-[85%] rounded-lg border border-hud-violet/30 bg-hud-violet/5 p-2.5 text-xs text-slate-400">
-            {lang === "ur" ? "ٹائٹن سوچ رہا ہے…" : "Titan is thinking…"}
+            {lang === "ur" ? "ٹائٹن سوच رہا ہے…" : "Titan is thinking…"}
           </div>
         )}
         <div ref={endRef} />
@@ -185,7 +172,7 @@ export function AskTitan() {
       <div className="flex items-center gap-2 border-t border-edge/60 p-3">
         <button
           onClick={toggleMic}
-          title={lang === "ur" ? "بول کر پوچھیں" : "Speak your question"}
+          title={lang === "ur" ? "بول کر پوचھیں" : "Speak your question"}
           className={`rounded-lg border p-2 transition-colors ${
             listening
               ? "animate-pulse border-hud-rose/50 bg-hud-rose/10 text-hud-rose"
