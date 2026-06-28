@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from .. import persistence
 from ..core import auth, executive, llm
 from ..domain.enums import Horizon
 from ..domain.schemas import (
@@ -31,7 +32,7 @@ from ..domain.schemas import (
     StrategicPlan,
 )
 from ..engines import deliverables, evolution, execution, opportunity, publisher
-from ..store import STORE, AgentRuntime
+from ..store import STORE, AgentRuntime, now
 
 router = APIRouter(prefix="/api")
 
@@ -335,6 +336,7 @@ def update_metric(
     _verify_webhook(x_webhook_secret)
     STORE.metrics[update.key] = update.value
     STORE.emit("webhook", "metric", f"{update.key} updated to {update.value} via {update.source}", "success")
+    persistence.save(STORE)
     return {"updated": update.key, "value": update.value, "source": update.source}
 
 
@@ -352,10 +354,23 @@ def bulk_update_metrics(
         f"{len(keys)} metrics updated from {update.source}: {', '.join(keys)}",
         "success",
     )
+    persistence.save(STORE)
     return {"updated": keys, "count": len(keys), "source": update.source}
 
 
 # --- REAL revenue ledger (Fiverr orders, Career Mind sales, Kindle, etc.) ---
+
+_SOURCE_KEY = {
+    "fiverr": "fiverr_revenue",
+    "career_mind": "cm_revenue",
+    "careermind": "cm_revenue",
+    "kindle": "kindle_royalties",
+}
+
+
+def _source_key(source: str) -> str:
+    return _SOURCE_KEY.get((source or "other").lower(), "other_revenue")
+
 
 class RevenueLog(BaseModel):
     amount: float = Field(..., gt=0, description="Amount earned in USD for this order/sale")
@@ -379,28 +394,36 @@ def get_revenue() -> dict:
     }
 
 
+@router.get("/revenue/entries", tags=["revenue"])
+def revenue_entries() -> list:
+    """Full order history, newest first — shows where every dollar came from."""
+    return list(reversed(STORE.revenue_entries))
+
+
 @router.post("/revenue/log", tags=["revenue"])
 def log_revenue(entry: RevenueLog) -> dict:
-    """Record a REAL earned order/sale. Increments the running total so the
-    dashboard shows the truth. Called from the in-dashboard 'Log order' button
-    (same-origin, gated by login when auth is on) or from a Make.com scenario
-    that reads your Fiverr / KDP order-confirmation emails.
+    """Record a REAL earned order/sale. Appends a dated ledger entry and bumps
+    the running total so the dashboard shows the truth. Called from the
+    in-dashboard 'Log order' button or a Make.com scenario reading your Fiverr /
+    KDP order-confirmation emails.
     """
     m = STORE.metrics
-
-    # Map source -> per-source revenue key.
     source = (entry.source or "other").lower()
-    source_key = {
-        "fiverr": "fiverr_revenue",
-        "career_mind": "cm_revenue",
-        "careermind": "cm_revenue",
-        "kindle": "kindle_royalties",
-    }.get(source, "other_revenue")
+    key = _source_key(source)
 
-    m[source_key] = float(m.get(source_key, 0.0)) + entry.amount
+    m[key] = float(m.get(key, 0.0)) + entry.amount
     m["mrr"] = float(m.get("mrr", 0.0)) + entry.amount  # running total earned
     if source == "fiverr":
         m["fiverr_orders"] = float(m.get("fiverr_orders", 0)) + 1
+
+    record = {
+        "id": STORE.new_id("rev"),
+        "amount": float(entry.amount),
+        "source": source,
+        "note": entry.note or "",
+        "created_at": now().isoformat(),
+    }
+    STORE.revenue_entries.append(record)
 
     label = entry.note or f"{source} order"
     STORE.emit(
@@ -409,12 +432,38 @@ def log_revenue(entry: RevenueLog) -> dict:
         f"Total earned now ${m['mrr']:.2f}. Abdullah Boss, the empire is EARNING!",
         "success",
     )
-    return {
-        "logged": entry.amount,
-        "source": source,
-        "total": m["mrr"],
-        "source_total": m[source_key],
-    }
+    persistence.save(STORE)
+    return {"entry": record, "total": m["mrr"], "source_total": m[key]}
+
+
+@router.delete("/revenue/entry/{entry_id}", tags=["revenue"])
+def cancel_revenue(entry_id: str) -> dict:
+    """Cancel / remove a logged order and decrement the running totals."""
+    idx = next(
+        (i for i, e in enumerate(STORE.revenue_entries) if e.get("id") == entry_id),
+        None,
+    )
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+    rec = STORE.revenue_entries.pop(idx)
+    m = STORE.metrics
+    source = rec.get("source", "other")
+    key = _source_key(source)
+    amount = float(rec.get("amount", 0.0))
+
+    m[key] = max(0.0, float(m.get(key, 0.0)) - amount)
+    m["mrr"] = max(0.0, float(m.get("mrr", 0.0)) - amount)
+    if source == "fiverr":
+        m["fiverr_orders"] = max(0.0, float(m.get("fiverr_orders", 0)) - 1)
+
+    STORE.emit(
+        "revenue-tracker", "revenue",
+        f"Order cancelled: -${amount:.2f} ({source}). New total ${m['mrr']:.2f}.",
+        "warn",
+    )
+    persistence.save(STORE)
+    return {"cancelled": entry_id, "total": m["mrr"]}
 
 
 # --- inbox auto-reply drafting (for Make.com DM automation) -----------------
