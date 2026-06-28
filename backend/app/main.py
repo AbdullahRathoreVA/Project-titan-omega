@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import persistence
+from .api.actions import router as actions_router
 from .api.router import router
 from .connectors import careermind, github
 from .core import auth, executive
@@ -44,7 +45,6 @@ async def _heartbeat_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     seed(STORE)
-    # Restore real earnings (metrics + revenue ledger) saved from a prior run.
     persistence.load(STORE)
     opportunity.discover(STORE)
     ensure_weights(STORE)
@@ -81,9 +81,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Paths that never require an auth token — login screen, health checks,
-# and the Urdu voice + Ask Titan assistant (called directly from the UI
-# without a Bearer token in the request).
 _OPEN_PATHS = {
     "/api/login",
     "/api/auth",
@@ -105,6 +102,7 @@ async def auth_guard(request: Request, call_next):
 
 
 app.include_router(router)
+app.include_router(actions_router)
 
 
 @app.get("/health", tags=["system"])

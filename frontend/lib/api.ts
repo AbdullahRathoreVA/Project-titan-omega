@@ -1,8 +1,4 @@
 // Thin API client for the Executive Intelligence Core.
-//
-// Requests go to /api/* which Next rewrites to the FastAPI core (see
-// next.config.mjs). If the core is unreachable, each call falls back to a small
-// deterministic mock so the command center still renders for design/demo work.
 
 import type {
   AgentView,
@@ -134,15 +130,18 @@ export const api = {
   // growth studio
   intelGenerate: (kind: string, topic: string) =>
     post<{ kind: string; content: string }>("/intel/generate", { kind, topic }),
+  intelNews: (topic: string) => post<{ content: string }>("/intel/news", { topic }),
+
+  // action-taking agents
+  act: (instruction: string) => post<CommandResponse>("/agent/act", { instruction }),
 
   async command(text: string): Promise<CommandResponse> {
-    const res = await post<CommandResponse>("/command", { text });
+    const res = await post<CommandResponse>("/agent/act", { instruction: text });
     return (
       res ?? {
-        understood: true,
+        understood: false,
         intent: "offline",
-        response:
-          "Core unreachable — command queued locally. Start the backend to dispatch it.",
+        response: "Core unreachable — try again in a moment.",
         routed_to: null,
         actions: [],
       }

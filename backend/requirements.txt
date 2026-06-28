@@ -3,13 +3,13 @@ fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
 
-# AI providers — first configured key wins.
+# AI providers — first configured key wins (or force with TITAN_PROVIDER).
 anthropic>=0.40.0          # Claude   — ANTHROPIC_API_KEY
 groq>=0.9.0                # Groq     — GROQ_API_KEY  (free, fast Llama 3.3 70B)
-# openai>=1.0.0              # OpenAI-compatible — OPENAI_API_KEY or OPENAI_BASE_URL
+openai>=1.0.0             # OpenAI-compatible + Hermes via OpenRouter (OPENROUTER_API_KEY)
 # google-generativeai>=0.8.0 # Gemini   — GEMINI_API_KEY
 
-# Live connectors + test client.
+# Live connectors + news + test client.
 httpx==0.28.1
 
 # Test

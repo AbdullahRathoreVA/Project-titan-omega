@@ -5,6 +5,7 @@ import { Rocket, Copy, Check, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 
 const KINDS: { id: string; label: string }[] = [
+  { id: "latest_news", label: "📰 Latest news" },
   { id: "market_analysis", label: "📊 Market analysis" },
   { id: "school_outreach", label: "🎓 School / Uni email" },
   { id: "business_outreach", label: "💼 Business outreach" },
@@ -14,7 +15,7 @@ const KINDS: { id: string; label: string }[] = [
 ];
 
 export function GrowthStudio() {
-  const [kind, setKind] = useState("market_analysis");
+  const [kind, setKind] = useState("latest_news");
   const [topic, setTopic] = useState("");
   const [out, setOut] = useState("");
   const [busy, setBusy] = useState(false);
@@ -25,8 +26,11 @@ export function GrowthStudio() {
     setBusy(true);
     setOut("");
     try {
-      const res = await api.intelGenerate(kind, topic);
-      setOut(res?.content ?? "No output — is the core online and GROQ_API_KEY set?");
+      const res =
+        kind === "latest_news"
+          ? await api.intelNews(topic)
+          : await api.intelGenerate(kind, topic);
+      setOut(res?.content ?? "No output — is the core online and an LLM key set?");
     } finally {
       setBusy(false);
     }
@@ -49,7 +53,7 @@ export function GrowthStudio() {
           <Rocket className="h-4 w-4 text-hud-amber" strokeWidth={1.6} />
           <h2 className="text-sm font-medium text-slate-200">Growth Studio</h2>
         </div>
-        <span className="hud-label">AI-drafted outreach &amp; analysis</span>
+        <span className="hud-label">live news · analysis · outreach</span>
       </header>
 
       <div className="space-y-3 p-3">
@@ -74,7 +78,7 @@ export function GrowthStudio() {
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && run()}
-            placeholder="Optional: add a focus (e.g. 'target Pakistani universities')"
+            placeholder="Optional focus (e.g. 'Pakistani universities' or 'AI resume trends')"
             className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:border-hud-amber/40 focus:outline-none"
           />
           <button

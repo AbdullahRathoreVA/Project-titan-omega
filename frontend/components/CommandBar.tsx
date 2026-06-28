@@ -7,10 +7,10 @@ import { api } from "@/lib/api";
 import type { CommandResponse } from "@/lib/types";
 
 const SUGGESTIONS = [
-  "Grow Career Mind AI traffic",
-  "Find new revenue opportunities",
-  "Optimize our Fiverr gigs",
-  "Draft this week's growth plan",
+  "Post about Career Mind AI on LinkedIn",
+  "Scan for new revenue opportunities",
+  "Draft outreach to universities",
+  "Generate this week's report",
 ];
 
 export function CommandBar({ onDispatched }: { onDispatched?: () => void }) {
@@ -43,7 +43,7 @@ export function CommandBar({ onDispatched }: { onDispatched?: () => void }) {
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Command the empire…  e.g. “launch an affiliate program”"
+          placeholder="Tell the agents to DO something…  e.g. “post about Career Mind” or “scan opportunities”"
           className="flex-1 bg-transparent font-mono text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none"
           aria-label="Natural language command"
         />
@@ -59,7 +59,7 @@ export function CommandBar({ onDispatched }: { onDispatched?: () => void }) {
           disabled={busy}
           className="flex items-center gap-1.5 rounded-md border border-hud-cyan/40 bg-hud-cyan/10 px-3 py-1.5 text-xs font-medium text-hud-cyan transition-colors hover:bg-hud-cyan/20 disabled:opacity-50"
         >
-          {busy ? "Dispatching…" : "Dispatch"}
+          {busy ? "Working…" : "Do it"}
           <CornerDownLeft className="h-3.5 w-3.5" />
         </button>
       </form>
@@ -83,14 +83,12 @@ export function CommandBar({ onDispatched }: { onDispatched?: () => void }) {
           className="mt-3 overflow-hidden rounded-lg border border-edge bg-panel-2/60 p-3"
         >
           <div className="flex items-center gap-2">
-            <span className="hud-label">intent</span>
+            <span className="hud-label">action</span>
             <span className="rounded bg-hud-emerald/10 px-1.5 py-0.5 font-mono text-[10px] text-hud-emerald">
               {reply.intent}
             </span>
             {reply.routed_to && (
-              <span className="font-mono text-[10px] text-slate-500">
-                → {reply.routed_to}
-              </span>
+              <span className="font-mono text-[10px] text-slate-500">→ {reply.routed_to}</span>
             )}
           </div>
           <p className="mt-1.5 text-xs leading-relaxed text-slate-300">{reply.response}</p>
