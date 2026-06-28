@@ -36,6 +36,7 @@ import { ConnectedAssets } from "./ConnectedAssets";
 import { Publishing } from "./Publishing";
 import { UrduVoiceAssistant } from "./UrduVoiceAssistant";
 import { AskTitan } from "./AskTitan";
+import { RevenueTracker } from "./RevenueTracker";
 
 const POLL_MS = 5000;
 
@@ -130,7 +131,7 @@ export function CommandCenter() {
 
   const mrr = status?.mrr ?? 0;
   const mrrLabel = mrr === 0 ? "$0 — First order incoming" : money(mrr);
-  const mrrSub = mrr === 0 ? "Update via Make.com webhook" : "MRR · agents forecasting";
+  const mrrSub = mrr === 0 ? "Log your first order below" : "total earned · real revenue";
 
   return (
     <main className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6">
@@ -139,14 +140,14 @@ export function CommandCenter() {
       {mrr === 0 && (
         <div className="mt-3 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-4 py-3 text-xs text-hud-amber">
           <span className="font-semibold">Abdullah Boss — empire is live.</span>{" "}
-          All metrics start at $0 (real data only). Push real numbers via Make.com → your dashboard shows truth.{" "}
-          <span className="text-slate-400">Agents are already working on your first revenue opportunity.</span>
+          All numbers are real and start at $0. Got an order? Hit{" "}
+          <span className="font-semibold">Log order</span> in the Revenue Ledger — your dashboard shows the truth.
         </div>
       )}
 
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <MetricCard
-          label="Monthly Revenue"
+          label="Total Revenue"
           value={mrrLabel}
           sub={mrrSub}
           icon={Banknote}
@@ -205,8 +206,9 @@ export function CommandCenter() {
         <UrduVoiceAssistant status={status} />
       </div>
 
-      {/* Ask Titan — conversational assistant (voice/text, Urdu/English) */}
-      <div className="mt-4">
+      {/* Revenue ledger + Ask Titan */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <RevenueTracker total={mrr} onLogged={refresh} />
         <AskTitan />
       </div>
 

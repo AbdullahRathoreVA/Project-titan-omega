@@ -1,14 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Volume2, VolumeX, Loader2 } from "lucide-react";
 import type { EmpireStatus } from "@/lib/types";
+import { speakText } from "@/lib/voice";
 
 export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) {
   const [speaking, setSpeaking] = useState(false);
   const [loading, setLoading] = useState(false);
   const [supported, setSupported] = useState(true);
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.speechSynthesis) {
@@ -21,7 +21,6 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
     setLoading(true);
 
     try {
-      // Fetch fresh Urdu report from backend.
       const res = await fetch("/api/voice-report", { cache: "no-store" });
       const data = res.ok ? await res.json() : null;
 
@@ -35,10 +34,10 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
       const earningLine =
         mrr === 0
           ? "ابھی تک کوئی آمدنی نہیں ہوئی۔ لیکن ایجنٹ پہلا آرڈر لانے کے لیے کام کر رہے ہیں۔"
-          : `اس مہینے کی آمدنی ${mrr.toFixed(0)} ڈالر ہے۔`;
+          : `اب تک آپ نے کل ${mrr.toFixed(0)} ڈالر کمائے ہیں۔`;
 
       const fallback =
-        `السلام علیکم عبداللہ باس! آپ کی امپائر کی تازہ رپورٹ یہ ہے۔ ` +
+        `السلام و علیکم عبداللہ باس! آپ کی امپائر کی تازہ رپورٹ یہ ہے۔ ` +
         `${earningLine} ` +
         `ویب سائٹ ٹریفک ${traffic.toFixed(0)} وزیٹرز ہے۔ ` +
         `اس وقت ${active} ڈیجیٹل ملازمین کام کر رہے ہیں، کل ${total} میں سے۔ ` +
@@ -48,28 +47,11 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
 
       const urduText = data?.urdu ?? fallback;
 
-      window.speechSynthesis.cancel();
-
-      const utterance = new SpeechSynthesisUtterance(urduText);
-      utterance.lang = "ur-PK";
-      utterance.rate = 0.88;
-      utterance.pitch = 1.0;
-
-      const voices = window.speechSynthesis.getVoices();
-      const urduVoice = voices.find(
-        (v) => v.lang.startsWith("ur") || v.name.toLowerCase().includes("urdu")
-      );
-      if (urduVoice) utterance.voice = urduVoice;
-
-      utterance.onend = () => setSpeaking(false);
-      utterance.onerror = () => setSpeaking(false);
-
-      utteranceRef.current = utterance;
+      setLoading(false);
       setSpeaking(true);
-      window.speechSynthesis.speak(utterance);
+      await speakText(urduText, "ur", () => setSpeaking(false));
     } catch {
       setSpeaking(false);
-    } finally {
       setLoading(false);
     }
   }, [supported, speaking, loading, status]);
