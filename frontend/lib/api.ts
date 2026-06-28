@@ -36,8 +36,6 @@ export function authHeaders(extra: Record<string, string> = {}): Record<string, 
   return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
 }
 
-// Confirms the stored token is accepted by the core (used by AuthGate so a stale
-// token can't trap the dashboard in demo mode).
 export async function verifyToken(): Promise<boolean> {
   if (!getToken()) return false;
   try {
@@ -132,6 +130,10 @@ export const api = {
     }),
   revenueEntries: () => get<RevenueEntry[]>("/revenue/entries", []),
   cancelRevenue: (id: string) => del<{ cancelled: string; total: number }>(`/revenue/entry/${id}`),
+
+  // growth studio
+  intelGenerate: (kind: string, topic: string) =>
+    post<{ kind: string; content: string }>("/intel/generate", { kind, topic }),
 
   async command(text: string): Promise<CommandResponse> {
     const res = await post<CommandResponse>("/command", { text });

@@ -37,6 +37,7 @@ import { Publishing } from "./Publishing";
 import { UrduVoiceAssistant } from "./UrduVoiceAssistant";
 import { AskTitan } from "./AskTitan";
 import { RevenueTracker } from "./RevenueTracker";
+import { GrowthStudio } from "./GrowthStudio";
 
 const POLL_MS = 5000;
 
@@ -55,7 +56,6 @@ export function CommandCenter() {
   const refresh = useCallback(async () => {
     let isOnline = false;
     try {
-      // Send the auth token so the probe succeeds when login is required.
       const res = await fetch("/api/status", { cache: "no-store", headers: authHeaders() });
       isOnline = res.ok;
     } catch {
@@ -147,13 +147,7 @@ export function CommandCenter() {
       )}
 
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <MetricCard
-          label="Total Revenue"
-          value={mrrLabel}
-          sub={mrrSub}
-          icon={Banknote}
-          accent="emerald"
-        />
+        <MetricCard label="Total Revenue" value={mrrLabel} sub={mrrSub} icon={Banknote} accent="emerald" />
         <MetricCard
           label="Traffic"
           value={status ? (status.traffic === 0 ? "0 — Connect analytics" : compact(status.traffic)) : "—"}
@@ -161,13 +155,7 @@ export function CommandCenter() {
           icon={Globe2}
           accent="cyan"
         />
-        <MetricCard
-          label="Pipeline"
-          value={status ? money(status.pipeline_value) : "—"}
-          sub="open value"
-          icon={Target}
-          accent="violet"
-        />
+        <MetricCard label="Pipeline" value={status ? money(status.pipeline_value) : "—"} sub="open value" icon={Target} accent="violet" />
         <MetricCard
           label="Digital Employees"
           value={status ? `${status.active_agents}/${status.total_agents}` : "—"}
@@ -213,6 +201,11 @@ export function CommandCenter() {
         <AskTitan />
       </div>
 
+      {/* Growth Studio — market analysis + outreach generators */}
+      <div className="mt-4">
+        <GrowthStudio />
+      </div>
+
       <div className="mt-4">
         <ConnectedAssets connectors={connectors} />
       </div>
@@ -235,10 +228,7 @@ export function CommandCenter() {
         </div>
         <div className="space-y-4 xl:col-span-4">
           <div className="h-[560px]">
-            <OpportunityRadar
-              opportunities={opportunities}
-              onExecute={executeOpportunity}
-            />
+            <OpportunityRadar opportunities={opportunities} onExecute={executeOpportunity} />
           </div>
           <div className="h-[420px]">
             <Deliverables items={deliverables} />
@@ -249,9 +239,7 @@ export function CommandCenter() {
       <footer className="mt-6 flex items-center justify-between border-t border-edge/60 pt-4 text-[11px] text-slate-600">
         <span>Project Titan Omega · Executive Intelligence Core v0.2 · Abdullah&apos;s Empire</span>
         <span className="font-mono">
-          {status
-            ? `updated ${new Date(status.updated_at).toLocaleTimeString()}`
-            : "connecting…"}
+          {status ? `updated ${new Date(status.updated_at).toLocaleTimeString()}` : "connecting…"}
         </span>
       </footer>
     </main>

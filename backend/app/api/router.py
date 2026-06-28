@@ -403,9 +403,7 @@ def revenue_entries() -> list:
 @router.post("/revenue/log", tags=["revenue"])
 def log_revenue(entry: RevenueLog) -> dict:
     """Record a REAL earned order/sale. Appends a dated ledger entry and bumps
-    the running total so the dashboard shows the truth. Called from the
-    in-dashboard 'Log order' button or a Make.com scenario reading your Fiverr /
-    KDP order-confirmation emails.
+    the running total so the dashboard shows the truth.
     """
     m = STORE.metrics
     source = (entry.source or "other").lower()
@@ -477,13 +475,7 @@ class InboxMessage(BaseModel):
 
 @router.post("/inbox/auto-reply", tags=["system"])
 def inbox_auto_reply(msg: InboxMessage) -> dict:
-    """Draft a professional, sales-savvy reply to an incoming DM.
-
-    Designed to be called by a Make.com scenario watching your Fiverr / LinkedIn
-    inbox, or from the dashboard. Returns reply text Make.com can send back
-    automatically (or queue for your approval). Uses the LLM when a key is set;
-    otherwise a solid template.
-    """
+    """Draft a professional, sales-savvy reply to an incoming DM."""
     is_urdu = msg.lang == "ur"
     lang_name = "Urdu (اردو)" if is_urdu else "English"
     fiverr_link = os.getenv("FIVERR_GIG_URL", "my Fiverr gig")
@@ -523,6 +515,78 @@ def inbox_auto_reply(msg: InboxMessage) -> dict:
     return {"reply": reply, "platform": msg.platform, "lang": msg.lang}
 
 
+# --- Growth Studio: market analysis + outreach generators ------------------
+
+_INTEL_PROMPTS = {
+    "market_analysis": (
+        "You are a sharp market analyst for Abdullah's AI businesses (Career Mind AI "
+        "— a student career-guidance platform — and his Fiverr AI service gigs). "
+        "Produce a concise, actionable market analysis: current demand, the best target "
+        "segments, a competitor angle, simple pricing ideas, and 3 ZERO-COST growth moves "
+        "to execute THIS WEEK. Use clear headings and short bullets."
+    ),
+    "school_outreach": (
+        "Write a short, warm cold email to a school or university administrator selling "
+        "Career Mind AI — a free-trial AI career-guidance platform for students. Give a "
+        "subject line, a 4-6 sentence body, and a clear call to action to book a 10-minute "
+        "demo. Professional and genuine, no hype."
+    ),
+    "business_outreach": (
+        "Write a short cold email / DM to a small business owner offering Abdullah's AI "
+        "services from his Fiverr gigs (custom chatbots, automation, AI content). Give a "
+        "subject line, a 4-6 sentence body focused on concrete value, and a clear CTA. "
+        "No hype, no fake promises."
+    ),
+    "jobseeker_outreach": (
+        "Write a genuinely helpful community post aimed at people struggling to find a job. "
+        "Introduce Career Mind AI (free career guidance) and Abdullah's affordable Fiverr "
+        "resume / LinkedIn services. Helpful tone, NOT spammy. Then list 5 specific places "
+        "(subreddits, Facebook groups, Discords) where it is appropriate to share it."
+    ),
+    "customer_reply": (
+        "Draft a warm, professional customer-care reply that resolves the issue and keeps "
+        "the customer happy. If details are missing, ask one or two clarifying questions."
+    ),
+    "youtube_ideas": (
+        "Suggest 8 specific YouTube video / Short ideas Abdullah can make for FREE to promote "
+        "Career Mind AI and his Fiverr AI gigs — each with a punchy title and a one-line hook. "
+        "Then give 5 YouTube search queries he can use to study what is trending in this niche."
+    ),
+}
+
+
+class IntelRequest(BaseModel):
+    kind: str = Field(default="market_analysis")
+    topic: str = Field(default="")
+    lang: str = Field(default="en", description="'en' or 'ur'")
+
+
+@router.post("/intel/generate", tags=["system"])
+def intel_generate(req: IntelRequest) -> dict:
+    """Generate market analysis or outreach copy on demand via the free LLM."""
+    base = _INTEL_PROMPTS.get(req.kind, _INTEL_PROMPTS["market_analysis"])
+    lang_name = "Urdu (اردو)" if req.lang == "ur" else "English"
+
+    content = llm.complete(
+        system=base + f" Write the entire output in {lang_name}.",
+        prompt=req.topic
+        or "Use Abdullah's businesses: Career Mind AI (student career platform) and Fiverr AI gigs.",
+        max_tokens=900,
+    )
+
+    if not content:
+        content = (
+            "AI generation is in free fallback mode. Set GROQ_API_KEY in your Space secrets "
+            "(free, no card) and click again to get a full, tailored result here."
+        )
+
+    STORE.emit(
+        "intelligence-studio", "discovery",
+        f"Generated {req.kind.replace('_', ' ')} for Abdullah.", "success",
+    )
+    return {"kind": req.kind, "content": content}
+
+
 # --- helpers for voice + assistant ----------------------------------------
 
 def _empire_context() -> dict:
@@ -549,35 +613,42 @@ def _empire_context() -> dict:
     }
 
 
-# --- voice report (conversational Urdu briefing for Abdullah Boss) ---------
+# --- voice report (Urdu text + Hindi/Devanagari for TTS) -------------------
 
 @router.get("/voice-report", tags=["system"])
 def voice_report() -> dict:
-    """Returns a metrics briefing as natural Urdu text for the frontend TTS engine."""
+    """Returns the briefing in Urdu (for display) and Hindi/Devanagari (for the
+    browser TTS engine, since Urdu voices are rarely installed but Hindi ones
+    pronounce the same words correctly)."""
     c = _empire_context()
 
     if c["mrr"] == 0:
-        earning_line = "ابھی تک کوئی آمدنی شروع نہیں ہوئی، لیکن ایجنٹس آپ کے فائیور گگز اور کیئرئیر مائنڈ کے لیے پہلا آرڈر لانے پر کام کر رہے ہیں۔"
+        earn_ur = "ابھی تک کوئی آمدنی شروع نہیں ہوئی، لیکن ایجنٹس پہلا آرڈر لانے پر کام کر رہے ہیں۔"
+        earn_hi = "अभी तक कोई आमदनी शुरू नहीं हुई, लेकिन एजेंट्स पहला ऑर्डर लाने पर काम कर रहे हैं।"
     else:
-        earning_line = f"اب تک آپ نے کل {c['mrr']:.0f} ڈالر کمائے ہیں۔ مبارک ہو باس!"
+        earn_ur = f"اب تک آپ نے کل {c['mrr']:.0f} ڈالر کمائے ہیں۔ مبارک ہو باس!"
+        earn_hi = f"अब तक आपने कुल {c['mrr']:.0f} डॉलर कमाए हैं। मुबारक हो बॉस!"
 
     if c["cm_users"] > 0 or c["cm_active"] > 0:
-        cm_line = (
-            f"آپ کے کیئرئیر مائنڈ اے آئی پر اس وقت {c['cm_users']} یوزرز ہیں، "
-            f"جن میں سے {c['cm_active']} فعال ہیں۔ "
-        )
+        cm_ur = f"آپ کے کیئرئیر مائنڈ پر اس وقت {c['cm_users']} یوزرز ہیں، جن میں سے {c['cm_active']} فعال ہیں۔ "
+        cm_hi = f"आपके करियर माइंड पर इस वक्त {c['cm_users']} यूज़र्स हैं, जिनमें से {c['cm_active']} फ़आल हैं। "
     else:
-        cm_line = "آپ کے کیئرئیر مائنڈ اے آئی پر ابھی نئے یوزرز کا انتظار ہے، مارکیٹنگ ایجنٹس اس پر کام کر رہے ہیں۔ "
+        cm_ur = "آپ کے کیئرئیر مائنڈ پر ابھی نئے یوزرز کا انتظار ہے، مارکیٹنگ ایجنٹس اس پر کام کر رہے ہیں۔ "
+        cm_hi = "आपके करियर माइंड पर अभी नए यूज़र्स का इंतज़ार है, मार्केटिंग एजेंट्स इस पर काम कर रहे हैं। "
 
     urdu_text = (
         f"اسلام و علیکم عبداللہ باس! یہ رہی آپ کی تازہ ترین رپورٹ۔ "
-        f"{cm_line}"
-        f"{earning_line} "
-        f"اس وقت آپ کے {c['active_agents']} ڈیجیٹل ملازمین نئی مارکیٹنگ حکمت عملی پر کام کر رہے ہیں، کل {c['total_agents']} میں سے۔ "
-        f"{c['open_opportunities']} نئے کاروباری مواقع دستیاب ہیں۔ "
-        f"باس، ہم آپ کو بلین ڈالر کمپنی بنانے کی طرف لے جا رہے ہیں۔ آگے بڑھتے رہیں!"
+        f"{cm_ur}{earn_ur} "
+        f"اس وقت آپ کے {c['active_agents']} ڈیجیٹل ملازمین کام کر رہے ہیں، کل {c['total_agents']} میں سے۔ "
+        f"{c['open_opportunities']} نئے کاروباری مواقع دستیاب ہیں۔ باس، آگے بڑھتے رہیں!"
     )
-    return {"urdu": urdu_text, **c}
+    hindi_text = (
+        f"अस्सलाम वालेकुम अब्दुल्लाह बॉस! ये रही आपकी ताज़ा तरीन रिपोर्ट। "
+        f"{cm_hi}{earn_hi} "
+        f"इस वक्त आपके {c['active_agents']} डिजिटल मुलाज़िमीन काम कर रहे हैं, कुल {c['total_agents']} में से। "
+        f"{c['open_opportunities']} नए कारोबारी मौके मौजूद हैं। बॉस, आगे बढ़ते रहिए!"
+    )
+    return {"urdu": urdu_text, "hindi": hindi_text, **c}
 
 
 # --- Ask Titan assistant (voice/text, Urdu or English) --------------------
@@ -589,10 +660,10 @@ class AssistantRequest(BaseModel):
 
 @router.post("/assistant", tags=["system"])
 def assistant(req: AssistantRequest) -> dict:
-    """Answer Abdullah's free-form question about his empire, in Urdu or English."""
+    """Answer Abdullah's question. Returns 'answer' (display) and 'spoken'
+    (Hindi/Devanagari for Urdu, so the installed Hindi voice can read it)."""
     c = _empire_context()
     is_urdu = req.lang == "ur"
-    lang_name = "Urdu (اردو)" if is_urdu else "English"
 
     context = (
         f"Live empire state — "
@@ -603,23 +674,42 @@ def assistant(req: AssistantRequest) -> dict:
         f"{c['open_opportunities']} open opportunities. Empire health {c['health']:.0f}%."
     )
 
-    answer = llm.complete(
+    if is_urdu:
+        instructions = (
+            "Reply in Urdu (Arabic script). Then output a line containing exactly '###' "
+            "and after it write the SAME reply in Hindi (Devanagari script) for text-to-speech."
+        )
+    else:
+        instructions = "Answer ONLY in English."
+
+    raw = llm.complete(
         system=(
             "You are Titan, the AI chief-of-staff for Abdullah's autonomous business "
-            "empire (which runs the Career Mind AI student platform and Fiverr AI gigs). "
-            f"Always address the founder as 'Abdullah Boss'. Answer ONLY in {lang_name}. "
+            "empire (Career Mind AI student platform + Fiverr AI gigs). "
+            f"Always address the founder as 'Abdullah Boss'. {instructions} "
             "Be concise (2-4 sentences), concrete, and motivating. Use the live data below "
             "when relevant.\n\n" + context
         ),
         prompt=req.question,
-        max_tokens=500,
+        max_tokens=600,
     )
 
-    if not answer:
+    answer = raw or ""
+    spoken = raw or ""
+    if raw and is_urdu and "###" in raw:
+        parts = raw.split("###", 1)
+        answer = parts[0].strip()
+        spoken = parts[1].strip()
+
+    if not raw:
         if is_urdu:
             answer = (
                 f"عبداللہ باس، اس وقت آپ نے کل {c['mrr']:.0f} ڈالر کمائے ہیں اور "
-                f"{c['active_agents']} ایجنٹس کام کر رہے ہیں۔ مفت AI جوابات کے لیے GROQ_API_KEY لگائیں۔"
+                f"{c['active_agents']} ایجنٹس کام کر رہے ہیں۔"
+            )
+            spoken = (
+                f"अब्दुल्लाह बॉस, इस वक्त आपने कुल {c['mrr']:.0f} डॉलर कमाए हैं और "
+                f"{c['active_agents']} एजेंट्स काम कर रहे हैं।"
             )
         else:
             answer = (
@@ -627,9 +717,10 @@ def assistant(req: AssistantRequest) -> dict:
                 f"{c['active_agents']} agents are working. Set GROQ_API_KEY in your Space "
                 f"secrets to unlock full conversational AI answers (free, no card)."
             )
+            spoken = answer
 
     STORE.emit("titan-assistant", "command", f'Abdullah asked: "{req.question[:80]}"', "info")
-    return {"answer": answer, "lang": req.lang}
+    return {"answer": answer, "spoken": spoken, "lang": req.lang}
 
 
 # --- intelligence status --------------------------------------------------

@@ -8,7 +8,6 @@ import { speakText } from "@/lib/voice";
 type Lang = "en" | "ur";
 type Turn = { role: "you" | "titan"; text: string };
 
-// Minimal typing for the Web Speech API (not in standard TS lib).
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function getRecognition(): any {
   if (typeof window === "undefined") return null;
@@ -51,8 +50,10 @@ export function AskTitan() {
           (lang === "ur"
             ? "معذرت باس، سرور سے جواب نہیں ملا۔ دوبارہ کوشش کریں۔"
             : "Sorry Boss, no answer from the core. Please try again.");
+        // 'spoken' is Hindi/Devanagari for Urdu so the Hindi voice can read it.
+        const spoken = data?.spoken ?? answer;
         setTurns((t) => [...t, { role: "titan", text: answer }]);
-        if (voiceOut) void speakText(answer, lang);
+        if (voiceOut) void speakText(spoken, lang === "ur" ? "hi" : "en");
       } catch {
         setTurns((t) => [
           ...t,
@@ -127,9 +128,7 @@ export function AskTitan() {
           <button
             onClick={() => setVoiceOut((v) => !v)}
             title="Speak answers aloud"
-            className={`ml-1 rounded p-1 ${
-              voiceOut ? "text-hud-emerald" : "text-slate-600"
-            }`}
+            className={`ml-1 rounded p-1 ${voiceOut ? "text-hud-emerald" : "text-slate-600"}`}
           >
             <Volume2 className="h-3.5 w-3.5" />
           </button>
