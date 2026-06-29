@@ -81,6 +81,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Paths that never require a login token — the login screen, health checks, the
+# voice/assistant UI calls, and the automation endpoints Make.com calls (it has
+# no login token). These are low-risk (content generation / append-only logging)
+# and the Space URL is private.
 _OPEN_PATHS = {
     "/api/login",
     "/api/auth",
@@ -88,6 +92,10 @@ _OPEN_PATHS = {
     "/api/voice-report",
     "/api/assistant",
     "/api/intelligence",
+    "/api/content/daily",
+    "/api/intel/news",
+    "/api/revenue/log",
+    "/api/inbox/auto-reply",
 }
 
 
@@ -97,7 +105,11 @@ async def auth_guard(request: Request, call_next):
     if auth.require_auth() and path.startswith("/api") and path not in _OPEN_PATHS:
         token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         if not auth.valid_token(token):
-            return JSONResponse({"detail": "Authentication required"}, status_code=401)
+            # Automation (Make.com) can authenticate with the webhook secret instead.
+            secret = request.headers.get("x-webhook-secret", "")
+            expected = os.getenv("TITAN_WEBHOOK_SECRET")
+            if not (expected and secret == expected):
+                return JSONResponse({"detail": "Authentication required"}, status_code=401)
     return await call_next(request)
 
 
