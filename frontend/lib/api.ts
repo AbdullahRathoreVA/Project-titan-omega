@@ -131,6 +131,7 @@ export const api = {
   intelGenerate: (kind: string, topic: string) =>
     post<{ kind: string; content: string }>("/intel/generate", { kind, topic }),
   intelNews: (topic: string) => post<{ content: string }>("/intel/news", { topic }),
+  findLeads: (query: string) => post<{ content: string; live: boolean }>("/leads/find", { query }),
 
   // action-taking agents
   act: (instruction: string) => post<CommandResponse>("/agent/act", { instruction }),

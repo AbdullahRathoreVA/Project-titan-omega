@@ -1,8 +1,9 @@
 """Action-taking endpoints — the agents actually DO things, not just talk.
 
 Mounted alongside the main router so the core contract stays untouched:
-  * POST /api/agent/act    — perform a real in-app action.
-  * POST /api/intel/news   — live headlines + market analysis.
+  * POST /api/agent/act     — perform a real in-app action.
+  * POST /api/intel/news    — live headlines + market analysis.
+  * POST /api/leads/find    — live web search → concrete leads (Tavily).
   * GET  /api/content/daily — fresh caption + free AI image URL for auto-posting.
 """
 
@@ -15,7 +16,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from ..core import llm
-from ..engines import deliverables, news, opportunity, publisher
+from ..engines import deliverables, news, opportunity, publisher, research
 from ..store import STORE
 
 router = APIRouter(prefix="/api")
@@ -68,9 +69,66 @@ def intel_news(req: NewsRequest) -> dict:
     return {"kind": "latest_news", "content": content, "headlines": heads}
 
 
+# --- live lead finder (Tavily web search) ----------------------------------
+
+class LeadRequest(BaseModel):
+    query: str = Field(default="")
+    lang: str = Field(default="en", description="'en' or 'ur'")
+
+
+@router.post("/leads/find", tags=["system"])
+def find_leads(req: LeadRequest) -> dict:
+    """Search the live web for real leads, then format them into an action list."""
+    query = req.query or (
+        "universities and colleges career services departments contact, "
+        "and small businesses that need AI chatbots or automation"
+    )
+    lang_name = "Urdu (اردو)" if req.lang == "ur" else "English"
+    results = research.search(query, 8)
+
+    if results:
+        src = "\n".join(f"- {r['title']} | {r['url']}\n  {r['content']}" for r in results)
+        content = llm.complete(
+            system=(
+                "You are Abdullah's lead-generation analyst. From these LIVE web results, "
+                "extract concrete leads (organisations / people / places) he can reach to "
+                "sell Career Mind AI (student career platform) or his Fiverr AI gigs. For "
+                "each lead give: name, why they're a fit, where/how to contact, and a 1-line "
+                f"opening message. Be specific and practical. Write in {lang_name}."
+            ),
+            prompt="Live web results:\n" + src,
+            max_tokens=900,
+        )
+        content = (content or "") + "\n\n— Sources —\n" + "\n".join(
+            f"• {r['url']}" for r in results
+        )
+        live = True
+    else:
+        content = llm.complete(
+            system=(
+                "You are Abdullah's lead-generation analyst. Give a concrete, practical list "
+                "of WHERE to find buyers for Career Mind AI and his Fiverr AI gigs — specific "
+                "communities, directories, search queries, and outreach angles. "
+                f"Write in {lang_name}."
+            ),
+            prompt=req.query or "Find buyers for an AI career platform + Fiverr AI services.",
+            max_tokens=700,
+        ) or (
+            "Add a free TAVILY_API_KEY (tavily.com) in your Space to unlock LIVE lead search. "
+            "For now: target university career-services pages, student Facebook groups, and "
+            "r/jobs / r/resumes on Reddit."
+        )
+        live = False
+
+    STORE.emit(
+        "revenue-head", "discovery",
+        f"Lead search ({'live' if live else 'offline'}): {query[:60]}", "success",
+    )
+    return {"kind": "leads", "content": content, "live": live}
+
+
 # --- daily auto-content (caption + free AI image) for posting --------------
 
-# Ad-quality image styles (Flux model via Pollinations — free, no key).
 _IMG_STYLES = [
     "professional marketing poster, bold modern design, vibrant gradient, ultra high quality, 4k, clean, eye-catching advertising creative",
     "sleek corporate flat illustration, blue and purple palette, minimal, premium, crisp, high detail",
@@ -93,20 +151,13 @@ def content_daily(
     lang: str = Query(default="en"),
     target: str = Query(default="auto", description="career_mind | fiverr | auto"),
 ) -> dict:
-    """Fresh caption + a FREE high-quality AI image for the daily post.
-
-    ``target`` picks the business + the correct link:
-      * career_mind → promotes Career Mind AI, links to the web app
-      * fiverr      → promotes the Fiverr AI gigs, links to FIVERR_GIG_URL
-      * auto        → alternates between the two
-    """
+    """Fresh caption + a FREE high-quality AI image for the daily post."""
     cm = os.getenv("CAREERMIND_URL", "https://careermind2026-career-mind.hf.space")
     fiverr = os.getenv("FIVERR_GIG_URL", "").strip()
     lang_name = "Urdu (اردو)" if lang == "ur" else "English"
 
     t = (target or "auto").lower()
     if t == "auto":
-        # Alternate; only pick fiverr if a gig link is configured.
         t = "fiverr" if (fiverr and len(STORE.feed) % 2 == 0) else "career_mind"
 
     if t == "fiverr" and fiverr:

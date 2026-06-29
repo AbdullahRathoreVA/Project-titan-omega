@@ -5,6 +5,7 @@ import { Rocket, Copy, Check, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 
 const KINDS: { id: string; label: string }[] = [
+  { id: "find_leads", label: "🎯 Find leads (live)" },
   { id: "latest_news", label: "📰 Latest news" },
   { id: "market_analysis", label: "📊 Market analysis" },
   { id: "school_outreach", label: "🎓 School / Uni email" },
@@ -15,7 +16,7 @@ const KINDS: { id: string; label: string }[] = [
 ];
 
 export function GrowthStudio() {
-  const [kind, setKind] = useState("latest_news");
+  const [kind, setKind] = useState("find_leads");
   const [topic, setTopic] = useState("");
   const [out, setOut] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,10 +27,14 @@ export function GrowthStudio() {
     setBusy(true);
     setOut("");
     try {
-      const res =
-        kind === "latest_news"
-          ? await api.intelNews(topic)
-          : await api.intelGenerate(kind, topic);
+      let res: { content: string } | null;
+      if (kind === "find_leads") {
+        res = await api.findLeads(topic);
+      } else if (kind === "latest_news") {
+        res = await api.intelNews(topic);
+      } else {
+        res = await api.intelGenerate(kind, topic);
+      }
       setOut(res?.content ?? "No output — is the core online and an LLM key set?");
     } finally {
       setBusy(false);
@@ -53,7 +58,7 @@ export function GrowthStudio() {
           <Rocket className="h-4 w-4 text-hud-amber" strokeWidth={1.6} />
           <h2 className="text-sm font-medium text-slate-200">Growth Studio</h2>
         </div>
-        <span className="hud-label">live news · analysis · outreach</span>
+        <span className="hud-label">leads · live news · outreach</span>
       </header>
 
       <div className="space-y-3 p-3">
@@ -78,7 +83,7 @@ export function GrowthStudio() {
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && run()}
-            placeholder="Optional focus (e.g. 'Pakistani universities' or 'AI resume trends')"
+            placeholder="Optional focus (e.g. 'universities in Pakistan' or 'businesses needing chatbots')"
             className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:border-hud-amber/40 focus:outline-none"
           />
           <button
@@ -87,7 +92,7 @@ export function GrowthStudio() {
             className="flex items-center gap-1.5 rounded-lg border border-hud-amber/40 bg-hud-amber/10 px-4 py-2 text-xs font-medium text-hud-amber transition-colors hover:bg-hud-amber/20 disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
-            {busy ? "Generating…" : "Generate"}
+            {busy ? "Working…" : "Generate"}
           </button>
         </div>
 
