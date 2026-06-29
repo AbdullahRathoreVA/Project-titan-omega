@@ -1,20 +1,17 @@
 """Action-taking endpoints — the agents actually DO things, not just talk.
 
 Mounted alongside the main router so the core contract stays untouched:
-  * POST /api/agent/act   — interpret an instruction and perform a real in-app
-                            action (schedule a post, scan opportunities,
-                            generate a report, draft outreach).
-  * POST /api/intel/news  — pull live headlines and produce market analysis.
-
-Honest boundary: this app cannot send emails or post to your real social
-accounts by itself — that requires connecting your Gmail / socials through
-Make.com. Until then, 'actions' that touch the outside world are prepared and
-queued here for Make.com (or you) to send.
+  * POST /api/agent/act    — perform a real in-app action.
+  * POST /api/intel/news   — live headlines + market analysis.
+  * GET  /api/content/daily — fresh caption + free AI image URL for auto-posting.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import os
+from urllib.parse import quote
+
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from ..core import llm
@@ -71,6 +68,67 @@ def intel_news(req: NewsRequest) -> dict:
     return {"kind": "latest_news", "content": content, "headlines": heads}
 
 
+# --- daily auto-content (caption + free AI image) for posting --------------
+
+_IMG_STYLES = [
+    "modern flat illustration, vibrant gradient, clean, professional",
+    "confident student getting hired, bright office, flat vector art",
+    "AI and career growth concept, futuristic, blue and purple, minimal",
+    "resume and laptop on desk, warm lighting, modern illustration",
+    "rocket launching from a laptop, success concept, vibrant flat art",
+]
+
+
+@router.get("/content/daily", tags=["system"])
+def content_daily(
+    topic: str = Query(default=""),
+    lang: str = Query(default="en"),
+) -> dict:
+    """Fresh caption + a FREE AI-generated image URL for the daily post.
+
+    Designed for a once-a-day Make.com scenario: GET this, download image_url,
+    post it with the caption to all socials. No image API key needed — the image
+    is generated free by Pollinations from the prompt.
+    """
+    cm = os.getenv("CAREERMIND_URL", "https://careermind2026-career-mind.hf.space")
+    fiverr = os.getenv("FIVERR_GIG_URL", "")
+    link = fiverr or cm
+    lang_name = "Urdu (اردو)" if lang == "ur" else "English"
+
+    caption = llm.complete(
+        system=(
+            "Write ONE engaging social media caption (max 200 characters) promoting "
+            "Career Mind AI (free AI career guidance for students) or Abdullah's Fiverr AI "
+            "gigs. Pick a fresh angle (resume tips, job search, AI in careers). Include 3-5 "
+            f"relevant hashtags and a clear call to action. Write in {lang_name}. "
+            "Output ONLY the caption text."
+        ),
+        prompt=topic or "Today's promo post.",
+        max_tokens=160,
+    ) or (
+        "🚀 Career Mind AI — free AI career guidance for students. Land your dream job today! "
+        "#AI #careers #jobs #resume #students"
+    )
+
+    # Pick a rotating image style (varies day to day via the feed counter).
+    style = _IMG_STYLES[len(STORE.feed) % len(_IMG_STYLES)]
+    img_prompt = (topic + ", " if topic else "") + "career success, " + style
+    image_url = (
+        "https://image.pollinations.ai/prompt/"
+        + quote(img_prompt)
+        + "?width=1080&height=1080&nologo=true"
+    )
+
+    caption_with_link = f"{caption}\n\n👉 {link}"
+    STORE.emit("content-studio", "activity", "Generated daily auto-post (caption + image).", "success")
+    return {
+        "caption": caption_with_link,
+        "image_prompt": img_prompt,
+        "image_url": image_url,
+        "link": link,
+    }
+
+
 # --- action-taking command --------------------------------------------------
 
 class ActRequest(BaseModel):
@@ -93,7 +151,6 @@ def agent_act(req: ActRequest) -> dict:
     text = req.instruction.strip()
     low = text.lower()
 
-    # 1) Social post — draft + schedule (publishes via Make.com once connected).
     if any(k in low for k in ["post", "tweet", "linkedin", "instagram", "pinterest", "social", "share", "caption"]):
         content = llm.complete(
             system=(
@@ -113,7 +170,6 @@ def agent_act(req: ActRequest) -> dict:
             ["scheduled_post:" + str(post.get("id", ""))],
         )
 
-    # 2) Scan the market for opportunities.
     if any(k in low for k in ["scan", "opportunit", "find revenue", "find new", "leads", "prospect"]):
         STORE.opportunities.clear()
         opportunity.discover(STORE)
@@ -125,7 +181,6 @@ def agent_act(req: ActRequest) -> dict:
             ["scanned_opportunities"],
         )
 
-    # 3) Generate a report.
     if any(k in low for k in ["report", "summary", "weekly"]):
         deliverables.generate("business_report", text, "executive-board-reporting-analyst", store=STORE)
         return _resp(
@@ -135,7 +190,6 @@ def agent_act(req: ActRequest) -> dict:
             ["created_deliverable"],
         )
 
-    # 4) Outreach / customer care — draft + save (sending needs Make.com + Gmail).
     if any(k in low for k in ["email", "outreach", "school", "university", "college", "business", "customer", "reply", "sell", "contact"]):
         if any(k in low for k in ["school", "university", "college"]):
             brief = "Cold email to a school/university administrator selling Career Mind AI (free-trial student career platform)."
@@ -159,7 +213,6 @@ def agent_act(req: ActRequest) -> dict:
             ["created_deliverable"],
         )
 
-    # 5) Default — answer as chief of staff.
     ans = llm.complete(
         system=(
             "You are Titan, Abdullah's AI chief of staff. Address him as 'Abdullah Boss'. "
