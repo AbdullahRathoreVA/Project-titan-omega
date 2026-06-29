@@ -70,58 +70,92 @@ def intel_news(req: NewsRequest) -> dict:
 
 # --- daily auto-content (caption + free AI image) for posting --------------
 
+# Ad-quality image styles (Flux model via Pollinations — free, no key).
 _IMG_STYLES = [
-    "modern flat illustration, vibrant gradient, clean, professional",
-    "confident student getting hired, bright office, flat vector art",
-    "AI and career growth concept, futuristic, blue and purple, minimal",
-    "resume and laptop on desk, warm lighting, modern illustration",
-    "rocket launching from a laptop, success concept, vibrant flat art",
+    "professional marketing poster, bold modern design, vibrant gradient, ultra high quality, 4k, clean, eye-catching advertising creative",
+    "sleek corporate flat illustration, blue and purple palette, minimal, premium, crisp, high detail",
+    "modern social media ad creative, dynamic composition, bright and inspiring, professional studio look",
+    "premium tech brand visual, smooth gradient background, sharp, polished, marketing campaign quality",
 ]
+
+
+def _pollinations(prompt: str) -> str:
+    return (
+        "https://image.pollinations.ai/prompt/"
+        + quote(prompt)
+        + "?width=1080&height=1080&nologo=true&model=flux&enhance=true"
+    )
 
 
 @router.get("/content/daily", tags=["system"])
 def content_daily(
     topic: str = Query(default=""),
     lang: str = Query(default="en"),
+    target: str = Query(default="auto", description="career_mind | fiverr | auto"),
 ) -> dict:
-    """Fresh caption + a FREE AI-generated image URL for the daily post.
+    """Fresh caption + a FREE high-quality AI image for the daily post.
 
-    Designed for a once-a-day Make.com scenario: GET this, download image_url,
-    post it with the caption to all socials. No image API key needed — the image
-    is generated free by Pollinations from the prompt.
+    ``target`` picks the business + the correct link:
+      * career_mind → promotes Career Mind AI, links to the web app
+      * fiverr      → promotes the Fiverr AI gigs, links to FIVERR_GIG_URL
+      * auto        → alternates between the two
     """
     cm = os.getenv("CAREERMIND_URL", "https://careermind2026-career-mind.hf.space")
-    fiverr = os.getenv("FIVERR_GIG_URL", "")
-    link = fiverr or cm
+    fiverr = os.getenv("FIVERR_GIG_URL", "").strip()
     lang_name = "Urdu (اردو)" if lang == "ur" else "English"
+
+    t = (target or "auto").lower()
+    if t == "auto":
+        # Alternate; only pick fiverr if a gig link is configured.
+        t = "fiverr" if (fiverr and len(STORE.feed) % 2 == 0) else "career_mind"
+
+    if t == "fiverr" and fiverr:
+        link = fiverr
+        pitch = (
+            "Abdullah's Fiverr AI services: custom AI chatbots, business automation, "
+            "AI content writing, and resume/LinkedIn optimisation. Affordable, fast delivery."
+        )
+        img_subject = (
+            "freelance AI services advertisement, chatbots and automation, a confident "
+            "professional at a laptop, digital marketing"
+        )
+    else:
+        t = "career_mind"
+        link = cm
+        pitch = (
+            "Career Mind AI — a FREE AI career-guidance platform for students: instant "
+            "resume feedback, career matching, and interview prep."
+        )
+        img_subject = (
+            "student career success, a happy graduate getting hired, education and AI, "
+            "bright and hopeful"
+        )
 
     caption = llm.complete(
         system=(
-            "Write ONE engaging social media caption (max 200 characters) promoting "
-            "Career Mind AI (free AI career guidance for students) or Abdullah's Fiverr AI "
-            "gigs. Pick a fresh angle (resume tips, job search, AI in careers). Include 3-5 "
-            f"relevant hashtags and a clear call to action. Write in {lang_name}. "
-            "Output ONLY the caption text."
+            "Write ONE scroll-stopping social media caption (max 200 characters) that "
+            "attracts buyers. Open with a hook, give one clear benefit, end with a call to "
+            "action. Add 3-5 relevant hashtags. Do NOT include any URL (it is appended "
+            f"separately). Write in {lang_name}. Output ONLY the caption."
         ),
-        prompt=topic or "Today's promo post.",
+        prompt=(topic + ". " if topic else "") + "Promote: " + pitch,
         max_tokens=160,
     ) or (
-        "🚀 Career Mind AI — free AI career guidance for students. Land your dream job today! "
+        "🚀 Land your dream job with AI — free career guidance for students! Try it today. "
         "#AI #careers #jobs #resume #students"
     )
 
-    # Pick a rotating image style (varies day to day via the feed counter).
     style = _IMG_STYLES[len(STORE.feed) % len(_IMG_STYLES)]
-    img_prompt = (topic + ", " if topic else "") + "career success, " + style
-    image_url = (
-        "https://image.pollinations.ai/prompt/"
-        + quote(img_prompt)
-        + "?width=1080&height=1080&nologo=true"
-    )
+    img_prompt = ((topic + ", ") if topic else "") + img_subject + ", " + style
+    image_url = _pollinations(img_prompt)
 
     caption_with_link = f"{caption}\n\n👉 {link}"
-    STORE.emit("content-studio", "activity", "Generated daily auto-post (caption + image).", "success")
+    STORE.emit(
+        "content-studio", "activity",
+        f"Generated daily {t.replace('_', ' ')} post (caption + image).", "success",
+    )
     return {
+        "target": t,
         "caption": caption_with_link,
         "image_prompt": img_prompt,
         "image_url": image_url,
