@@ -9,15 +9,18 @@ Mounted alongside the main router so the core contract stays untouched:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from urllib.parse import quote
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..core import llm
+from ..core import executive, llm
 from ..engines import deliverables, news, opportunity, publisher, research
-from ..store import STORE
+from ..store import STORE, Store, now
 
 router = APIRouter(prefix="/api")
 
@@ -145,20 +148,23 @@ def _pollinations(prompt: str) -> str:
     )
 
 
-@router.get("/content/daily", tags=["system"])
-def content_daily(
-    topic: str = Query(default=""),
-    lang: str = Query(default="en"),
-    target: str = Query(default="auto", description="career_mind | fiverr | auto"),
+def _build_next_post(
+    topic: str = "",
+    lang: str = "en",
+    target: str = "auto",
+    store: Store = STORE,
 ) -> dict:
-    """Fresh caption + a FREE high-quality AI image for the daily post."""
+    """Generate one ready-to-post draft: caption + a FREE high-quality AI image.
+
+    Shared by the daily auto-content endpoint and the HUD "Next Post" card.
+    """
     cm = os.getenv("CAREERMIND_URL", "https://careermind2026-career-mind.hf.space")
     fiverr = os.getenv("FIVERR_GIG_URL", "").strip()
     lang_name = "Urdu (اردو)" if lang == "ur" else "English"
 
     t = (target or "auto").lower()
     if t == "auto":
-        t = "fiverr" if (fiverr and len(STORE.feed) % 2 == 0) else "career_mind"
+        t = "fiverr" if (fiverr and len(store.feed) % 2 == 0) else "career_mind"
 
     if t == "fiverr" and fiverr:
         link = fiverr
@@ -196,22 +202,189 @@ def content_daily(
         "#AI #careers #jobs #resume #students"
     )
 
-    style = _IMG_STYLES[len(STORE.feed) % len(_IMG_STYLES)]
+    style = _IMG_STYLES[len(store.feed) % len(_IMG_STYLES)]
     img_prompt = ((topic + ", ") if topic else "") + img_subject + ", " + style
     image_url = _pollinations(img_prompt)
 
-    caption_with_link = f"{caption}\n\n👉 {link}"
-    STORE.emit(
-        "content-studio", "activity",
-        f"Generated daily {t.replace('_', ' ')} post (caption + image).", "success",
-    )
     return {
+        "id": store.new_id("draft"),
         "target": t,
-        "caption": caption_with_link,
+        "caption": f"{caption}\n\n👉 {link}",
         "image_prompt": img_prompt,
         "image_url": image_url,
         "link": link,
+        "channels": ["linkedin", "instagram", "facebook"],
+        "created_at": now().isoformat(),
     }
+
+
+@router.get("/content/daily", tags=["system"])
+def content_daily(
+    topic: str = Query(default=""),
+    lang: str = Query(default="en"),
+    target: str = Query(default="auto", description="career_mind | fiverr | auto"),
+) -> dict:
+    """Fresh caption + a FREE high-quality AI image for the daily post."""
+    post = _build_next_post(topic, lang, target, STORE)
+    STORE.emit(
+        "content-studio", "activity",
+        f"Generated daily {post['target'].replace('_', ' ')} post (caption + image).",
+        "success",
+    )
+    return post
+
+
+# --- HUD "Next Post" card (preview + approve/regenerate) -------------------
+
+@router.get("/next-post", tags=["system"])
+def next_post(lang: str = Query(default="en")) -> dict:
+    """The current next post the founder can approve. Generated lazily, cached."""
+    if not STORE.next_post:
+        STORE.next_post = _build_next_post("", lang, "auto", STORE)
+    return STORE.next_post
+
+
+class RegenRequest(BaseModel):
+    topic: str = Field(default="")
+    lang: str = Field(default="en")
+    target: str = Field(default="auto")
+
+
+@router.post("/next-post/regenerate", tags=["system"])
+def next_post_regenerate(req: RegenRequest) -> dict:
+    """Throw away the current draft and make a fresh caption + image."""
+    STORE.next_post = _build_next_post(req.topic, req.lang, req.target, STORE)
+    STORE.emit("content-studio", "activity", "Regenerated the next post (new caption + image).", "info")
+    return STORE.next_post
+
+
+@router.post("/next-post/approve", tags=["system"])
+def next_post_approve() -> dict:
+    """Schedule the current next post to its channels, then queue up a fresh one."""
+    post = STORE.next_post or _build_next_post("", "en", "auto", STORE)
+    scheduled = publisher.schedule(
+        post["caption"], post.get("channels", ["linkedin"]), post.get("image_url"), None, store=STORE
+    )
+    STORE.emit(
+        "content-studio", "publish",
+        f"✅ Approved next post — scheduled to {', '.join(scheduled['channels'])}.",
+        "success",
+    )
+    STORE.next_post = _build_next_post("", "en", "auto", STORE)
+    return {
+        "scheduled_id": scheduled["id"],
+        "channels": scheduled["channels"],
+        "next_post": STORE.next_post,
+    }
+
+
+# --- social / work channels rail (Make.com pushes the real numbers) --------
+
+_CHANNELS = [
+    {"id": "instagram", "name": "Instagram", "metric": "instagram_followers", "label": "followers", "accent": "rose", "icon": "instagram", "env": "INSTAGRAM_URL", "default": "https://instagram.com"},
+    {"id": "facebook", "name": "Facebook", "metric": "facebook_followers", "label": "followers", "accent": "blue", "icon": "facebook", "env": "FACEBOOK_URL", "default": "https://facebook.com"},
+    {"id": "pinterest", "name": "Pinterest", "metric": "pinterest_followers", "label": "followers", "accent": "rose", "icon": "pinterest", "env": "PINTEREST_URL", "default": "https://pinterest.com"},
+    {"id": "linkedin", "name": "LinkedIn", "metric": "linkedin_followers", "label": "followers", "accent": "cyan", "icon": "linkedin", "env": "LINKEDIN_URL", "default": "https://linkedin.com"},
+    {"id": "upwork", "name": "Upwork", "metric": "upwork_invites", "label": "invites", "accent": "emerald", "icon": "upwork", "env": "UPWORK_URL", "default": "https://upwork.com"},
+    {"id": "gmail", "name": "Gmail", "metric": "gmail_unread", "label": "unread", "accent": "amber", "icon": "gmail", "env": "GMAIL_URL", "default": "https://mail.google.com"},
+]
+
+
+@router.get("/channels", tags=["system"])
+def channels() -> dict:
+    """One tile per channel. A real number appears once Make.com pushes it via
+    /api/metrics/update (key e.g. ``instagram_followers``); until then: pending."""
+    out = []
+    for c in _CHANNELS:
+        connected = c["metric"] in STORE.metrics
+        out.append({
+            "id": c["id"],
+            "name": c["name"],
+            "accent": c["accent"],
+            "icon": c["icon"],
+            "status": "connected" if connected else "pending",
+            "value": int(STORE.metrics.get(c["metric"], 0.0)),
+            "label": c["label"],
+            "href": os.getenv(c["env"], c["default"]),
+        })
+    return {"channels": out}
+
+
+# --- live activity stream (Server-Sent Events) -----------------------------
+
+def _feed_id_num(eid: str) -> int:
+    try:
+        return int(str(eid).rsplit("-", 1)[-1])
+    except Exception:
+        return 0
+
+
+def _event_json(e: dict) -> dict:
+    ts = e.get("timestamp")
+    return {
+        "id": e.get("id"),
+        "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else ts,
+        "actor": e.get("actor"),
+        "kind": e.get("kind"),
+        "message": e.get("message"),
+        "severity": e.get("severity", "info"),
+    }
+
+
+def _intensity(new_count: int, status: dict) -> float:
+    total = status.get("total_agents") or 1
+    active = status.get("active_agents", 0)
+    base = 0.22 + 0.5 * (active / total)
+    return round(min(1.0, base + 0.1 * new_count), 3)
+
+
+def _stream_frame(store: Store, last_id: int):
+    events = [e for e in list(store.feed) if _feed_id_num(e["id"]) > last_id]
+    if events:
+        last_id = max(_feed_id_num(e["id"]) for e in events)
+    status = executive.empire_status(store)
+    frame = {
+        "ts": now().isoformat(),
+        "status": {
+            "health": status["health"],
+            "mrr": status["mrr"],
+            "traffic": status["traffic"],
+            "active_agents": status["active_agents"],
+            "total_agents": status["total_agents"],
+            "open_opportunities": status["open_opportunities"],
+            "actions_in_flight": status["actions_in_flight"],
+            "pipeline_value": status["pipeline_value"],
+        },
+        "events": [_event_json(e) for e in events[-12:]],
+        "intensity": _intensity(len(events), status),
+    }
+    return frame, last_id
+
+
+@router.get("/stream", tags=["system"])
+async def stream(request: Request) -> StreamingResponse:
+    """Push a compact live frame (~every 1.5s): status, new feed events, and an
+    activity ``intensity`` that drives the 3D core. The dashboard feels alive the
+    moment it opens — no manual refresh."""
+
+    async def gen():
+        last_id = 0
+        while True:
+            if await request.is_disconnected():
+                break
+            frame, last_id = _stream_frame(STORE, last_id)
+            yield "data: " + json.dumps(frame, default=str) + "\n\n"
+            await asyncio.sleep(1.5)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # --- action-taking command --------------------------------------------------

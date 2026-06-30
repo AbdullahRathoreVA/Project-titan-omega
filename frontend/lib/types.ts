@@ -129,3 +129,45 @@ export interface ScheduledPost {
   results: { channel: string; status: string; detail?: string }[];
   created_at: string;
 }
+
+// A social / work channel tile in the HUD sidebar. Real numbers arrive via
+// Make.com pushing metric keys (e.g. instagram_followers); else status="pending".
+export interface ChannelTile {
+  id: string;
+  name: string;
+  accent: string;
+  icon: string;
+  status: "connected" | "pending";
+  value: number;
+  label: string;
+  href: string;
+}
+
+// The next ready-to-post draft shown on the HUD "Next Post" card.
+export interface NextPost {
+  id: string;
+  target: string;
+  caption: string;
+  image_prompt: string;
+  image_url: string;
+  link: string;
+  channels: string[];
+  created_at: string;
+}
+
+// One live frame from GET /api/stream (Server-Sent Events).
+export interface StreamFrame {
+  ts: string;
+  status: {
+    health: number;
+    mrr: number;
+    traffic: number;
+    active_agents: number;
+    total_agents: number;
+    open_opportunities: number;
+    actions_in_flight: number;
+    pipeline_value: number;
+  };
+  events: FeedEvent[];
+  intensity: number;
+}

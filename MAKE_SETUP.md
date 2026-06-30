@@ -128,11 +128,76 @@ dashboard:
 
 ---
 
+## Scenario 5 — Channel stats → light up the HUD sidebar ⭐ (new)
+
+**Goal:** the left sidebar shows live numbers for Instagram, Facebook, Pinterest,
+LinkedIn, Upwork, and Gmail. Each tile says **connect** until you push its
+number; the moment Make sends it, the tile flips to **connected** with the count.
+
+**The exact metric keys the sidebar reads:**
+
+| Channel | Metric key | Example value |
+|---|---|---|
+| Instagram | `instagram_followers` | followers |
+| Facebook | `facebook_followers` | Page followers |
+| Pinterest | `pinterest_followers` | followers |
+| LinkedIn | `linkedin_followers` | connections / followers |
+| Upwork | `upwork_invites` | open invites |
+| Gmail | `gmail_unread` | unread count |
+
+### Build it
+1. **Create a new scenario.** First module → **Schedule** → every **1 hour**.
+2. Pull each number with the platform's own Make module (e.g. **Instagram for
+   Business → Get account insights**, **Facebook Pages**, **LinkedIn**,
+   **Gmail → Search emails** with `is:unread` and read the count). No native
+   module for a platform? Keep the numbers in a **Google Sheet** and read that.
+3. End with **HTTP → Make a request**:
+   - URL: `https://careermind2026-project-titan-omega.hf.space/api/metrics/bulk`
+   - Method: **POST**
+   - Headers: `Content-Type: application/json` **and**
+     `X-Webhook-Secret: <your TITAN_WEBHOOK_SECRET>`
+   - Body (map the real values in):
+     ```json
+     {
+       "metrics": {
+         "instagram_followers": 2143,
+         "facebook_followers": 840,
+         "pinterest_followers": 512,
+         "linkedin_followers": 1300,
+         "upwork_invites": 2,
+         "gmail_unread": 5
+       },
+       "source": "make"
+     }
+     ```
+4. **Run once** → check the dashboard sidebar shows the numbers → turn **ON**.
+
+> You don't need all six at once. Push whichever you have; the rest stay on
+> **connect** until you wire them.
+
+---
+
+## Scenario 6 — Auto-approve the daily post (optional, full auto)
+
+The dashboard's **Next Post** card already generates a caption + free AI image.
+To post it without clicking Approve yourself:
+1. **Schedule** → every day at **09:00**.
+2. **HTTP → Make a request** → `GET /api/content/daily` → returns `caption` +
+   `image_url`.
+3. Feed those into your **LinkedIn / Instagram / Pinterest** module from
+   Scenario 2 (caption → text, `image_url` → image).
+
+> Keep clicking **Approve & schedule** in the dashboard yourself until you trust
+> the output — then switch this on for hands-off posting.
+
+---
+
 ## Order to do it in
 1. **Scenario 1** (revenue) — instant value, lowest risk.
 2. **Scenario 3** as **drafts** (customer care).
-3. **Scenario 2** (social posting) once your IG/FB/LinkedIn are connected.
-4. **Scenario 4** when you have analytics.
+3. **Scenario 5** (channel stats) — lights up your new HUD sidebar.
+4. **Scenario 2** (social posting) once your IG/FB/LinkedIn are connected.
+5. **Scenario 4 / 6** when you have analytics / trust auto-posting.
 
 ## Safety rules
 - Never put passwords/keys in the post body — only the `X-Webhook-Secret` header.

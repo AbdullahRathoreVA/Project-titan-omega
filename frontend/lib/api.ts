@@ -2,6 +2,7 @@
 
 import type {
   AgentView,
+  ChannelTile,
   CommandResponse,
   Connector,
   Deliverable,
@@ -9,6 +10,7 @@ import type {
   EmpireStatus,
   FeedEvent,
   IntelligenceStatus,
+  NextPost,
   Opportunity,
   RevenueEntry,
   ScheduledPost,
@@ -132,6 +134,13 @@ export const api = {
     post<{ kind: string; content: string }>("/intel/generate", { kind, topic }),
   intelNews: (topic: string) => post<{ content: string }>("/intel/news", { topic }),
   findLeads: (query: string) => post<{ content: string; live: boolean }>("/leads/find", { query }),
+
+  // HUD: channels rail + next-post card
+  channels: () => get<{ channels: ChannelTile[] }>("/channels", { channels: [] }),
+  nextPost: () => get<NextPost | null>("/next-post", null),
+  approveNextPost: () =>
+    post<{ scheduled_id: string; channels: string[]; next_post: NextPost }>("/next-post/approve"),
+  regenerateNextPost: (topic = "") => post<NextPost>("/next-post/regenerate", { topic }),
 
   // action-taking agents
   act: (instruction: string) => post<CommandResponse>("/agent/act", { instruction }),

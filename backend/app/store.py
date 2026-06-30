@@ -40,6 +40,8 @@ class Store:
     metrics: Dict[str, float] = field(default_factory=dict)
     # Append-only ledger of real earned orders/sales (see api revenue routes).
     revenue_entries: List[dict] = field(default_factory=list)
+    # The current "next post" draft (caption + free AI image) shown on the HUD.
+    next_post: Optional[dict] = None
 
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _ids: "itertools.count" = field(default_factory=lambda: itertools.count(1))

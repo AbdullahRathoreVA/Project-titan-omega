@@ -104,6 +104,10 @@ async def auth_guard(request: Request, call_next):
     path = request.url.path
     if auth.require_auth() and path.startswith("/api") and path not in _OPEN_PATHS:
         token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        # EventSource can't set headers, so the live stream passes its token in
+        # the query string instead. Same token, same validation.
+        if not token and path == "/api/stream":
+            token = request.query_params.get("token", "").strip()
         if not auth.valid_token(token):
             # Automation (Make.com) can authenticate with the webhook secret instead.
             secret = request.headers.get("x-webhook-secret", "")
