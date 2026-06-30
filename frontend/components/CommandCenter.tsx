@@ -44,6 +44,7 @@ import { GrowthStudio } from "./GrowthStudio";
 import { Sidebar } from "./Sidebar";
 import { TitanCore } from "./TitanCore";
 import { NextPost } from "./NextPost";
+import { WarRoomView } from "./WarRoomView";
 
 const POLL_MS = 5000;
 
@@ -60,6 +61,7 @@ export function CommandCenter() {
   const [channels, setChannels] = useState<ChannelTile[]>([]);
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
+  const [view, setView] = useState<"dashboard" | "warroom">("dashboard");
 
   // Live SSE stream — makes the dashboard move the instant it opens.
   const { frame, live } = useTitanStream();
@@ -228,6 +230,29 @@ export function CommandCenter() {
             />
           </div>
 
+          {/* View switcher */}
+          <div className="flex gap-2">
+            {([["dashboard", "Dashboard"], ["warroom", "War Room"]] as const).map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                  view === v
+                    ? "border-hud-cyan/50 bg-hud-cyan/10 text-hud-cyan"
+                    : "border-edge bg-panel/80 text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {view === "warroom" && (
+            <WarRoomView intensity={intensity} agentCount={liveStatus?.total_agents ?? agents.length} />
+          )}
+
+          {view === "dashboard" && (
+          <>
           {/* 3D core + Next post */}
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
             <section className="panel relative h-[380px] overflow-hidden">
@@ -309,6 +334,8 @@ export function CommandCenter() {
               </div>
             </div>
           </div>
+          </>
+          )}
         </div>
       </div>
 

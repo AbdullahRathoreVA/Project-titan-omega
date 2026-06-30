@@ -42,6 +42,8 @@ class Store:
     revenue_entries: List[dict] = field(default_factory=list)
     # The current "next post" draft (caption + free AI image) shown on the HUD.
     next_post: Optional[dict] = None
+    # Latest autonomous growth-engine research (opportunities, competitors, SEO).
+    intel: Optional[dict] = None
 
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _ids: "itertools.count" = field(default_factory=lambda: itertools.count(1))

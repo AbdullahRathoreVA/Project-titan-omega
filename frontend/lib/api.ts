@@ -5,16 +5,29 @@ import type {
   ChannelTile,
   CommandResponse,
   Connector,
+  Debate,
   Deliverable,
   DivisionView,
   EmpireStatus,
   FeedEvent,
+  GrowthIntel,
   IntelligenceStatus,
   NextPost,
   Opportunity,
   RevenueEntry,
   ScheduledPost,
+  SeoReport,
 } from "./types";
+
+const EMPTY_INTEL: GrowthIntel = {
+  opportunities: [],
+  competitors: [],
+  keywords: [],
+  headlines: [],
+  summary: "",
+  live: false,
+  last_run: null,
+};
 import { MOCK } from "./mock";
 
 const TOKEN_KEY = "titan_token";
@@ -151,6 +164,12 @@ export const api = {
       message,
       lang,
     }),
+
+  // autonomous growth engine + war room + SEO co-pilot
+  growthIntel: () => get<GrowthIntel>("/growth/intel", EMPTY_INTEL),
+  growthScan: () => post<GrowthIntel>("/growth/scan"),
+  warroomDebate: (topic = "") => post<Debate>("/warroom/debate", { topic }),
+  seoReport: (keyword = "") => post<SeoReport>("/seo/report", { keyword }),
 
   async command(text: string): Promise<CommandResponse> {
     const res = await post<CommandResponse>("/agent/act", { instruction: text });

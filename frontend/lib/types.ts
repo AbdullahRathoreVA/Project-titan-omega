@@ -155,6 +155,32 @@ export interface NextPost {
   created_at: string;
 }
 
+// Autonomous Growth Engine research (GET /api/growth/intel).
+export interface GrowthIntel {
+  opportunities: { title: string; url: string; snippet: string }[];
+  competitors: { title: string; url: string; snippet: string }[];
+  keywords: string[];
+  headlines: { title: string; link: string }[];
+  summary: string;
+  live: boolean;
+  last_run: string | null;
+}
+
+// Marketing war room debate (POST /api/warroom/debate).
+export interface Debate {
+  goal: string;
+  proposals: { name: string; proposal: string }[];
+  decision: string;
+}
+
+// SEO co-pilot report (POST /api/seo/report).
+export interface SeoReport {
+  keyword: string;
+  live: boolean;
+  competitors: { title: string; url: string }[];
+  report: string;
+}
+
 // One live frame from GET /api/stream (Server-Sent Events).
 export interface StreamFrame {
   ts: string;

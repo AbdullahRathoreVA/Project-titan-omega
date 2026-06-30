@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -22,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import persistence
 from .api.actions import router as actions_router
+from .api.growth import router as growth_router
 from .api.router import router
 from .connectors import careermind, github
 from .core import auth, executive
@@ -30,16 +32,26 @@ from .engines.evolution import ensure_weights
 from .store import STORE, seed
 
 HEARTBEAT_SECONDS = float(os.getenv("TITAN_HEARTBEAT_SECONDS", "5"))
+# How often the autonomous growth engine runs a full live-research cycle (24/7).
+GROWTH_INTERVAL = float(os.getenv("TITAN_GROWTH_INTERVAL", "900"))  # 15 min
+_last_growth = 0.0
 
 
 async def _heartbeat_loop() -> None:
     """Drive autonomous activity on a fixed cadence until cancelled."""
+    global _last_growth
     while True:
         await asyncio.sleep(HEARTBEAT_SECONDS)
         with contextlib.suppress(Exception):
             executive.heartbeat(STORE)
         with contextlib.suppress(Exception):
             await asyncio.to_thread(publisher.run_due, STORE)
+        # Run the live research engine on its own slow cadence.
+        if time.monotonic() - _last_growth >= GROWTH_INTERVAL:
+            _last_growth = time.monotonic()
+            with contextlib.suppress(Exception):
+                from .engines import autonomous
+                await asyncio.to_thread(autonomous.growth_cycle, STORE)
 
 
 @asynccontextmanager
@@ -54,6 +66,10 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(github.refresh, STORE)
         with contextlib.suppress(Exception):
             await asyncio.to_thread(careermind.refresh, STORE)
+        # Seed the autonomous research panel so the dashboard has data on open.
+        with contextlib.suppress(Exception):
+            from .engines import autonomous
+            await asyncio.to_thread(autonomous.growth_cycle, STORE)
 
     sync_task = asyncio.create_task(_initial_sync())
     task = asyncio.create_task(_heartbeat_loop())
@@ -119,6 +135,7 @@ async def auth_guard(request: Request, call_next):
 
 app.include_router(router)
 app.include_router(actions_router)
+app.include_router(growth_router)
 
 
 @app.get("/health", tags=["system"])
