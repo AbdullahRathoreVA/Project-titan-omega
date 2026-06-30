@@ -391,6 +391,23 @@ async def stream(request: Request) -> StreamingResponse:
     )
 
 
+# --- LLM health diagnostic --------------------------------------------------
+
+@router.get("/llm/health", tags=["system"])
+def llm_health() -> dict:
+    """Run a tiny real completion and report what actually happened — so a model
+    deprecation or bad key is visible instead of silently falling back."""
+    sample = llm.complete(system="Reply with exactly: OK", prompt="Say OK", max_tokens=10)
+    return {
+        "provider": llm.provider(),
+        "model": llm.active_model(),
+        "providers": llm.providers_configured(),
+        "ok": bool(sample),
+        "sample": (sample or "")[:80],
+        "last_error": llm.last_error(),
+    }
+
+
 # --- action-taking command --------------------------------------------------
 
 class ActRequest(BaseModel):

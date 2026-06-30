@@ -19,7 +19,7 @@ from functools import lru_cache
 from typing import Optional
 
 _CLAUDE_MODEL = os.getenv("TITAN_MODEL",        "claude-opus-4-8")
-_GROQ_MODEL   = os.getenv("TITAN_GROQ_MODEL",   "llama-3.3-70b-versatile")
+_GROQ_MODEL   = os.getenv("TITAN_GROQ_MODEL",   "openai/gpt-oss-120b")
 _HERMES_MODEL = os.getenv("TITAN_HERMES_MODEL", "nousresearch/hermes-3-llama-3.1-405b:free")
 _OPENAI_MODEL = os.getenv("TITAN_OPENAI_MODEL",  "gpt-4o-mini")
 _GEMINI_MODEL = os.getenv("TITAN_GEMINI_MODEL",  "gemini-1.5-flash")
@@ -66,13 +66,13 @@ def available() -> bool:
 @lru_cache(maxsize=1)
 def _anthropic_client():
     import anthropic
-    return anthropic.Anthropic()
+    return anthropic.Anthropic(max_retries=1, timeout=25.0)
 
 
 @lru_cache(maxsize=1)
 def _groq_client():
     from groq import Groq
-    return Groq(api_key=os.getenv("GROQ_API_KEY"))
+    return Groq(api_key=os.getenv("GROQ_API_KEY"), max_retries=1, timeout=20.0)
 
 
 @lru_cache(maxsize=1)
@@ -81,6 +81,8 @@ def _hermes_client():
     return openai.OpenAI(
         base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
         api_key=os.getenv("OPENROUTER_API_KEY") or os.getenv("HERMES_API_KEY") or "missing",
+        timeout=25.0,
+        max_retries=1,
     )
 
 
@@ -93,86 +95,71 @@ def _openai_client():
     if base_url:
         kwargs["base_url"] = base_url
     kwargs["api_key"] = api_key
+    kwargs.setdefault("timeout", 25.0)
+    kwargs.setdefault("max_retries", 1)
     return openai.OpenAI(**kwargs)
 
 
 # ── per-provider completion functions ──────────────────────────────
+# These RAISE on error; complete() catches, records the reason, and falls back
+# to the next configured provider. That way one provider deprecating a model
+# (e.g. Groq retiring llama-3.3-70b) can't silently kill every agent.
 
 def _complete_claude(system: str, prompt: str, max_tokens: int) -> Optional[str]:
-    try:
-        resp = _anthropic_client().messages.create(
-            model=_CLAUDE_MODEL,
-            max_tokens=max_tokens,
-            thinking={"type": "adaptive"},
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        if resp.stop_reason == "refusal":
-            return None
-        text = "".join(b.text for b in resp.content if b.type == "text").strip()
-        return text or None
-    except Exception:
+    resp = _anthropic_client().messages.create(
+        model=_CLAUDE_MODEL,
+        max_tokens=max_tokens,
+        thinking={"type": "adaptive"},
+        system=system,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    if resp.stop_reason == "refusal":
         return None
+    return "".join(b.text for b in resp.content if b.type == "text").strip() or None
 
 
 def _complete_groq(system: str, prompt: str, max_tokens: int) -> Optional[str]:
-    try:
-        resp = _groq_client().chat.completions.create(
-            model=_GROQ_MODEL,
-            max_tokens=max_tokens,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user",   "content": prompt},
-            ],
-        )
-        text = (resp.choices[0].message.content or "").strip()
-        return text or None
-    except Exception:
-        return None
+    resp = _groq_client().chat.completions.create(
+        model=_GROQ_MODEL,
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": prompt},
+        ],
+    )
+    return (resp.choices[0].message.content or "").strip() or None
 
 
 def _complete_hermes(system: str, prompt: str, max_tokens: int) -> Optional[str]:
-    try:
-        resp = _hermes_client().chat.completions.create(
-            model=_HERMES_MODEL,
-            max_tokens=max_tokens,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user",   "content": prompt},
-            ],
-        )
-        text = (resp.choices[0].message.content or "").strip()
-        return text or None
-    except Exception:
-        return None
+    resp = _hermes_client().chat.completions.create(
+        model=_HERMES_MODEL,
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": prompt},
+        ],
+    )
+    return (resp.choices[0].message.content or "").strip() or None
 
 
 def _complete_openai(system: str, prompt: str, max_tokens: int) -> Optional[str]:
-    try:
-        resp = _openai_client().chat.completions.create(
-            model=_OPENAI_MODEL,
-            max_tokens=max_tokens,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user",   "content": prompt},
-            ],
-        )
-        text = (resp.choices[0].message.content or "").strip()
-        return text or None
-    except Exception:
-        return None
+    resp = _openai_client().chat.completions.create(
+        model=_OPENAI_MODEL,
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": prompt},
+        ],
+    )
+    return (resp.choices[0].message.content or "").strip() or None
 
 
 def _complete_gemini(system: str, prompt: str, max_tokens: int) -> Optional[str]:
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        model = genai.GenerativeModel(model_name=_GEMINI_MODEL, system_instruction=system)
-        resp = model.generate_content(prompt, generation_config={"max_output_tokens": max_tokens})
-        text = (resp.text or "").strip()
-        return text or None
-    except Exception:
-        return None
+    import google.generativeai as genai
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    model = genai.GenerativeModel(model_name=_GEMINI_MODEL, system_instruction=system)
+    resp = model.generate_content(prompt, generation_config={"max_output_tokens": max_tokens})
+    return (resp.text or "").strip() or None
 
 
 _DISPATCH = {
@@ -183,10 +170,61 @@ _DISPATCH = {
     "gemini": _complete_gemini,
 }
 
+_LAST_ERROR: Optional[str] = None
+
+
+def _provider_chain() -> list:
+    """Active provider first, then every other configured provider as fallback."""
+    forced = os.getenv("TITAN_PROVIDER", "").strip().lower()
+    if forced in _VALID:
+        return [forced]
+    chain = []
+    if os.getenv("ANTHROPIC_API_KEY"):
+        chain.append("claude")
+    if os.getenv("GROQ_API_KEY"):
+        chain.append("groq")
+    if os.getenv("OPENROUTER_API_KEY") or os.getenv("HERMES_API_KEY"):
+        chain.append("hermes")
+    if os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_BASE_URL"):
+        chain.append("openai")
+    if os.getenv("GEMINI_API_KEY"):
+        chain.append("gemini")
+    return chain
+
+
+def providers_configured() -> list:
+    return _provider_chain()
+
+
+def last_error() -> Optional[str]:
+    return _LAST_ERROR
+
 
 def complete(system: str, prompt: str, max_tokens: int = 1500) -> Optional[str]:
-    """Ask the active LLM for a completion. None on any failure (never raises)."""
-    fn = _DISPATCH.get(provider())
-    if fn is None:
+    """Ask the LLM for a completion, trying each configured provider in turn.
+
+    Returns the text, or None if every provider fails (never raises). The reason
+    for the last failure is recorded in ``last_error()`` for diagnostics.
+    """
+    global _LAST_ERROR
+    chain = _provider_chain()
+    if not chain:
+        _LAST_ERROR = "no LLM provider configured"
         return None
-    return fn(system, prompt, max_tokens)
+
+    errors = []
+    for prov in chain:
+        fn = _DISPATCH.get(prov)
+        if fn is None:
+            continue
+        try:
+            text = fn(system, prompt, max_tokens)
+            if text:
+                _LAST_ERROR = None
+                return text
+            errors.append(f"{prov}: empty response")
+        except Exception as exc:
+            errors.append(f"{prov}: {type(exc).__name__}: {str(exc)[:200]}")
+
+    _LAST_ERROR = " | ".join(errors) if errors else "all providers returned empty"
+    return None

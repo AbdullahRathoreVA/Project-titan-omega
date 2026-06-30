@@ -110,6 +110,7 @@ _OPEN_PATHS = {
     "/api/voice-report",
     "/api/assistant",
     "/api/intelligence",
+    "/api/llm/health",
     "/api/content/daily",
     "/api/intel/news",
     "/api/revenue/log",
