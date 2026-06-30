@@ -145,6 +145,13 @@ export const api = {
   // action-taking agents
   act: (instruction: string) => post<CommandResponse>("/agent/act", { instruction }),
 
+  // talk to one specific agent (it replies in character)
+  agentChat: (agentId: string, message: string, lang = "en") =>
+    post<{ agent_id: string; name: string; reply: string }>(`/agents/${agentId}/chat`, {
+      message,
+      lang,
+    }),
+
   async command(text: string): Promise<CommandResponse> {
     const res = await post<CommandResponse>("/agent/act", { instruction: text });
     return (

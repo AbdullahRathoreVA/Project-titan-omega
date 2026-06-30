@@ -55,9 +55,9 @@ export function Sidebar({
     .slice(0, 8);
 
   return (
-    <aside className="panel flex h-full flex-col gap-4 p-3">
+    <>
       <AgentDetailModal agent={selected} onClose={() => setSelected(null)} />
-
+      <aside className="panel flex h-full flex-col gap-4 p-3">
       <div>
         <div className="hud-label mb-2 px-1">Channels</div>
         <div className="space-y-1">
@@ -121,6 +121,7 @@ export function Sidebar({
           ))}
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

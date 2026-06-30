@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request
@@ -132,19 +133,22 @@ def find_leads(req: LeadRequest) -> dict:
 
 # --- daily auto-content (caption + free AI image) for posting --------------
 
+# Photoreal styles — realistic, attractive, 4k. NOT poster/illustration look.
 _IMG_STYLES = [
-    "professional marketing poster, bold modern design, vibrant gradient, ultra high quality, 4k, clean, eye-catching advertising creative",
-    "sleek corporate flat illustration, blue and purple palette, minimal, premium, crisp, high detail",
-    "modern social media ad creative, dynamic composition, bright and inspiring, professional studio look",
-    "premium tech brand visual, smooth gradient background, sharp, polished, marketing campaign quality",
+    "ultra realistic photograph, 4k, professional DSLR photo, natural lighting, sharp focus, photorealistic, cinematic depth of field, highly detailed",
+    "hyper realistic 4k photo, candid professional photography, soft natural light, lifelike skin and textures, magazine quality, true-to-life colors",
+    "realistic commercial photograph, studio lighting, crisp 4k, authentic, professional advertising photography, shallow depth of field",
+    "realistic lifestyle photograph, 4k ultra detailed, natural environment, cinematic color grading, photojournalistic, attractive and aspirational",
 ]
 
 
 def _pollinations(prompt: str) -> str:
+    # Random seed each call so every generated image is fresh (changes per post).
+    seed = random.randint(1, 9_999_999)
     return (
         "https://image.pollinations.ai/prompt/"
         + quote(prompt)
-        + "?width=1080&height=1080&nologo=true&model=flux&enhance=true"
+        + f"?width=1080&height=1080&nologo=true&model=flux&enhance=true&seed={seed}"
     )
 
 
@@ -173,8 +177,8 @@ def _build_next_post(
             "AI content writing, and resume/LinkedIn optimisation. Affordable, fast delivery."
         )
         img_subject = (
-            "freelance AI services advertisement, chatbots and automation, a confident "
-            "professional at a laptop, digital marketing"
+            "a confident young professional working on a laptop in a bright modern office, "
+            "real candid moment, freelancer at work, genuine expression"
         )
     else:
         t = "career_mind"
@@ -184,8 +188,8 @@ def _build_next_post(
             "resume feedback, career matching, and interview prep."
         )
         img_subject = (
-            "student career success, a happy graduate getting hired, education and AI, "
-            "bright and hopeful"
+            "a happy young graduate celebrating a job offer, real person smiling, modern "
+            "university setting, candid natural moment, warm and hopeful"
         )
 
     caption = llm.complete(

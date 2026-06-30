@@ -138,6 +138,41 @@ def get_agent(agent_id: str) -> AgentView:
     return _agent_view(rt)
 
 
+class AgentChatRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    lang: str = Field(default="en", description="'en' or 'ur'")
+
+
+@router.post("/agents/{agent_id}/chat", tags=["agents"])
+def agent_chat(agent_id: str, req: AgentChatRequest) -> dict:
+    """Talk directly to one agent — it replies in character, using its own role,
+    mission, and current task as context."""
+    rt = STORE.agents.get(agent_id)
+    if rt is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    s = rt.spec
+    lang_name = "Urdu (اردو)" if req.lang == "ur" else "English"
+
+    reply = llm.complete(
+        system=(
+            f"You are {s.name}, the {s.title} in the {s.division.value} division of "
+            "Abdullah's autonomous company, Titan Omega. Speak in character as this "
+            f"agent. Your mission: {s.mission}. Right now you are working on: "
+            f"{rt.current_task or 'advancing your division objectives'}. Address the "
+            "founder as 'Boss'. Be concrete and specific about what YOU (this role) "
+            f"are doing or will do. Keep it 2-4 sentences. Reply in {lang_name}."
+        ),
+        prompt=req.message,
+        max_tokens=400,
+    ) or (
+        f"Boss, {s.name} here. I'm on it — {rt.current_task or 'advancing my objectives'}. "
+        "Set an LLM key (Groq/Hermes, free) to unlock my full conversational replies."
+    )
+
+    STORE.emit(s.id, "command", f'Abdullah talked to {s.name}: "{req.message[:60]}"', "info")
+    return {"agent_id": s.id, "name": s.name, "reply": reply}
+
+
 # --- opportunities --------------------------------------------------------
 
 @router.get("/opportunities", response_model=List[Opportunity], tags=["opportunities"])
