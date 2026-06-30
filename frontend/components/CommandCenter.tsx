@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   Banknote,
   Bot,
@@ -45,6 +46,9 @@ import { Sidebar } from "./Sidebar";
 import { TitanCore } from "./TitanCore";
 import { NextPost } from "./NextPost";
 import { WarRoomView } from "./WarRoomView";
+
+// Global 3D backdrop — behind the whole app, never blocks clicks.
+const Background3D = dynamic(() => import("./Background3D"), { ssr: false });
 
 const POLL_MS = 5000;
 
@@ -186,6 +190,7 @@ export function CommandCenter() {
 
   return (
     <main className="mx-auto max-w-[1600px] px-3 py-4 sm:px-5">
+      <Background3D />
       <StatusBar status={liveStatus} online={online || live} intel={intel} />
 
       {mrr === 0 && (

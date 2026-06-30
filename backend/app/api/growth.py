@@ -45,3 +45,22 @@ class SeoRequest(BaseModel):
 def seo_report(req: SeoRequest) -> dict:
     """Live ranking landscape + a prioritised, zero-cost action list to climb."""
     return autonomous.seo_report(req.keyword, STORE)
+
+
+class PrRequest(BaseModel):
+    instruction: str = Field(
+        default="Improve this file to be clearer, more compelling, and SEO-friendly "
+        "for students searching for AI career help — without inventing fake stats."
+    )
+    owner: str = Field(default="AbdullahRathoreVA")
+    repo: str = Field(default="career-mind")
+    path: str = Field(default="README.md")
+
+
+@router.post("/devops/pr", tags=["growth"])
+def devops_pr(req: PrRequest) -> dict:
+    """Open a REAL pull request to a repo (default: Career Mind) with an AI-drafted
+    improvement to one file. You review and merge — nothing is auto-merged."""
+    from ..engines import devops
+
+    return devops.open_improvement_pr(req.owner, req.repo, req.instruction, req.path, STORE)

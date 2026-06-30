@@ -33,7 +33,9 @@ from .store import STORE, seed
 
 HEARTBEAT_SECONDS = float(os.getenv("TITAN_HEARTBEAT_SECONDS", "5"))
 # How often the autonomous growth engine runs a full live-research cycle (24/7).
-GROWTH_INTERVAL = float(os.getenv("TITAN_GROWTH_INTERVAL", "900"))  # 15 min
+# Default 4h keeps a free Tavily key (1,000 searches/mo) well within budget:
+# 6 cycles/day x 2 searches = ~360/mo, leaving room for on-demand scans.
+GROWTH_INTERVAL = float(os.getenv("TITAN_GROWTH_INTERVAL", "14400"))  # 4 hours
 _last_growth = 0.0
 
 

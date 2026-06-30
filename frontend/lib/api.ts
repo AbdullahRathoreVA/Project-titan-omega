@@ -14,6 +14,7 @@ import type {
   IntelligenceStatus,
   NextPost,
   Opportunity,
+  PrResult,
   RevenueEntry,
   ScheduledPost,
   SeoReport,
@@ -170,6 +171,8 @@ export const api = {
   growthScan: () => post<GrowthIntel>("/growth/scan"),
   warroomDebate: (topic = "") => post<Debate>("/warroom/debate", { topic }),
   seoReport: (keyword = "") => post<SeoReport>("/seo/report", { keyword }),
+  openPr: (instruction: string, opts?: { owner?: string; repo?: string; path?: string }) =>
+    post<PrResult>("/devops/pr", { instruction, ...(opts ?? {}) }),
 
   async command(text: string): Promise<CommandResponse> {
     const res = await post<CommandResponse>("/agent/act", { instruction: text });

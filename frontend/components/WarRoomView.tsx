@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ExternalLink,
+  GitPullRequest,
   RefreshCw,
   Search,
   Sparkles,
@@ -10,7 +11,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import type { Debate, GrowthIntel, SeoReport } from "@/lib/types";
+import type { Debate, GrowthIntel, PrResult, SeoReport } from "@/lib/types";
 import { NeuralString } from "./NeuralString";
 
 // The War Room: Titan's autonomous growth brain. Live research engine (runs
@@ -33,6 +34,12 @@ export function WarRoomView({
   const [keyword, setKeyword] = useState("");
   const [seo, setSeo] = useState<SeoReport | null>(null);
   const [seoBusy, setSeoBusy] = useState(false);
+
+  const [prInstruction, setPrInstruction] = useState(
+    "Improve the README so students instantly understand Career Mind and want to try it — clearer, more compelling, and SEO-friendly.",
+  );
+  const [pr, setPr] = useState<PrResult | null>(null);
+  const [prBusy, setPrBusy] = useState(false);
 
   const loadIntel = useCallback(async () => {
     setIntel(await api.growthIntel());
@@ -72,6 +79,17 @@ export function WarRoomView({
       setSeo(await api.seoReport(keyword));
     } finally {
       setSeoBusy(false);
+    }
+  };
+
+  const runPr = async () => {
+    if (prBusy) return;
+    setPrBusy(true);
+    setPr(null);
+    try {
+      setPr(await api.openPr(prInstruction));
+    } finally {
+      setPrBusy(false);
     }
   };
 
@@ -217,6 +235,54 @@ export function WarRoomView({
           </div>
         </section>
       </div>
+
+      {/* Auto-PR to Career Mind */}
+      <section className="panel">
+        <header className="panel-header">
+          <div className="flex items-center gap-2">
+            <GitPullRequest className="h-4 w-4 text-hud-blue" strokeWidth={1.6} />
+            <h2 className="text-sm font-medium text-slate-200">Auto-PR to Career Mind</h2>
+          </div>
+          <span className="hud-label">real pull request</span>
+        </header>
+        <div className="space-y-3 p-3">
+          <p className="text-[11px] text-slate-500">
+            An agent drafts the change and opens a real pull request on
+            AbdullahRathoreVA/career-mind — you review and merge. Safe: it edits one
+            file and never auto-merges. (Needs GITHUB_TOKEN with repo write scope.)
+          </p>
+          <textarea
+            value={prInstruction}
+            onChange={(e) => setPrInstruction(e.target.value)}
+            rows={2}
+            className="scroll-thin w-full resize-none rounded-lg border border-edge bg-panel-2/60 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-hud-blue/40 focus:outline-none"
+            placeholder="What should the agent improve? (defaults to the README)"
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={runPr}
+              disabled={prBusy}
+              className="flex items-center gap-1.5 rounded-lg border border-hud-blue/40 bg-hud-blue/10 px-3 py-1.5 text-xs text-hud-blue hover:bg-hud-blue/20 disabled:opacity-50"
+            >
+              <GitPullRequest className="h-3.5 w-3.5" />
+              {prBusy ? "Drafting & opening PR…" : "Draft & open PR"}
+            </button>
+            {pr?.ok && pr.pr_url && (
+              <a href={pr.pr_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-hud-emerald hover:underline">
+                View PR <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
+          </div>
+          {pr?.ok && (
+            <div className="text-xs text-hud-emerald">
+              ✅ Pull request opened on {pr.repo} → {pr.path}. Review and merge it on GitHub.
+            </div>
+          )}
+          {pr && !pr.ok && (
+            <div className="text-xs text-hud-rose">⚠️ {pr.error}</div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

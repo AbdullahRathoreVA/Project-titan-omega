@@ -181,6 +181,16 @@ export interface SeoReport {
   report: string;
 }
 
+// Result of opening an auto-PR (POST /api/devops/pr).
+export interface PrResult {
+  ok: boolean;
+  pr_url: string | null;
+  error?: string;
+  repo?: string;
+  path?: string;
+  branch?: string;
+}
+
 // One live frame from GET /api/stream (Server-Sent Events).
 export interface StreamFrame {
   ts: string;
