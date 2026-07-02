@@ -125,6 +125,17 @@ _OPEN_PATHS = {
 
 
 @app.middleware("http")
+async def no_cache_html(request: Request, call_next):
+    """Never let browsers cache the HTML shell. Next.js chunks are content-hashed
+    (safe to cache forever), but a cached index.html keeps pointing at OLD chunks —
+    which is exactly how the HF Space iframe kept showing a stale dashboard."""
+    resp = await call_next(request)
+    if "text/html" in resp.headers.get("content-type", ""):
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
+
+@app.middleware("http")
 async def auth_guard(request: Request, call_next):
     path = request.url.path
     if auth.require_auth() and path.startswith("/api") and path not in _OPEN_PATHS:

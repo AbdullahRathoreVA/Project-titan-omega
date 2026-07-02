@@ -77,23 +77,10 @@ export function CommandCenter() {
     "dashboard" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm"
   >("dashboard");
 
-  // Cinematic boot: plays once per browser session, dashboard loads beneath it.
-  const [boot, setBoot] = useState<"pending" | "boot" | "done">("pending");
-  useEffect(() => {
-    try {
-      setBoot(window.sessionStorage.getItem("titan_booted") ? "done" : "boot");
-    } catch {
-      setBoot("boot");
-    }
-  }, []);
-  const finishBoot = useCallback(() => {
-    try {
-      window.sessionStorage.setItem("titan_booted", "1");
-    } catch {
-      /* ignore */
-    }
-    setBoot("done");
-  }, []);
+  // Cinematic boot: plays on EVERY open/reload (founder's preference) — the
+  // dashboard loads underneath it, and SKIP is always available.
+  const [boot, setBoot] = useState<"boot" | "done">("boot");
+  const finishBoot = useCallback(() => setBoot("done"), []);
 
   // Live SSE stream — makes the dashboard move the instant it opens.
   const { frame, live } = useTitanStream();
@@ -218,9 +205,9 @@ export function CommandCenter() {
 
   return (
     <main className="mx-auto max-w-[1600px] px-3 py-4 sm:px-5">
-      {boot !== "done" && (
+      {boot === "boot" && (
         <div className="fixed inset-0 z-[300] bg-[#020409]">
-          {boot === "boot" && <BootSequence onDone={finishBoot} />}
+          <BootSequence onDone={finishBoot} />
         </div>
       )}
       <Background3D />
