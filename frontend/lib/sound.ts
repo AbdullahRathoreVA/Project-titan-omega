@@ -67,15 +67,20 @@ export function bootSound() {
   tone(1046, 1.4, 0.02, "sine", 3.0);
 }
 
-/** Speak a line with the browser's TTS voice. Never throws. */
+/** Speak lines with the browser's TTS voice. Sentence-chunked so Chrome's
+ * ~15s utterance kill-switch can't cut a briefing mid-sentence. Queues after
+ * anything already speaking (never cancels). Never throws. */
 export function speak(text: string) {
   try {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 0.96;
-    u.pitch = 0.85;
-    u.volume = 0.9;
-    window.speechSynthesis.speak(u);
+    const chunks = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+    for (const chunk of chunks.length ? chunks : [text]) {
+      const u = new SpeechSynthesisUtterance(chunk);
+      u.rate = 0.96;
+      u.pitch = 0.85;
+      u.volume = 0.9;
+      window.speechSynthesis.speak(u);
+    }
   } catch {
     /* silent */
   }

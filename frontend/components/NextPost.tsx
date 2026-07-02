@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, ImageOff, RefreshCw, Send } from "lucide-react";
 import type { NextPost as NextPostType } from "@/lib/types";
 import { api } from "@/lib/api";
 
 // The HUD "Next Post" card: shows the next AI-generated image + caption and lets
-// the founder approve (schedule it) or regenerate, in one click.
+// the founder approve (schedule it) or regenerate, in one click. Fresh AI images
+// can take 30-60s to generate server-side, so a failed load auto-retries with
+// backoff instead of sticking on a broken frame.
 export function NextPost({
   post,
   onChange,
@@ -16,6 +18,31 @@ export function NextPost({
 }) {
   const [busy, setBusy] = useState<"approve" | "regen" | null>(null);
   const [imgError, setImgError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // New post → reset the image retry cycle.
+  useEffect(() => {
+    setImgError(false);
+    setAttempt(0);
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+    };
+  }, [post?.id]);
+
+  const handleImgError = () => {
+    if (attempt < 3) {
+      // The generator is probably still rendering — try again shortly.
+      retryTimer.current = setTimeout(() => setAttempt((a) => a + 1), 6000 + attempt * 6000);
+    } else {
+      setImgError(true);
+    }
+  };
+
+  const retryImage = () => {
+    setImgError(false);
+    setAttempt((a) => a + 1);
+  };
 
   const run = async (key: "approve" | "regen", fn: () => Promise<unknown>) => {
     if (busy) return;
@@ -23,6 +50,7 @@ export function NextPost({
     try {
       await fn();
       setImgError(false);
+      setAttempt(0);
       await onChange();
     } finally {
       setBusy(null);
@@ -44,17 +72,30 @@ export function NextPost({
       <div className="flex flex-1 flex-col gap-3 p-3">
         <div className="relative aspect-square w-full overflow-hidden rounded-lg border border-edge bg-panel-2">
           {post && !imgError ? (
+            // key forces a fresh load attempt; the URL is stable so once the
+            // generator finishes, the retry hits its cache and renders.
             // eslint-disable-next-line @next/next/no-img-element
             <img
+              key={`${post.id}-${attempt}`}
               src={post.image_url}
               alt="Next post creative"
               className="h-full w-full object-cover"
-              onError={() => setImgError(true)}
+              onError={handleImgError}
             />
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-slate-600">
               <ImageOff className="h-7 w-7" />
-              <span className="text-[10px]">{post ? "Image loading…" : "No draft yet"}</span>
+              <span className="text-[10px]">
+                {post ? "Image still rendering (AI images take up to a minute)" : "No draft yet"}
+              </span>
+              {post && (
+                <button
+                  onClick={retryImage}
+                  className="rounded border border-edge px-2 py-1 text-[10px] text-slate-400 hover:border-hud-cyan/40 hover:text-hud-cyan"
+                >
+                  Retry image
+                </button>
+              )}
             </div>
           )}
           <span className="absolute left-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-hud-cyan">

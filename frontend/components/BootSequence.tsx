@@ -21,13 +21,17 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
   const [started, setStarted] = useState<boolean | null>(null);
   const done = useRef(false);
 
-  const finish = () => {
+  const finish = (skipped = false) => {
     if (done.current) return;
     done.current = true;
-    try {
-      window.speechSynthesis?.cancel();
-    } catch {
-      /* silent */
+    // Only cut the voice when the founder SKIPS — on a natural finish the
+    // welcome line keeps speaking and the live briefing queues right after it.
+    if (skipped) {
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {
+        /* silent */
+      }
     }
     setVisible(false);
     setTimeout(onDone, 650); // let the exit fade play
@@ -44,7 +48,7 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
       () => speak("Welcome back Abdullah Boss. Titan Founder A I is online. All systems operational."),
       900,
     );
-    const t = setTimeout(finish, BOOT_MS);
+    const t = setTimeout(() => finish(false), BOOT_MS);
     return () => {
       clearTimeout(t);
       clearTimeout(voice);
@@ -94,7 +98,7 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
           )}
 
           <button
-            onClick={finish}
+            onClick={() => finish(true)}
             className="absolute bottom-5 right-6 rounded-lg border border-edge bg-panel/60 px-3 py-1.5 font-mono text-[10px] tracking-widest text-slate-500 transition-colors hover:border-hud-cyan/40 hover:text-hud-cyan"
           >
             SKIP ▸

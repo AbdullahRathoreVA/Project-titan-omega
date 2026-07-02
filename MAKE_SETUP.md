@@ -1,11 +1,13 @@
 # Make.com Automation — Complete From-Zero Setup (Abdullah's Titan Omega)
 
-## ✅ Abdullah's status (updated 2026-07-02) — do these in order
-- [x] Scenario 2 — daily social posting (LinkedIn/FB/IG/Pinterest) — **DONE**
-- [ ] **Scenario 1 — Fiverr order email → revenue log** ⭐ do this NEXT (15 min, instant value)
+## ✅ Abdullah's status (reset 2026-07-02 — ALL scenarios deleted, rebuilding from scratch)
+Build in this exact order; each section below has the click-by-click steps:
+- [ ] **Scenario 1 — Fiverr order email → revenue log** ⭐ FIRST (15 min, instant value)
+- [ ] Scenario 2 — daily social posting (LinkedIn/FB/IG/Pinterest) at 9:00 + 18:00
 - [ ] Scenario 3 — Gmail customer-care auto-reply (start in DRAFT mode)
 - [ ] Scenario 5 — channel stats → HUD sidebar lights up with real numbers
-- [ ] Scenario 6 — auto-approve daily post at 9:00 + 18:00 (only once you trust the output)
+- [ ] Scenario 7 — YouTube Shorts posting (see below)
+- [ ] Scenario 6 — auto-approve daily post (only once you trust the output)
 - [ ] Scenario 4 — analytics push (when you have analytics)
 
 This turns your dashboard from "I click buttons" into "it runs itself":
@@ -199,6 +201,29 @@ To post it without clicking Approve yourself:
 > the output — then switch this on for hands-off posting.
 
 ---
+
+## Scenario 7 — YouTube Shorts, semi-auto (honest version)
+
+**What Titan can and can't do:** Titan generates titles, descriptions, captions,
+and thumbnail images for free — but it CANNOT render video files on the free
+tier (real video generation needs paid GPU services). The honest $0 pipeline:
+you record short screen clips (the Titan boot sequence and AI City fly-through
+are perfect Shorts material), and Make.com auto-publishes them with
+Titan-written metadata.
+
+1. Make a Google Drive folder `titan-shorts`. Drop any vertical screen
+   recording (15–45s) in it.
+2. **Create scenario:** trigger **Google Drive → Watch files** on that folder.
+3. Add **HTTP → Make a request**:
+   - `GET https://careermind2026-project-titan-omega.hf.space/api/content/daily?target=auto`
+   - Returns `caption` (use as the video description) + `link`.
+4. Add **YouTube → Upload a video**: map the Drive file, title = first line of
+   the caption + `#Shorts`, description = full caption.
+5. **Run once** with a test clip, then turn ON.
+
+> Money truth: YouTube pays only after 1,000 subscribers + 4,000 watch-hours
+> (or 10M Shorts views in 90 days). Post consistently; treat early Shorts as
+> marketing for Career Mind/Fiverr (link in description), not as direct income.
 
 ## Order to do it in
 1. **Scenario 1** (revenue) — instant value, lowest risk.

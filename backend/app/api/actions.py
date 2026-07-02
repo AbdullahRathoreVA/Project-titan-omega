@@ -412,6 +412,33 @@ async def stream(request: Request) -> StreamingResponse:
     )
 
 
+# --- system doctor -----------------------------------------------------------
+
+@router.get("/doctor", tags=["system"])
+def doctor() -> dict:
+    """Which integrations the RUNNING container can actually see (booleans only,
+    values never exposed). If you saved a secret on HF and it shows false here,
+    the Space simply hasn't restarted since — restart and check again."""
+    def has(name: str) -> bool:
+        return bool(os.getenv(name, "").strip())
+
+    return {
+        "llm_providers": llm.providers_configured(),
+        "groq_key": has("GROQ_API_KEY"),
+        "gemini_key": has("GEMINI_API_KEY"),
+        "openrouter_key": has("OPENROUTER_API_KEY") or has("HERMES_API_KEY"),
+        "tavily_key": has("TAVILY_API_KEY"),
+        "github_token": has("GITHUB_TOKEN"),
+        "telegram_bot": has("TELEGRAM_BOT_TOKEN"),
+        "telegram_locked": has("TELEGRAM_CHAT_ID"),
+        "publish_webhook": has("TITAN_PUBLISH_WEBHOOK"),
+        "fiverr_url": has("FIVERR_GIG_URL"),
+        "titan_product_url": has("TITAN_PRODUCT_URL"),
+        "auth_enabled": os.getenv("TITAN_REQUIRE_AUTH") == "1",
+        "hint": "false for something you saved on HF? The Space hasn't restarted since you saved it.",
+    }
+
+
 # --- LLM health diagnostic --------------------------------------------------
 
 @router.get("/llm/health", tags=["system"])
