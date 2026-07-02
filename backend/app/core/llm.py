@@ -228,10 +228,12 @@ _LAST_ERROR: Optional[str] = None
 
 
 def _provider_chain() -> list:
-    """Active provider first, then every other configured provider as fallback."""
-    forced = os.getenv("TITAN_PROVIDER", "").strip().lower()
-    if forced in _VALID:
-        return [forced]
+    """Every configured provider, in failover order.
+
+    TITAN_PROVIDER moves that provider to the FRONT — it no longer disables the
+    rest. A pinned provider that breaks (rate limit, dead key, retired model)
+    must never silence the agents when other working keys exist.
+    """
     chain = []
     if os.getenv("ANTHROPIC_API_KEY"):
         chain.append("claude")
@@ -243,6 +245,10 @@ def _provider_chain() -> list:
         chain.append("openai")
     if os.getenv("GEMINI_API_KEY"):
         chain.append("gemini")
+
+    forced = os.getenv("TITAN_PROVIDER", "").strip().lower()
+    if forced in _VALID:
+        return [forced] + [p for p in chain if p != forced]
     return chain
 
 
