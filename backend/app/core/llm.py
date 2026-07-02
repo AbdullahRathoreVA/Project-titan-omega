@@ -23,7 +23,9 @@ _GROQ_MODEL   = os.getenv("TITAN_GROQ_MODEL",   "openai/gpt-oss-120b")
 # Display label only — actual model is picked live from the free catalog.
 _HERMES_MODEL = os.getenv("TITAN_HERMES_MODEL", "auto (openrouter free catalog)")
 _OPENAI_MODEL = os.getenv("TITAN_OPENAI_MODEL",  "gpt-4o-mini")
-_GEMINI_MODEL = os.getenv("TITAN_GEMINI_MODEL",  "gemini-1.5-flash")
+# Display label only — the actual Gemini model is discovered from Google's live
+# catalog (they retire model ids periodically, e.g. gemini-1.5-flash in 2026).
+_GEMINI_MODEL = os.getenv("TITAN_GEMINI_MODEL", "auto (google catalog)")
 
 MODEL: Optional[str] = _CLAUDE_MODEL
 
@@ -120,15 +122,28 @@ def _complete_claude(system: str, prompt: str, max_tokens: int) -> Optional[str]
 
 
 def _complete_groq(system: str, prompt: str, max_tokens: int) -> Optional[str]:
-    resp = _groq_client().chat.completions.create(
-        model=_GROQ_MODEL,
-        max_tokens=max_tokens,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user",   "content": prompt},
-        ],
+    # Direct httpx call to Groq's OpenAI-compatible endpoint — the SDK's client
+    # hit connection errors from the HF container; plain HTTP/1.1 via httpx is
+    # the most compatible path. If Groq's edge blocks the host network entirely,
+    # this still fails and the chain moves on to Gemini.
+    import httpx
+
+    resp = httpx.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}"},
+        json={
+            "model": _GROQ_MODEL,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+        },
+        timeout=20.0,
+        trust_env=True,
     )
-    return (resp.choices[0].message.content or "").strip() or None
+    resp.raise_for_status()
+    return (resp.json()["choices"][0]["message"]["content"] or "").strip() or None
 
 
 # OpenRouter's free models churn constantly (rate limits, delistings), so we
@@ -212,10 +227,44 @@ def _complete_openai(system: str, prompt: str, max_tokens: int) -> Optional[str]
     return (resp.choices[0].message.content or "").strip() or None
 
 
+_gemini_model_cache: Optional[str] = None
+
+
+def _gemini_model_id() -> str:
+    """Pick a live Gemini model from Google's catalog (cached for the process).
+    Google retires ids (gemini-1.5-flash died in 2026), so never pin blindly."""
+    global _gemini_model_cache
+    forced = os.getenv("TITAN_GEMINI_MODEL", "").strip()
+    if forced:
+        return forced
+    if _gemini_model_cache:
+        return _gemini_model_cache
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        ids = [
+            m.name.split("/")[-1]
+            for m in genai.list_models()
+            if "generateContent" in getattr(m, "supported_generation_methods", [])
+        ]
+        for pref in ("gemini-2.5-flash", "gemini-2.0-flash", "flash"):
+            for mid in ids:
+                if pref in mid and "preview" not in mid and "thinking" not in mid and "lite" not in mid:
+                    _gemini_model_cache = mid
+                    return mid
+        if ids:
+            _gemini_model_cache = ids[0]
+            return ids[0]
+    except Exception:
+        pass
+    return "gemini-2.5-flash"
+
+
 def _complete_gemini(system: str, prompt: str, max_tokens: int) -> Optional[str]:
     import google.generativeai as genai
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel(model_name=_GEMINI_MODEL, system_instruction=system)
+    model = genai.GenerativeModel(model_name=_gemini_model_id(), system_instruction=system)
     resp = model.generate_content(prompt, generation_config={"max_output_tokens": max_tokens})
     return (resp.text or "").strip() or None
 
@@ -238,17 +287,19 @@ def _provider_chain() -> list:
     rest. A pinned provider that breaks (rate limit, dead key, retired model)
     must never silence the agents when other working keys exist.
     """
+    # Order = free-tier daily quota: Groq (thousands/day) > Gemini (hundreds)
+    # > OpenRouter free (~50/day without credits).
     chain = []
     if os.getenv("ANTHROPIC_API_KEY"):
         chain.append("claude")
     if os.getenv("GROQ_API_KEY"):
         chain.append("groq")
+    if os.getenv("GEMINI_API_KEY"):
+        chain.append("gemini")
     if os.getenv("OPENROUTER_API_KEY") or os.getenv("HERMES_API_KEY"):
         chain.append("hermes")
     if os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_BASE_URL"):
         chain.append("openai")
-    if os.getenv("GEMINI_API_KEY"):
-        chain.append("gemini")
 
     forced = os.getenv("TITAN_PROVIDER", "").strip().lower()
     if forced in _VALID:
