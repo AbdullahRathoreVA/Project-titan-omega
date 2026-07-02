@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Banknote,
   Bot,
@@ -50,6 +51,9 @@ import { TelegramCenter } from "./TelegramCenter";
 import { JobRadar } from "./JobRadar";
 import { FinanceCenter } from "./FinanceCenter";
 import { CrmLite } from "./CrmLite";
+import { AICity } from "./AICity";
+import { BootSequence } from "./BootSequence";
+import { tap } from "@/lib/sound";
 
 // Global 3D backdrop — behind the whole app, never blocks clicks.
 const Background3D = dynamic(() => import("./Background3D"), { ssr: false });
@@ -70,8 +74,26 @@ export function CommandCenter() {
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
   const [view, setView] = useState<
-    "dashboard" | "warroom" | "telegram" | "jobs" | "finance" | "crm"
+    "dashboard" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm"
   >("dashboard");
+
+  // Cinematic boot: plays once per browser session, dashboard loads beneath it.
+  const [boot, setBoot] = useState<"pending" | "boot" | "done">("pending");
+  useEffect(() => {
+    try {
+      setBoot(window.sessionStorage.getItem("titan_booted") ? "done" : "boot");
+    } catch {
+      setBoot("boot");
+    }
+  }, []);
+  const finishBoot = useCallback(() => {
+    try {
+      window.sessionStorage.setItem("titan_booted", "1");
+    } catch {
+      /* ignore */
+    }
+    setBoot("done");
+  }, []);
 
   // Live SSE stream — makes the dashboard move the instant it opens.
   const { frame, live } = useTitanStream();
@@ -196,6 +218,11 @@ export function CommandCenter() {
 
   return (
     <main className="mx-auto max-w-[1600px] px-3 py-4 sm:px-5">
+      {boot !== "done" && (
+        <div className="fixed inset-0 z-[300] bg-[#020409]">
+          {boot === "boot" && <BootSequence onDone={finishBoot} />}
+        </div>
+      )}
       <Background3D />
       <StatusBar status={liveStatus} online={online || live} intel={intel} />
 
@@ -245,6 +272,7 @@ export function CommandCenter() {
           <div className="flex gap-2">
             {([
               ["dashboard", "Dashboard"],
+              ["city", "AI City"],
               ["warroom", "War Room"],
               ["telegram", "Telegram"],
               ["jobs", "Job Radar"],
@@ -253,7 +281,10 @@ export function CommandCenter() {
             ] as const).map(([v, label]) => (
               <button
                 key={v}
-                onClick={() => setView(v)}
+                onClick={() => {
+                  tap();
+                  setView(v);
+                }}
                 className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
                   view === v
                     ? "border-hud-cyan/50 bg-hud-cyan/10 text-hud-cyan"
@@ -264,6 +295,19 @@ export function CommandCenter() {
               </button>
             ))}
           </div>
+
+          <AnimatePresence mode="wait">
+          <motion.div
+            key={view}
+            initial={{ opacity: 0, y: 16, scale: 0.985 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -12, scale: 1.012 }}
+            transition={{ duration: 0.32, ease: "easeOut" }}
+            className="space-y-4"
+          >
+          {view === "city" && (
+            <AICity divisions={divisions} agents={agents} intensity={intensity} />
+          )}
 
           {view === "warroom" && (
             <WarRoomView intensity={intensity} agentCount={liveStatus?.total_agents ?? agents.length} />
@@ -362,6 +406,8 @@ export function CommandCenter() {
           </div>
           </>
           )}
+          </motion.div>
+          </AnimatePresence>
         </div>
       </div>
 
