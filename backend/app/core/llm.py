@@ -191,6 +191,10 @@ def _complete_hermes(system: str, prompt: str, max_tokens: int) -> Optional[str]
                 return text
         except Exception as exc:  # rate-limited/retired — try the next one
             last_exc = exc
+            # The free-models-per-DAY cap is account-wide on OpenRouter: once
+            # it's hit, every free model 429s — stop burning time on the rest.
+            if "free-models-per-day" in str(exc):
+                break
     if last_exc is not None:
         raise last_exc
     return None

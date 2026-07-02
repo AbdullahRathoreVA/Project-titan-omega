@@ -7,7 +7,7 @@ pydantic==2.10.4
 anthropic>=0.40.0          # Claude   — ANTHROPIC_API_KEY
 groq>=0.9.0                # Groq     — GROQ_API_KEY  (free, fast Llama 3.3 70B)
 openai>=1.0.0             # OpenAI-compatible + Hermes via OpenRouter (OPENROUTER_API_KEY)
-# google-generativeai>=0.8.0 # Gemini   — GEMINI_API_KEY
+google-generativeai>=0.8.0 # Gemini   — GEMINI_API_KEY
 
 # Live connectors + news + test client.
 httpx==0.28.1

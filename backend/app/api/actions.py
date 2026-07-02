@@ -435,6 +435,9 @@ def doctor() -> dict:
         "fiverr_url": has("FIVERR_GIG_URL"),
         "titan_product_url": has("TITAN_PRODUCT_URL"),
         "auth_enabled": os.getenv("TITAN_REQUIRE_AUTH") == "1",
+        # Failure detail from the most recent LLM call (does NOT run a new one) —
+        # lets us see which provider failed and why after any real request.
+        "llm_last_error": llm.last_error(),
         "hint": "false for something you saved on HF? The Space hasn't restarted since you saved it.",
     }
 
