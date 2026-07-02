@@ -9,7 +9,11 @@ import type {
   Deliverable,
   DivisionView,
   EmpireStatus,
+  ExpenseItem,
   FeedEvent,
+  FinanceState,
+  Lead,
+  LeadsState,
   GrowthIntel,
   IntelligenceStatus,
   JobItem,
@@ -182,6 +186,23 @@ export const api = {
   telegramStatus: () =>
     get<TelegramStatus>("/telegram/status", { configured: false, locked: false, handled: 0 }),
   telegramLog: (limit = 50) => get<TelegramLogEntry[]>(`/telegram/log?limit=${limit}`, []),
+
+  // financial center
+  finance: () =>
+    get<FinanceState>("/finance", {
+      revenue_total: 0, expenses_total: 0, profit: 0, revenue_30d: 0, expenses_30d: 0,
+      forecast_monthly_revenue: 0, forecast_monthly_profit: 0, expenses: [],
+    }),
+  logExpense: (amount: number, category: string, note: string) =>
+    post<ExpenseItem>("/finance/expense", { amount, category, note }),
+  deleteExpense: (id: string) => del<{ deleted: string }>(`/finance/expense/${id}`),
+
+  // crm-lite
+  leads: () => get<LeadsState>("/leads", { items: [], counts: {}, statuses: [] }),
+  createLead: (name: string, source: string, contact: string, note: string) =>
+    post<Lead>("/leads", { name, source, contact, note }),
+  setLeadStatus: (id: string, status: string) => post<Lead>(`/leads/${id}/status`, { status }),
+  deleteLead: (id: string) => del<{ deleted: string }>(`/leads/${id}`),
 
   // job radar
   jobs: () => get<JobsState>("/jobs", { items: [], live: false, last_scan: null }),

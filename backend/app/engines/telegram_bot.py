@@ -31,6 +31,19 @@ def configured() -> bool:
     return bool(os.getenv("TELEGRAM_BOT_TOKEN"))
 
 
+def send_to_founder(text: str, store: Store = STORE) -> bool:
+    """Push a message to Abdullah's own chat (needs TELEGRAM_CHAT_ID). Never raises."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not (token and chat):
+        return False
+    try:
+        _send(token, int(chat), text)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def _send(token: str, chat_id: int, text: str) -> None:
     try:
         import httpx
@@ -154,6 +167,35 @@ def _fmt_nextpost(store: Store) -> str:
     )
 
 
+def _fmt_decision(store: Store) -> str:
+    d = store.pending_decision
+    if not d:
+        return "No war-room decision waiting. Run a debate from the dashboard (War Room tab)."
+    return (
+        f"⚔️ PENDING DECISION\nGoal: {d['goal']}\n\n{d['decision']}\n\n"
+        "Send /approveplan to lock it in as this week's plan."
+    )
+
+
+def _fmt_approveplan(store: Store) -> str:
+    d = store.pending_decision
+    if not d:
+        return "Nothing to approve — run a war-room debate first."
+    from . import deliverables
+
+    deliverables.generate(
+        "growth_strategy",
+        f"APPROVED war-room plan for: {d['goal']}\n\n{d['decision']}",
+        "marketing-head",
+        store=store,
+    )
+    store.pending_decision = None
+    store.emit("marketing-head", "decision",
+               "✅ Founder approved the war-room plan via Telegram — saved to Deliverables.",
+               "success")
+    return "✅ Approved. The plan is saved in Deliverables and the marketing team is on it."
+
+
 def _fmt_approve(store: Store) -> str:
     from ..api.actions import _build_next_post
 
@@ -177,6 +219,8 @@ _HELP = (
     "/ask <question> — ask Titan anything\n"
     "/nextpost — preview the next social post\n"
     "/approve — schedule the next post\n"
+    "/decision — pending war-room decision\n"
+    "/approveplan — approve that decision\n"
     "Plain text = /ask."
 )
 
@@ -210,6 +254,10 @@ def _handle(text: str, store: Store) -> str:
         return _fmt_nextpost(store)
     if cmd == "/approve":
         return _fmt_approve(store)
+    if cmd == "/decision":
+        return _fmt_decision(store)
+    if cmd == "/approveplan":
+        return _fmt_approveplan(store)
     if low.startswith("/"):
         return "Unknown command.\n\n" + _HELP
     return _fmt_ask(t, store)

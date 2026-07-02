@@ -49,6 +49,12 @@ class Store:
     telegram_log: List[dict] = field(default_factory=list)
     # Job Radar: found remote jobs/gigs with scores + applied tracking.
     jobs: Optional[dict] = None
+    # Financial Center: real expenses ledger (revenue lives in revenue_entries).
+    expenses: List[dict] = field(default_factory=list)
+    # CRM-lite: leads pipeline keyed by id.
+    leads: Dict[str, dict] = field(default_factory=dict)
+    # Last war-room decision awaiting founder approval (pushed to Telegram).
+    pending_decision: Optional[dict] = None
 
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _ids: "itertools.count" = field(default_factory=lambda: itertools.count(1))

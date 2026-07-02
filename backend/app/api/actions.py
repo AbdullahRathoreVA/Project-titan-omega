@@ -133,12 +133,13 @@ def find_leads(req: LeadRequest) -> dict:
 
 # --- daily auto-content (caption + free AI image) for posting --------------
 
-# Photoreal styles — realistic, attractive, 4k. NOT poster/illustration look.
+# Research-backed (2026): authentic UGC-style photos out-convert polished studio
+# ads — "ads that don't look like ads". Mostly candid/real-feel, one editorial.
 _IMG_STYLES = [
-    "ultra realistic photograph, 4k, professional DSLR photo, natural lighting, sharp focus, photorealistic, cinematic depth of field, highly detailed",
-    "hyper realistic 4k photo, candid professional photography, soft natural light, lifelike skin and textures, magazine quality, true-to-life colors",
-    "realistic commercial photograph, studio lighting, crisp 4k, authentic, professional advertising photography, shallow depth of field",
-    "realistic lifestyle photograph, 4k ultra detailed, natural environment, cinematic color grading, photojournalistic, attractive and aspirational",
+    "authentic candid photo, shot on iPhone, natural window light, real environment, genuine unposed moment, true-to-life colors, sharp 4k detail, looks like a friend's photo not an ad",
+    "candid documentary-style photograph, golden hour natural light, real person mid-action, authentic emotion, shallow depth of field, shot on 35mm lens, 4k, warm lifelike tones",
+    "casual selfie-style photo, bright natural daylight, genuine happy expression, slightly imperfect framing, realistic skin texture, high resolution, feels real and relatable",
+    "editorial lifestyle photograph, shot on Canon EOS R5 85mm f/1.4, soft natural light, crisp 4k, aspirational but authentic, magazine quality, real location",
 ]
 
 
@@ -194,9 +195,10 @@ def _build_next_post(
 
     caption = llm.complete(
         system=(
-            "Write ONE scroll-stopping social media caption (max 200 characters) that "
-            "attracts buyers. Open with a hook, give one clear benefit, end with a call to "
-            "action. Add 3-5 relevant hashtags. Do NOT include any URL (it is appended "
+            "Write ONE scroll-stopping social media caption (max 200 characters). Sound "
+            "like a REAL PERSON sharing a genuine win or tip — not an ad and not corporate. "
+            "Open with a hook, give one concrete benefit or mini-story, end with a casual "
+            "call to action. Add 3-5 relevant hashtags. Do NOT include any URL (appended "
             f"separately). Write in {lang_name}. Output ONLY the caption."
         ),
         prompt=(topic + ". " if topic else "") + "Promote: " + pitch,

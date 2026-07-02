@@ -48,6 +48,8 @@ import { NextPost } from "./NextPost";
 import { WarRoomView } from "./WarRoomView";
 import { TelegramCenter } from "./TelegramCenter";
 import { JobRadar } from "./JobRadar";
+import { FinanceCenter } from "./FinanceCenter";
+import { CrmLite } from "./CrmLite";
 
 // Global 3D backdrop — behind the whole app, never blocks clicks.
 const Background3D = dynamic(() => import("./Background3D"), { ssr: false });
@@ -67,7 +69,9 @@ export function CommandCenter() {
   const [channels, setChannels] = useState<ChannelTile[]>([]);
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
-  const [view, setView] = useState<"dashboard" | "warroom" | "telegram" | "jobs">("dashboard");
+  const [view, setView] = useState<
+    "dashboard" | "warroom" | "telegram" | "jobs" | "finance" | "crm"
+  >("dashboard");
 
   // Live SSE stream — makes the dashboard move the instant it opens.
   const { frame, live } = useTitanStream();
@@ -244,6 +248,8 @@ export function CommandCenter() {
               ["warroom", "War Room"],
               ["telegram", "Telegram"],
               ["jobs", "Job Radar"],
+              ["finance", "Finance"],
+              ["crm", "CRM"],
             ] as const).map(([v, label]) => (
               <button
                 key={v}
@@ -266,6 +272,10 @@ export function CommandCenter() {
           {view === "telegram" && <TelegramCenter />}
 
           {view === "jobs" && <JobRadar />}
+
+          {view === "finance" && <FinanceCenter />}
+
+          {view === "crm" && <CrmLite />}
 
           {view === "dashboard" && (
           <>

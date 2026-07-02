@@ -158,6 +158,21 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
         "marketing-head", "decision",
         "Marketing war room debated and locked this week's growth play.", "success",
     )
+
+    # Push the decision to Abdullah's phone for approval (no-op without Telegram).
+    store.pending_decision = {"goal": goal, "decision": decision, "time": now().isoformat()}
+    try:
+        from . import telegram_bot
+
+        telegram_bot.send_to_founder(
+            "⚔️ WAR ROOM DECISION — approval needed\n\n"
+            f"Goal: {goal}\n\n{decision[:2800]}\n\n"
+            "Reply /approveplan to lock it in, or /decision to re-read it.",
+            store,
+        )
+    except Exception:
+        pass
+
     return {"goal": goal, "proposals": proposals, "decision": decision}
 
 

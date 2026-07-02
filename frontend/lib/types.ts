@@ -213,6 +213,44 @@ export interface JobsState {
   last_scan: string | null;
 }
 
+// Financial Center (GET /api/finance).
+export interface ExpenseItem {
+  id: string;
+  amount: number;
+  category: string;
+  note: string;
+  created_at: string;
+}
+
+export interface FinanceState {
+  revenue_total: number;
+  expenses_total: number;
+  profit: number;
+  revenue_30d: number;
+  expenses_30d: number;
+  forecast_monthly_revenue: number;
+  forecast_monthly_profit: number;
+  expenses: ExpenseItem[];
+}
+
+// CRM-lite (GET /api/leads).
+export interface Lead {
+  id: string;
+  name: string;
+  source: string;
+  contact: string;
+  note: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LeadsState {
+  items: Lead[];
+  counts: Record<string, number>;
+  statuses: string[];
+}
+
 // Result of opening an auto-PR (POST /api/devops/pr).
 export interface PrResult {
   ok: boolean;

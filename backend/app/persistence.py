@@ -35,6 +35,8 @@ def save(store: Store = STORE) -> None:
         data = {
             "metrics": {k: float(v) for k, v in store.metrics.items()},
             "revenue_entries": store.revenue_entries,
+            "expenses": store.expenses,
+            "leads": store.leads,
         }
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -59,5 +61,11 @@ def load(store: Store = STORE) -> None:
         entries = data.get("revenue_entries")
         if isinstance(entries, list):
             store.revenue_entries = entries
+        expenses = data.get("expenses")
+        if isinstance(expenses, list):
+            store.expenses = expenses
+        leads = data.get("leads")
+        if isinstance(leads, dict):
+            store.leads = leads
     except Exception:
         pass

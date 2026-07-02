@@ -67,6 +67,24 @@ export function JobRadar() {
   return (
     <div className="space-y-4">
       <section className="panel">
+        <div className="flex flex-wrap items-center gap-3 p-3 text-[11px] text-slate-400">
+          <span className="font-semibold text-slate-300">Real auto-apply (safe route):</span>
+          <a href="https://www.loopcv.pro" target="_blank" rel="noreferrer" className="flex items-center gap-1 text-hud-cyan hover:underline">
+            LoopCV <ExternalLink className="h-3 w-3" />
+          </a>
+          <span className="text-slate-600">free tier · auto-applies across 30+ job boards with your resume</span>
+          <a href="https://simplify.jobs" target="_blank" rel="noreferrer" className="flex items-center gap-1 text-hud-cyan hover:underline">
+            Simplify <ExternalLink className="h-3 w-3" />
+          </a>
+          <span className="text-slate-600">free extension · 1-click autofill on any application</span>
+        </div>
+        <div className="border-t border-edge/60 px-3 py-2 text-[10px] text-slate-600">
+          These are legit services built for auto-applying — use them with your Titan resume. Upwork/Fiverr have no
+          auto-apply (bots = ban); use the drafted proposals below there.
+        </div>
+      </section>
+
+      <section className="panel">
         <header className="panel-header">
           <div className="flex items-center gap-2">
             <BriefcaseBusiness className="h-4 w-4 text-hud-emerald" strokeWidth={1.6} />
