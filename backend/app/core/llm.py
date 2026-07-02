@@ -20,7 +20,8 @@ from typing import Optional
 
 _CLAUDE_MODEL = os.getenv("TITAN_MODEL",        "claude-opus-4-8")
 _GROQ_MODEL   = os.getenv("TITAN_GROQ_MODEL",   "openai/gpt-oss-120b")
-_HERMES_MODEL = os.getenv("TITAN_HERMES_MODEL", "nousresearch/hermes-3-llama-3.1-405b:free")
+# Display label only — actual model is picked live from the free catalog.
+_HERMES_MODEL = os.getenv("TITAN_HERMES_MODEL", "auto (openrouter free catalog)")
 _OPENAI_MODEL = os.getenv("TITAN_OPENAI_MODEL",  "gpt-4o-mini")
 _GEMINI_MODEL = os.getenv("TITAN_GEMINI_MODEL",  "gemini-1.5-flash")
 
@@ -130,20 +131,52 @@ def _complete_groq(system: str, prompt: str, max_tokens: int) -> Optional[str]:
     return (resp.choices[0].message.content or "").strip() or None
 
 
-# Free OpenRouter models tried in order — when one is rate-limited (429) or
-# retired, the next takes over instead of the agents going silent.
-_HERMES_FALLBACKS = [
-    _HERMES_MODEL,
+# OpenRouter's free models churn constantly (rate limits, delistings), so we
+# discover what's ACTUALLY available from the live catalog instead of pinning
+# ids that go stale. Preferred families first; static list only as last resort.
+_PREFERRED_FREE = (
+    "openai/gpt-oss-120b",
+    "meta-llama/llama-3.3-70b-instruct",
+    "qwen/qwen3-next-80b",
+    "nvidia/nemotron-3-super",
+    "openai/gpt-oss-20b",
+)
+_STATIC_FALLBACKS = [
+    "openai/gpt-oss-120b:free",
     "meta-llama/llama-3.3-70b-instruct:free",
-    "deepseek/deepseek-chat-v3-0324:free",
-    "qwen/qwen-2.5-72b-instruct:free",
-    "google/gemini-2.0-flash-exp:free",
 ]
+_free_models_cache: tuple = (0.0, [])  # (fetched_at_monotonic, [model ids])
+
+
+def _free_models() -> list:
+    """Currently-listed :free OpenRouter models, preferred families first.
+    Cached ~1h; falls back to a small static list if the catalog is unreachable."""
+    global _free_models_cache
+    import time as _time
+
+    ts, cached = _free_models_cache
+    if cached and _time.monotonic() - ts < 3600:
+        return cached
+    try:
+        import httpx
+
+        with httpx.Client(timeout=10.0, trust_env=True) as c:
+            resp = c.get("https://openrouter.ai/api/v1/models")
+        ids = [m["id"] for m in resp.json().get("data", []) if m["id"].endswith(":free")]
+        ranked = [i for pref in _PREFERRED_FREE for i in ids if i.startswith(pref)]
+        rest = [i for i in ids if i not in ranked]
+        models = (ranked + rest) or _STATIC_FALLBACKS
+        _free_models_cache = (_time.monotonic(), models)
+        return models
+    except Exception:
+        return cached or _STATIC_FALLBACKS
 
 
 def _complete_hermes(system: str, prompt: str, max_tokens: int) -> Optional[str]:
+    forced = os.getenv("TITAN_HERMES_MODEL", "").strip()
+    candidates = ([forced] if forced else []) + _free_models()
     last_exc: Optional[Exception] = None
-    for model in _HERMES_FALLBACKS:
+    for model in candidates[:5]:  # cap attempts — fail fast, fall through
         try:
             resp = _hermes_client().chat.completions.create(
                 model=model,
@@ -156,7 +189,7 @@ def _complete_hermes(system: str, prompt: str, max_tokens: int) -> Optional[str]
             text = (resp.choices[0].message.content or "").strip()
             if text:
                 return text
-        except Exception as exc:  # rate-limited/retired model — try the next one
+        except Exception as exc:  # rate-limited/retired — try the next one
             last_exc = exc
     if last_exc is not None:
         raise last_exc
