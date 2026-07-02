@@ -11,6 +11,7 @@ import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 import type { DivisionView } from "@/lib/types";
 import { blip } from "@/lib/sound";
+import { isCoarsePointer } from "@/lib/device";
 
 const RING_RADIUS = 6.2;
 const DISTRICT_COLORS = ["#22d3ee", "#a78bfa", "#34d399", "#fbbf24", "#fb7185", "#3b82f6"];
@@ -140,15 +141,19 @@ function Core({ intensity }: { intensity: number }) {
 }
 
 function CameraRig({ selectedPos }: { selectedPos: [number, number, number] | null }) {
-  const home = useMemo(() => new THREE.Vector3(0, 5.2, 11.5), []);
-  const look = useRef(new THREE.Vector3(0, 0, 0));
+  // Home sits higher and farther back so the full city — ground ring included —
+  // fits the frame on every screen (the old angle clipped the bottom).
+  const home = useMemo(() => new THREE.Vector3(0, 6.8, 13.6), []);
+  const look = useRef(new THREE.Vector3(0, 0.4, 0));
 
   useFrame(({ camera }) => {
     const target = selectedPos
-      ? new THREE.Vector3(selectedPos[0] * 1.35, 1.8, selectedPos[2] * 1.35)
+      ? new THREE.Vector3(selectedPos[0] * 1.35, 2.2, selectedPos[2] * 1.35)
       : home;
     camera.position.lerp(target, 0.045);
-    const lookTarget = selectedPos ? new THREE.Vector3(...selectedPos) : new THREE.Vector3(0, 0, 0);
+    const lookTarget = selectedPos
+      ? new THREE.Vector3(selectedPos[0], 0.4, selectedPos[2])
+      : new THREE.Vector3(0, 0.4, 0);
     look.current.lerp(lookTarget, 0.06);
     camera.lookAt(look.current);
   });
@@ -156,6 +161,7 @@ function CameraRig({ selectedPos }: { selectedPos: [number, number, number] | nu
 }
 
 export default function AICity3D({ divisions, selected, onSelect, intensity }: CityProps) {
+  const mobile = useMemo(() => isCoarsePointer(), []);
   const positions = useMemo(
     () => divisions.map((_, i) => districtPosition(i, divisions.length)),
     [divisions],
@@ -164,11 +170,12 @@ export default function AICity3D({ divisions, selected, onSelect, intensity }: C
   const selectedPos = selIndex >= 0 ? positions[selIndex] : null;
 
   return (
-    <Canvas camera={{ position: [0, 5.2, 11.5], fov: 52 }} dpr={[1, 1.5]} gl={{ antialias: true }}>
+    <Canvas camera={{ position: [0, 6.8, 13.6], fov: 52 }} dpr={[1, mobile ? 1.2 : 1.5]} gl={{ antialias: !mobile }}>
       <ambientLight intensity={0.45} />
       <pointLight position={[0, 6, 0]} intensity={1.2} color="#22d3ee" />
       <pointLight position={[-6, -3, 6]} intensity={0.7} color="#a78bfa" />
-      <Stars radius={65} depth={40} count={1800} factor={3} fade speed={0.8} />
+      <Stars radius={65} depth={40} count={mobile ? 900 : 1800} factor={3} fade speed={0.8} />
+      <gridHelper args={[36, 36, "#1b2a4a", "#0c1220"]} position={[0, -1.85, 0]} />
       <CameraRig selectedPos={selectedPos} />
       <Core intensity={intensity} />
       {divisions.map((d, i) => (
@@ -192,13 +199,15 @@ export default function AICity3D({ divisions, selected, onSelect, intensity }: C
           />
         </group>
       ))}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.6, 0]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.35, 0]}>
         <ringGeometry args={[RING_RADIUS - 0.35, RING_RADIUS + 0.35, 96]} />
         <meshBasicMaterial color="#16203a" transparent opacity={0.55} side={THREE.DoubleSide} />
       </mesh>
-      <EffectComposer>
-        <Bloom intensity={0.85} luminanceThreshold={0.18} luminanceSmoothing={0.9} mipmapBlur />
-      </EffectComposer>
+      {!mobile && (
+        <EffectComposer>
+          <Bloom intensity={0.85} luminanceThreshold={0.18} luminanceSmoothing={0.9} mipmapBlur />
+        </EffectComposer>
+      )}
     </Canvas>
   );
 }

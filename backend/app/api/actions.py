@@ -165,13 +165,32 @@ def _build_next_post(
     """
     cm = os.getenv("CAREERMIND_URL", "https://careermind2026-career-mind.hf.space")
     fiverr = os.getenv("FIVERR_GIG_URL", "").strip()
+    # Set TITAN_PRODUCT_URL (landing/waitlist/demo link) and Titan starts
+    # marketing ITSELF in the daily rotation — build-in-public style.
+    titan_url = os.getenv("TITAN_PRODUCT_URL", "").strip()
     lang_name = "Urdu (اردو)" if lang == "ur" else "English"
 
     t = (target or "auto").lower()
     if t == "auto":
-        t = "fiverr" if (fiverr and len(store.feed) % 2 == 0) else "career_mind"
+        pool = ["career_mind"]
+        if fiverr:
+            pool.append("fiverr")
+        if titan_url:
+            pool.append("titan")
+        t = pool[len(store.feed) % len(pool)]
 
-    if t == "fiverr" and fiverr:
+    if t == "titan" and titan_url:
+        link = titan_url
+        pitch = (
+            "Titan Omega — an autonomous AI business command center a solo founder built "
+            "with zero budget: live 3D dashboard, AI agents that research, debate and "
+            "execute, Telegram control, 24/7 automation. Share it build-in-public style."
+        )
+        img_subject = (
+            "a glowing holographic 3D business dashboard floating in a dark modern room, "
+            "futuristic AI command center with neon cyan interface, cinematic"
+        )
+    elif t == "fiverr" and fiverr:
         link = fiverr
         pitch = (
             "Abdullah's Fiverr AI services: custom AI chatbots, business automation, "

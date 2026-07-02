@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -53,7 +53,7 @@ import { FinanceCenter } from "./FinanceCenter";
 import { CrmLite } from "./CrmLite";
 import { AICity } from "./AICity";
 import { BootSequence } from "./BootSequence";
-import { tap } from "@/lib/sound";
+import { chime, speak, tap } from "@/lib/sound";
 
 // Global 3D backdrop — behind the whole app, never blocks clicks.
 const Background3D = dynamic(() => import("./Background3D"), { ssr: false });
@@ -78,9 +78,26 @@ export function CommandCenter() {
   >("dashboard");
 
   // Cinematic boot: plays on EVERY open/reload (founder's preference) — the
-  // dashboard loads underneath it, and SKIP is always available.
+  // dashboard loads underneath it, and SKIP is always available. When the boot
+  // lifts, Titan speaks a live status briefing (real numbers, not a script).
   const [boot, setBoot] = useState<"boot" | "done">("boot");
-  const finishBoot = useCallback(() => setBoot("done"), []);
+  const statusRef = useRef<EmpireStatus | null>(null);
+  const finishBoot = useCallback(() => {
+    setBoot("done");
+    chime();
+    const s = statusRef.current;
+    if (s) {
+      const rev = Math.round(s.mrr);
+      speak(
+        `${s.active_agents} of ${s.total_agents} agents are working. ` +
+          `${s.open_opportunities} opportunities on the radar. ` +
+          (rev > 0 ? `Revenue at ${rev} dollars. ` : `First revenue incoming. `) +
+          `Let's build, Boss.`,
+      );
+    } else {
+      speak("Dashboard ready. Let's build, Boss.");
+    }
+  }, []);
 
   // Live SSE stream — makes the dashboard move the instant it opens.
   const { frame, live } = useTitanStream();
@@ -197,6 +214,11 @@ export function CommandCenter() {
           pipeline_value: frame.status.pipeline_value,
         }
       : status;
+
+  // Keep the freshest status available for the post-boot voice briefing.
+  useEffect(() => {
+    statusRef.current = liveStatus;
+  });
 
   const intensity = frame?.intensity ?? 0.35;
   const mrr = liveStatus?.mrr ?? 0;

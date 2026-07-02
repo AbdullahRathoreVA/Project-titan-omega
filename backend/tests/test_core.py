@@ -77,7 +77,9 @@ def test_provider_groq_when_groq_key_set(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
     assert llm.provider() == "groq"
     assert llm.available() is True
-    assert "llama" in (llm.active_model() or "").lower()
+    # Groq deprecates free-tier models; assert the configured default is used
+    # rather than pinning a model family that can retire under us.
+    assert llm.active_model() == llm._GROQ_MODEL
 
 
 def test_provider_openai_when_base_url_set(monkeypatch):
@@ -244,7 +246,7 @@ def test_careermind_connector_updates_on_success(monkeypatch):
     """When /health returns a valid dict, connector is marked CONNECTED."""
     from app.domain.enums import ConnectorStatus
 
-    def _mock_get(path: str, token=None):
+    def _mock_get(path: str, key=None, **kwargs):
         if path == "/health":
             return {"status": "ok"}
         return None
@@ -318,8 +320,10 @@ def test_api_command(client):
     r = client.post("/api/command", json={"text": "grow traffic"})
     assert r.status_code == 200
     data = r.json()
-    assert "division" in data
+    # Current CommandResponse contract: understood/intent/response/routed_to/actions.
+    assert data["understood"] is True
     assert "response" in data
+    assert data["routed_to"] == "growth-head"
 
 
 def test_api_feed(client):

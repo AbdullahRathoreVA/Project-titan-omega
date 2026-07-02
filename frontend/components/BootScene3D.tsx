@@ -10,6 +10,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Stars } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
+import { isCoarsePointer } from "@/lib/device";
 
 function sampleTextPoints(): Float32Array {
   const W = 960;
@@ -118,15 +119,19 @@ function EnergyRing() {
 }
 
 export default function BootScene3D() {
+  // Phones: fewer stars, no post-processing — keeps the boot smooth everywhere.
+  const mobile = useMemo(() => isCoarsePointer(), []);
   return (
-    <Canvas camera={{ position: [0, 0, 11], fov: 55 }} dpr={[1, 1.5]} gl={{ antialias: true }}>
+    <Canvas camera={{ position: [0, 0, 11], fov: 55 }} dpr={[1, mobile ? 1.2 : 1.5]} gl={{ antialias: !mobile }}>
       <color attach="background" args={["#020409"]} />
-      <Stars radius={70} depth={50} count={2200} factor={3.2} fade speed={1.4} />
+      <Stars radius={70} depth={50} count={mobile ? 1100 : 2200} factor={3.2} fade speed={1.4} />
       <ParticleText />
       <EnergyRing />
-      <EffectComposer>
-        <Bloom intensity={1.1} luminanceThreshold={0.15} luminanceSmoothing={0.9} mipmapBlur />
-      </EffectComposer>
+      {!mobile && (
+        <EffectComposer>
+          <Bloom intensity={1.1} luminanceThreshold={0.15} luminanceSmoothing={0.9} mipmapBlur />
+        </EffectComposer>
+      )}
     </Canvas>
   );
 }
