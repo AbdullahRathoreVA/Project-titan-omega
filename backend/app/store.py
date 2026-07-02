@@ -44,6 +44,11 @@ class Store:
     next_post: Optional[dict] = None
     # Latest autonomous growth-engine research (opportunities, competitors, SEO).
     intel: Optional[dict] = None
+    # Telegram command center: last processed update id + command/response log.
+    telegram_offset: int = 0
+    telegram_log: List[dict] = field(default_factory=list)
+    # Job Radar: found remote jobs/gigs with scores + applied tracking.
+    jobs: Optional[dict] = None
 
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _ids: "itertools.count" = field(default_factory=lambda: itertools.count(1))

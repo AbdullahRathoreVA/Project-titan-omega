@@ -181,6 +181,38 @@ export interface SeoReport {
   report: string;
 }
 
+// Telegram command center (GET /api/telegram/*).
+export interface TelegramStatus {
+  configured: boolean;
+  locked: boolean;
+  handled: number;
+}
+
+export interface TelegramLogEntry {
+  time: string;
+  from: string;
+  chat_id: number;
+  command: string;
+  reply: string;
+}
+
+// Job Radar (GET /api/jobs).
+export interface JobItem {
+  id: string;
+  score: number | null;
+  title: string;
+  url: string;
+  why: string;
+  applied: boolean;
+  found_at: string;
+}
+
+export interface JobsState {
+  items: JobItem[];
+  live: boolean;
+  last_scan: string | null;
+}
+
 // Result of opening an auto-PR (POST /api/devops/pr).
 export interface PrResult {
   ok: boolean;

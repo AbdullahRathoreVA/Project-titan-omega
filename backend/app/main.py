@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import persistence
 from .api.actions import router as actions_router
+from .api.comms import router as comms_router
 from .api.growth import router as growth_router
 from .api.router import router
 from .connectors import careermind, github
@@ -48,6 +49,10 @@ async def _heartbeat_loop() -> None:
             executive.heartbeat(STORE)
         with contextlib.suppress(Exception):
             await asyncio.to_thread(publisher.run_due, STORE)
+        # Answer any waiting Telegram commands (no-op with no token).
+        with contextlib.suppress(Exception):
+            from .engines import telegram_bot
+            await asyncio.to_thread(telegram_bot.poll_once, STORE)
         # Run the live research engine on its own slow cadence.
         if time.monotonic() - _last_growth >= GROWTH_INTERVAL:
             _last_growth = time.monotonic()
@@ -139,6 +144,7 @@ async def auth_guard(request: Request, call_next):
 app.include_router(router)
 app.include_router(actions_router)
 app.include_router(growth_router)
+app.include_router(comms_router)
 
 
 @app.get("/health", tags=["system"])

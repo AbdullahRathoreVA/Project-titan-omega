@@ -12,12 +12,16 @@ import type {
   FeedEvent,
   GrowthIntel,
   IntelligenceStatus,
+  JobItem,
+  JobsState,
   NextPost,
   Opportunity,
   PrResult,
   RevenueEntry,
   ScheduledPost,
   SeoReport,
+  TelegramLogEntry,
+  TelegramStatus,
 } from "./types";
 
 const EMPTY_INTEL: GrowthIntel = {
@@ -173,6 +177,18 @@ export const api = {
   seoReport: (keyword = "") => post<SeoReport>("/seo/report", { keyword }),
   openPr: (instruction: string, opts?: { owner?: string; repo?: string; path?: string }) =>
     post<PrResult>("/devops/pr", { instruction, ...(opts ?? {}) }),
+
+  // telegram command center
+  telegramStatus: () =>
+    get<TelegramStatus>("/telegram/status", { configured: false, locked: false, handled: 0 }),
+  telegramLog: (limit = 50) => get<TelegramLogEntry[]>(`/telegram/log?limit=${limit}`, []),
+
+  // job radar
+  jobs: () => get<JobsState>("/jobs", { items: [], live: false, last_scan: null }),
+  jobsScan: (query = "") => post<JobsState>("/jobs/scan", { query }),
+  jobProposal: (title: string, url: string, why: string) =>
+    post<{ proposal: string }>("/jobs/proposal", { title, url, why }),
+  jobApplied: (id: string) => post<JobItem>(`/jobs/${id}/applied`),
 
   async command(text: string): Promise<CommandResponse> {
     const res = await post<CommandResponse>("/agent/act", { instruction: text });

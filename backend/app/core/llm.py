@@ -130,16 +130,37 @@ def _complete_groq(system: str, prompt: str, max_tokens: int) -> Optional[str]:
     return (resp.choices[0].message.content or "").strip() or None
 
 
+# Free OpenRouter models tried in order — when one is rate-limited (429) or
+# retired, the next takes over instead of the agents going silent.
+_HERMES_FALLBACKS = [
+    _HERMES_MODEL,
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "deepseek/deepseek-chat-v3-0324:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
+]
+
+
 def _complete_hermes(system: str, prompt: str, max_tokens: int) -> Optional[str]:
-    resp = _hermes_client().chat.completions.create(
-        model=_HERMES_MODEL,
-        max_tokens=max_tokens,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user",   "content": prompt},
-        ],
-    )
-    return (resp.choices[0].message.content or "").strip() or None
+    last_exc: Optional[Exception] = None
+    for model in _HERMES_FALLBACKS:
+        try:
+            resp = _hermes_client().chat.completions.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": prompt},
+                ],
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            if text:
+                return text
+        except Exception as exc:  # rate-limited/retired model — try the next one
+            last_exc = exc
+    if last_exc is not None:
+        raise last_exc
+    return None
 
 
 def _complete_openai(system: str, prompt: str, max_tokens: int) -> Optional[str]:

@@ -46,6 +46,8 @@ import { Sidebar } from "./Sidebar";
 import { TitanCore } from "./TitanCore";
 import { NextPost } from "./NextPost";
 import { WarRoomView } from "./WarRoomView";
+import { TelegramCenter } from "./TelegramCenter";
+import { JobRadar } from "./JobRadar";
 
 // Global 3D backdrop — behind the whole app, never blocks clicks.
 const Background3D = dynamic(() => import("./Background3D"), { ssr: false });
@@ -65,7 +67,7 @@ export function CommandCenter() {
   const [channels, setChannels] = useState<ChannelTile[]>([]);
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
-  const [view, setView] = useState<"dashboard" | "warroom">("dashboard");
+  const [view, setView] = useState<"dashboard" | "warroom" | "telegram" | "jobs">("dashboard");
 
   // Live SSE stream — makes the dashboard move the instant it opens.
   const { frame, live } = useTitanStream();
@@ -237,7 +239,12 @@ export function CommandCenter() {
 
           {/* View switcher */}
           <div className="flex gap-2">
-            {([["dashboard", "Dashboard"], ["warroom", "War Room"]] as const).map(([v, label]) => (
+            {([
+              ["dashboard", "Dashboard"],
+              ["warroom", "War Room"],
+              ["telegram", "Telegram"],
+              ["jobs", "Job Radar"],
+            ] as const).map(([v, label]) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
@@ -255,6 +262,10 @@ export function CommandCenter() {
           {view === "warroom" && (
             <WarRoomView intensity={intensity} agentCount={liveStatus?.total_agents ?? agents.length} />
           )}
+
+          {view === "telegram" && <TelegramCenter />}
+
+          {view === "jobs" && <JobRadar />}
 
           {view === "dashboard" && (
           <>
