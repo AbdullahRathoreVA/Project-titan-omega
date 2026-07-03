@@ -22,7 +22,7 @@ GH = "https://api.github.com"
 
 
 def _headers() -> tuple[dict, bool]:
-    token = os.getenv("GITHUB_TOKEN")
+    token = os.getenv("GITHUB_TOKEN", "").strip()
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"

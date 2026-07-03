@@ -27,13 +27,19 @@ API = "https://api.telegram.org/bot{token}/{method}"
 MAX_LEN = 3900  # Telegram hard limit is 4096; leave headroom.
 
 
+def _token() -> str:
+    """Bot token with whitespace stripped — a newline pasted into the HF secret
+    otherwise lands inside the request URL and breaks every API call silently."""
+    return os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+
+
 def configured() -> bool:
-    return bool(os.getenv("TELEGRAM_BOT_TOKEN"))
+    return bool(_token())
 
 
 def send_to_founder(text: str, store: Store = STORE) -> bool:
     """Push a message to Abdullah's own chat (needs TELEGRAM_CHAT_ID). Never raises."""
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    token = _token()
     chat = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not (token and chat):
         return False
@@ -267,7 +273,7 @@ def _handle(text: str, store: Store) -> str:
 
 def poll_once(store: Store = STORE) -> int:
     """Fetch and answer pending Telegram messages. Returns handled count."""
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    token = _token()
     if not token:
         return 0
 

@@ -83,7 +83,7 @@ def _hermes_client():
     import openai
     return openai.OpenAI(
         base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-        api_key=os.getenv("OPENROUTER_API_KEY") or os.getenv("HERMES_API_KEY") or "missing",
+        api_key=(os.getenv("OPENROUTER_API_KEY") or os.getenv("HERMES_API_KEY") or "missing").strip(),
         timeout=25.0,
         max_retries=1,
     )
@@ -94,7 +94,7 @@ def _openai_client():
     import openai
     kwargs: dict = {}
     base_url = os.getenv("OPENAI_BASE_URL")
-    api_key  = os.getenv("OPENAI_API_KEY", "ollama")
+    api_key  = os.getenv("OPENAI_API_KEY", "ollama").strip()
     if base_url:
         kwargs["base_url"] = base_url
     kwargs["api_key"] = api_key
@@ -130,7 +130,9 @@ def _complete_groq(system: str, prompt: str, max_tokens: int) -> Optional[str]:
 
     resp = httpx.post(
         "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}"},
+        # .strip() everywhere a key is used: a newline pasted into an HF secret
+        # becomes an illegal HTTP header and kills the provider silently.
+        headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY', '').strip()}"},
         json={
             "model": _GROQ_MODEL,
             "max_tokens": max_tokens,
@@ -242,7 +244,7 @@ def _gemini_model_id() -> str:
     try:
         import google.generativeai as genai
 
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY", "").strip())
         ids = [
             m.name.split("/")[-1]
             for m in genai.list_models()
@@ -263,7 +265,7 @@ def _gemini_model_id() -> str:
 
 def _complete_gemini(system: str, prompt: str, max_tokens: int) -> Optional[str]:
     import google.generativeai as genai
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY", "").strip())
     model = genai.GenerativeModel(model_name=_gemini_model_id(), system_instruction=system)
     resp = model.generate_content(prompt, generation_config={"max_output_tokens": max_tokens})
     return (resp.text or "").strip() or None

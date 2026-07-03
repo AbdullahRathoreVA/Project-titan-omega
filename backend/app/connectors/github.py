@@ -44,7 +44,7 @@ def fetch_repo(owner: str, repo: str) -> Optional[dict]:
         import httpx
 
         headers = {"Accept": "application/vnd.github+json"}
-        token = os.getenv("GITHUB_TOKEN")
+        token = os.getenv("GITHUB_TOKEN", "").strip()
         if token:
             headers["Authorization"] = f"Bearer {token}"
 

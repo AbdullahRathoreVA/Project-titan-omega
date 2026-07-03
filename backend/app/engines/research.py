@@ -12,12 +12,12 @@ from typing import List, Optional
 
 
 def available() -> bool:
-    return bool(os.getenv("TAVILY_API_KEY"))
+    return bool(os.getenv("TAVILY_API_KEY", "").strip())
 
 
 def search(query: str, max_results: int = 8) -> List[dict]:
     """Return live web results [{title, url, content}]. Never raises."""
-    key = os.getenv("TAVILY_API_KEY")
+    key = os.getenv("TAVILY_API_KEY", "").strip()
     if not key:
         return []
     try:

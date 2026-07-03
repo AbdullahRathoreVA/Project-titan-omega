@@ -422,7 +422,26 @@ def doctor() -> dict:
     def has(name: str) -> bool:
         return bool(os.getenv(name, "").strip())
 
+    # Live Telegram check: calls getMe server-side and reports the bot's
+    # username (never the token) or the exact error — so "bot not answering"
+    # is diagnosable from this one URL.
+    telegram_api = None
+    tok = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if tok:
+        try:
+            import httpx
+
+            r = httpx.get(f"https://api.telegram.org/bot{tok}/getMe", timeout=8.0, trust_env=True)
+            j = r.json()
+            if j.get("ok"):
+                telegram_api = "ok: @" + j["result"].get("username", "?")
+            else:
+                telegram_api = f"error: {str(j.get('description', j))[:120]}"
+        except Exception as exc:
+            telegram_api = f"error: {type(exc).__name__}: {str(exc)[:80]}"
+
     return {
+        "telegram_api": telegram_api,
         "llm_providers": llm.providers_configured(),
         "groq_key": has("GROQ_API_KEY"),
         "gemini_key": has("GEMINI_API_KEY"),

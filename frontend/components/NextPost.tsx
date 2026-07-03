@@ -69,8 +69,10 @@ export function NextPost({
         )}
       </header>
 
-      <div className="flex flex-1 flex-col gap-3 p-3">
-        <div className="relative aspect-square w-full overflow-hidden rounded-lg border border-edge bg-panel-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+        {/* flex-1 + min-h-0 (NOT aspect-square): the image yields space so the
+            caption and buttons always fit INSIDE the fixed-height card. */}
+        <div className="relative min-h-[120px] w-full flex-1 overflow-hidden rounded-lg border border-edge bg-panel-2">
           {post && !imgError ? (
             // key forces a fresh load attempt; the URL is stable so once the
             // generator finishes, the retry hits its cache and renders.
@@ -103,17 +105,17 @@ export function NextPost({
           </span>
         </div>
 
-        <p className="scroll-thin max-h-24 overflow-y-auto whitespace-pre-line text-[11px] leading-relaxed text-slate-300">
+        <p className="scroll-thin max-h-16 shrink-0 overflow-y-auto whitespace-pre-line text-[11px] leading-relaxed text-slate-300">
           {post ? post.caption : "Generating your next post…"}
         </p>
 
         {post && (
-          <div className="text-[10px] text-slate-600">
+          <div className="shrink-0 text-[10px] text-slate-600">
             Posts to: <span className="text-slate-400">{post.channels.join(", ")}</span>
           </div>
         )}
 
-        <div className="mt-auto grid grid-cols-2 gap-2">
+        <div className="grid shrink-0 grid-cols-2 gap-2">
           <button
             onClick={() => run("approve", () => api.approveNextPost())}
             disabled={!post || busy !== null}
