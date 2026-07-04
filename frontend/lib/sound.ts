@@ -73,12 +73,28 @@ export function bootSound() {
 export function speak(text: string) {
   try {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
-    const chunks = text.split(/(?<=[.!?])\s+/).filter(Boolean);
-    for (const chunk of chunks.length ? chunks : [text]) {
+    const emit = (speaking: boolean) => {
+      try {
+        window.dispatchEvent(new CustomEvent("titan-speech", { detail: { speaking } }));
+      } catch {
+        /* silent */
+      }
+    };
+    const parts = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const chunks = parts.length ? parts : [text];
+    emit(true);
+    let finished = 0;
+    const done = () => {
+      finished += 1;
+      if (finished >= chunks.length) emit(false);
+    };
+    for (const chunk of chunks) {
       const u = new SpeechSynthesisUtterance(chunk);
       u.rate = 0.96;
       u.pitch = 0.85;
       u.volume = 0.9;
+      u.onend = done;
+      u.onerror = done;
       window.speechSynthesis.speak(u);
     }
   } catch {

@@ -3,9 +3,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Mic, MicOff, Send, Sparkles, Volume2 } from "lucide-react";
-import { speakText } from "@/lib/voice";
+import { langTag, speakText } from "@/lib/voice";
+import { HoloFounder } from "./HoloFounder";
 
-type Lang = "en" | "ur";
+// Universal voice: Titan answers and SPEAKS in any of these languages.
+const LANGS: [string, string][] = [
+  ["en", "English"],
+  ["ur", "اردو"],
+  ["hi", "हिन्दी"],
+  ["ar", "العربية"],
+  ["es", "Español"],
+  ["fr", "Français"],
+  ["de", "Deutsch"],
+  ["zh", "中文"],
+  ["ja", "日本語"],
+  ["tr", "Türkçe"],
+  ["pt", "Português"],
+  ["ru", "Русский"],
+];
+const RTL = new Set(["ur", "ar"]);
+
+type Lang = string;
 type Turn = { role: "you" | "titan"; text: string };
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -53,7 +71,7 @@ export function AskTitan() {
         // 'spoken' is Hindi/Devanagari for Urdu so the Hindi voice can read it.
         const spoken = data?.spoken ?? answer;
         setTurns((t) => [...t, { role: "titan", text: answer }]);
-        if (voiceOut) void speakText(spoken, lang === "ur" ? "hi" : "en");
+        if (voiceOut) void speakText(spoken, lang === "ur" ? "hi" : lang);
       } catch {
         setTurns((t) => [
           ...t,
@@ -81,7 +99,7 @@ export function AskTitan() {
       );
       return;
     }
-    rec.lang = lang === "ur" ? "ur-PK" : "en-US";
+    rec.lang = langTag(lang);
     rec.interimResults = false;
     rec.maxAlternatives = 1;
     rec.onresult = (e: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -109,22 +127,18 @@ export function AskTitan() {
           <h2 className="text-sm font-medium text-slate-200">Ask Titan — عبداللہ</h2>
         </div>
         <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setLang("ur")}
-            className={`rounded px-2 py-0.5 text-[11px] ${
-              lang === "ur" ? "bg-hud-violet/20 text-hud-violet" : "text-slate-500 hover:text-slate-300"
-            }`}
+          <select
+            value={lang}
+            onChange={(e) => setLang(e.target.value)}
+            title="Titan speaks your language"
+            className="rounded-lg border border-edge bg-panel-2/60 px-2 py-1 text-[11px] text-slate-300 focus:border-hud-violet/40 focus:outline-none"
           >
-            اردو
-          </button>
-          <button
-            onClick={() => setLang("en")}
-            className={`rounded px-2 py-0.5 text-[11px] ${
-              lang === "en" ? "bg-hud-violet/20 text-hud-violet" : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            EN
-          </button>
+            {LANGS.map(([code, label]) => (
+              <option key={code} value={code}>
+                {label}
+              </option>
+            ))}
+          </select>
           <button
             onClick={() => setVoiceOut((v) => !v)}
             title="Speak answers aloud"
@@ -135,7 +149,9 @@ export function AskTitan() {
         </div>
       </header>
 
-      <div className="scroll-thin max-h-72 space-y-2 overflow-y-auto p-3" dir={lang === "ur" ? "rtl" : "ltr"}>
+      <HoloFounder />
+
+      <div className="scroll-thin max-h-60 space-y-2 overflow-y-auto p-3" dir={RTL.has(lang) ? "rtl" : "ltr"}>
         {turns.length === 0 && (
           <p className="px-1 py-6 text-center text-xs text-slate-500">
             {lang === "ur"
@@ -185,7 +201,7 @@ export function AskTitan() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && ask(input)}
           placeholder={placeholder}
-          dir={lang === "ur" ? "rtl" : "ltr"}
+          dir={RTL.has(lang) ? "rtl" : "ltr"}
           className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:border-hud-violet/40 focus:outline-none"
         />
         <button

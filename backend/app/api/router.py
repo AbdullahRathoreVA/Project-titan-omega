@@ -686,19 +686,40 @@ def voice_report() -> dict:
     return {"urdu": urdu_text, "hindi": hindi_text, **c}
 
 
-# --- Ask Titan assistant (voice/text, Urdu or English) --------------------
+# --- Ask Titan assistant (voice/text, ~12 languages) -----------------------
+
+# Universal voice: the LLM is natively multilingual; the browser supplies the
+# TTS voice per language. Urdu keeps its special trick (### + Devanagari) since
+# Urdu voices are rarely installed but Hindi ones read the same words aloud.
+ASSISTANT_LANGS = {
+    "en": "English",
+    "ur": "Urdu (اردو)",
+    "hi": "Hindi (हिन्दी)",
+    "ar": "Arabic (العربية)",
+    "es": "Spanish (Español)",
+    "fr": "French (Français)",
+    "de": "German (Deutsch)",
+    "zh": "Chinese (中文)",
+    "ja": "Japanese (日本語)",
+    "tr": "Turkish (Türkçe)",
+    "pt": "Portuguese (Português)",
+    "ru": "Russian (Русский)",
+}
+
 
 class AssistantRequest(BaseModel):
     question: str = Field(..., min_length=1)
-    lang: str = Field(default="en", description="'en' or 'ur'")
+    lang: str = Field(default="en", description="en/ur/hi/ar/es/fr/de/zh/ja/tr/pt/ru")
 
 
 @router.post("/assistant", tags=["system"])
 def assistant(req: AssistantRequest) -> dict:
-    """Answer Abdullah's question. Returns 'answer' (display) and 'spoken'
-    (Hindi/Devanagari for Urdu, so the installed Hindi voice can read it)."""
+    """Answer Abdullah's question in his chosen language. Returns 'answer'
+    (display) and 'spoken' (Devanagari for Urdu so the Hindi voice reads it;
+    identical to 'answer' for every other language)."""
     c = _empire_context()
-    is_urdu = req.lang == "ur"
+    lang = req.lang if req.lang in ASSISTANT_LANGS else "en"
+    is_urdu = lang == "ur"
 
     context = (
         f"Live empire state — "
@@ -715,7 +736,7 @@ def assistant(req: AssistantRequest) -> dict:
             "and after it write the SAME reply in Hindi (Devanagari script) for text-to-speech."
         )
     else:
-        instructions = "Answer ONLY in English."
+        instructions = f"Answer ONLY in {ASSISTANT_LANGS[lang]}."
 
     raw = llm.complete(
         system=(
@@ -755,7 +776,7 @@ def assistant(req: AssistantRequest) -> dict:
             spoken = answer
 
     STORE.emit("titan-assistant", "command", f'Abdullah asked: "{req.question[:80]}"', "info")
-    return {"answer": answer, "spoken": spoken, "lang": req.lang}
+    return {"answer": answer, "spoken": spoken, "lang": lang}
 
 
 # --- intelligence status --------------------------------------------------

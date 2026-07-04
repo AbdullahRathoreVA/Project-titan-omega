@@ -4,7 +4,37 @@
 // text sounds the same to the ear, so callers can pass Hindi text with lang
 // "hi" to get a working spoken Urdu briefing.
 
-export type SpeakLang = "ur" | "en" | "hi";
+// Any two-letter language code works; these are the ones Titan's UI offers.
+export type SpeakLang = string;
+
+// BCP-47 defaults per language (used for utterance lang + mic recognition).
+export const LANG_TAGS: Record<string, string> = {
+  en: "en-US",
+  ur: "ur-PK",
+  hi: "hi-IN",
+  ar: "ar-SA",
+  es: "es-ES",
+  fr: "fr-FR",
+  de: "de-DE",
+  zh: "zh-CN",
+  ja: "ja-JP",
+  tr: "tr-TR",
+  pt: "pt-BR",
+  ru: "ru-RU",
+};
+
+export function langTag(lang: string): string {
+  return LANG_TAGS[lang] ?? "en-US";
+}
+
+// Broadcast speaking state so visuals (the holographic Founder) can react.
+export function emitSpeech(speaking: boolean) {
+  try {
+    window.dispatchEvent(new CustomEvent("titan-speech", { detail: { speaking } }));
+  } catch {
+    /* silent */
+  }
+}
 
 export async function loadVoices(): Promise<SpeechSynthesisVoice[]> {
   if (typeof window === "undefined" || !window.speechSynthesis) return [];
@@ -35,20 +65,15 @@ export function pickVoice(
   voices: SpeechSynthesisVoice[],
   lang: SpeakLang,
 ): SpeechSynthesisVoice | null {
-  if (lang === "en") {
-    return voices.find((v) => v.lang.startsWith("en")) ?? null;
-  }
-  if (lang === "hi") {
+  if (lang === "ur") {
+    // Urdu first, then Hindi (same phonetics, widely available).
     return (
-      voices.find((v) => v.lang.startsWith("hi") || v.name.toLowerCase().includes("hindi")) ?? null
+      voices.find((v) => v.lang.startsWith("ur") || v.name.toLowerCase().includes("urdu")) ??
+      voices.find((v) => v.lang.startsWith("hi") || v.name.toLowerCase().includes("hindi")) ??
+      null
     );
   }
-  // Urdu first, then Hindi (same phonetics, widely available).
-  return (
-    voices.find((v) => v.lang.startsWith("ur") || v.name.toLowerCase().includes("urdu")) ??
-    voices.find((v) => v.lang.startsWith("hi") || v.name.toLowerCase().includes("hindi")) ??
-    null
-  );
+  return voices.find((v) => v.lang.toLowerCase().startsWith(lang.toLowerCase())) ?? null;
 }
 
 // Chrome silently stops long utterances after ~15s (a long-standing bug), so we
@@ -104,11 +129,13 @@ export async function speakText(
     }
   }, 8000);
 
+  emitSpeech(true);
   let finished = 0;
   const done = () => {
     finished += 1;
     if (finished >= chunks.length) {
       clearInterval(keepAlive);
+      emitSpeech(false);
       onEnd?.();
     }
   };
@@ -119,7 +146,7 @@ export async function speakText(
       u.voice = voice;
       u.lang = voice.lang;
     } else {
-      u.lang = lang === "en" ? "en-US" : lang === "hi" ? "hi-IN" : "ur-PK";
+      u.lang = langTag(lang);
     }
     u.rate = lang === "en" ? 1.0 : 0.92;
     u.pitch = 1.0;
