@@ -37,6 +37,7 @@ def save(store: Store = STORE) -> None:
             "revenue_entries": store.revenue_entries,
             "expenses": store.expenses,
             "leads": store.leads,
+            "decisions": store.decisions,
         }
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -67,5 +68,8 @@ def load(store: Store = STORE) -> None:
         leads = data.get("leads")
         if isinstance(leads, dict):
             store.leads = leads
+        decisions = data.get("decisions")
+        if isinstance(decisions, list):
+            store.decisions = decisions
     except Exception:
         pass

@@ -170,7 +170,43 @@ export interface GrowthIntel {
 export interface Debate {
   goal: string;
   proposals: { name: string; proposal: string }[];
+  critiques?: { name: string; note: string }[];
   decision: string;
+  confidence?: number;
+}
+
+// Content Repurposing Factory (POST /api/content/repurpose).
+export interface RepurposePack {
+  blog: string;
+  linkedin: string;
+  xthread: string;
+  instagram: string;
+  email: string;
+  shorts: string;
+}
+
+// Gamification (GET /api/progress) — real events only.
+export interface Progress {
+  xp: number;
+  level: number;
+  level_floor: number;
+  next_level_xp: number;
+  milestones: { label: string; done: boolean }[];
+}
+
+// Automation performance (GET /api/performance).
+export interface Performance {
+  posts_scheduled: number;
+  posts_published: number;
+  deliverables: number;
+  jobs_found: number;
+  jobs_applied: number;
+  leads_total: number;
+  leads_won: number;
+  telegram_commands: number;
+  council_decisions: number;
+  research_last_run: string | null;
+  time_saved_minutes_estimate: number;
 }
 
 // SEO co-pilot report (POST /api/seo/report).

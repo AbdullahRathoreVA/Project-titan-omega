@@ -20,7 +20,10 @@ import type {
   JobsState,
   NextPost,
   Opportunity,
+  Performance,
   PrResult,
+  Progress,
+  RepurposePack,
   RevenueEntry,
   ScheduledPost,
   SeoReport,
@@ -181,6 +184,13 @@ export const api = {
   seoReport: (keyword = "") => post<SeoReport>("/seo/report", { keyword }),
   openPr: (instruction: string, opts?: { owner?: string; repo?: string; path?: string }) =>
     post<PrResult>("/devops/pr", { instruction, ...(opts ?? {}) }),
+
+  // content factory + gamification + performance
+  repurpose: (idea: string, lang = "en") =>
+    post<RepurposePack>("/content/repurpose", { idea, lang }),
+  progress: () =>
+    get<Progress>("/progress", { xp: 0, level: 1, level_floor: 0, next_level_xp: 100, milestones: [] }),
+  performance: () => get<Performance | null>("/performance", null),
 
   // telegram command center
   telegramStatus: () =>

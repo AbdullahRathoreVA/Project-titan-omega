@@ -55,6 +55,8 @@ class Store:
     leads: Dict[str, dict] = field(default_factory=dict)
     # Last war-room decision awaiting founder approval (pushed to Telegram).
     pending_decision: Optional[dict] = None
+    # Council decision history — auditable record of every debate outcome.
+    decisions: List[dict] = field(default_factory=list)
 
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _ids: "itertools.count" = field(default_factory=lambda: itertools.count(1))

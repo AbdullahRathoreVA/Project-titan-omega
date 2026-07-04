@@ -144,15 +144,56 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
         proposals.append({"name": name, "proposal": pitch})
 
     debate = "\n".join(f"{p['name']}: {p['proposal']}" for p in proposals)
+
+    # Council critiques: finance and risk challenge the pitches before the call.
+    critiques = []
+    for name, role in (
+        ("Yusuf — CFO", "evaluate the pitches for cost, cash-flow impact, and feasibility on a $0 budget"),
+        ("Zara — Risk Officer", "identify the biggest risks in the pitches (platform bans, wasted effort, reputation) and how to avoid them"),
+    ):
+        note = llm.complete(
+            system=(
+                f"You are {name} on Abdullah's executive council. In 2-3 blunt, specific "
+                f"sentences, {role}. Challenge weak thinking — don't rubber-stamp."
+            ),
+            prompt=f"Goal: {goal}\n\nTeam pitches:\n{debate}",
+            max_tokens=200,
+        ) or "(critique unavailable — LLM unreachable)"
+        critiques.append({"name": name, "note": note})
+
+    critique_text = "\n".join(f"{c['name']}: {c['note']}" for c in critiques)
     decision = llm.complete(
         system=(
-            "You are the Head of Marketing. Your team pitched competing ideas (below). "
-            "Pick the strongest one or combine the best parts, say WHY in 2 sentences, "
-            "then give a concrete 3-step action plan to execute it this week for free."
+            "You are the Head of Marketing. Your team pitched competing ideas and the "
+            "CFO + Risk Officer critiqued them (all below). Pick the strongest idea or "
+            "combine the best parts, say WHY in 2 sentences, address the critiques, then "
+            "give a concrete 3-step action plan to execute this week for free. END with "
+            "one line in exactly this format: CONFIDENCE: NN% (your honest confidence)."
         ),
-        prompt="Team pitches:\n" + debate + f"\n\nGoal: {goal}",
-        max_tokens=450,
+        prompt=f"Team pitches:\n{debate}\n\nCouncil critiques:\n{critique_text}\n\nGoal: {goal}",
+        max_tokens=500,
     ) or "Decision pending — add a free LLM key (GROQ_API_KEY) to run the war room."
+
+    import re as _re
+
+    m = _re.search(r"CONFIDENCE[:\s]+(\d{1,3})", decision)
+    confidence = max(0, min(100, int(m.group(1)))) if m else 70
+
+    # Decision history (persisted) — every council call is auditable later.
+    store.decisions.append({
+        "goal": goal,
+        "decision": decision,
+        "confidence": confidence,
+        "time": now().isoformat(),
+    })
+    if len(store.decisions) > 50:
+        store.decisions = store.decisions[-50:]
+    try:
+        from .. import persistence
+
+        persistence.save(store)
+    except Exception:
+        pass
 
     store.emit(
         "marketing-head", "decision",
@@ -173,7 +214,13 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
     except Exception:
         pass
 
-    return {"goal": goal, "proposals": proposals, "decision": decision}
+    return {
+        "goal": goal,
+        "proposals": proposals,
+        "critiques": critiques,
+        "decision": decision,
+        "confidence": confidence,
+    }
 
 
 # --- SEO co-pilot ----------------------------------------------------------

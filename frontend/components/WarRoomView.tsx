@@ -13,6 +13,7 @@ import {
 import { api } from "@/lib/api";
 import type { Debate, GrowthIntel, PrResult, SeoReport } from "@/lib/types";
 import { NeuralString } from "./NeuralString";
+import { ContentFactory } from "./ContentFactory";
 
 // The War Room: Titan's autonomous growth brain. Live research engine (runs
 // 24/7 server-side), a marketing team that argues then decides, and an SEO
@@ -152,6 +153,8 @@ export function WarRoomView({
         </div>
       </section>
 
+      <ContentFactory />
+
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Marketing War Room */}
         <section className="panel">
@@ -187,8 +190,21 @@ export function WarRoomView({
                     <div className="mt-0.5 text-xs text-slate-300">{p.proposal}</div>
                   </div>
                 ))}
+                {(debate.critiques ?? []).map((c, i) => (
+                  <div key={i} className="rounded-lg border border-hud-amber/25 bg-hud-amber/5 p-2.5">
+                    <div className="text-[11px] font-semibold text-hud-amber">{c.name}</div>
+                    <div className="mt-0.5 text-xs text-slate-300">{c.note}</div>
+                  </div>
+                ))}
                 <div className="rounded-lg border border-hud-emerald/30 bg-hud-emerald/5 p-2.5">
-                  <div className="text-[11px] font-semibold uppercase tracking-wide text-hud-emerald">Head decision</div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-hud-emerald">Head decision</span>
+                    {typeof debate.confidence === "number" && (
+                      <span className="rounded bg-hud-emerald/15 px-1.5 py-0.5 font-mono text-[10px] text-hud-emerald">
+                        confidence {debate.confidence}%
+                      </span>
+                    )}
+                  </div>
                   <div className="mt-1 whitespace-pre-line text-xs text-slate-200">{debate.decision}</div>
                 </div>
               </div>

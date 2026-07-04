@@ -53,6 +53,7 @@ import { FinanceCenter } from "./FinanceCenter";
 import { CrmLite } from "./CrmLite";
 import { AICity } from "./AICity";
 import { BootSequence } from "./BootSequence";
+import { ProgressStrip } from "./ProgressStrip";
 import { chime, speak, tap } from "@/lib/sound";
 
 // Global 3D backdrop — behind the whole app, never blocks clicks.
@@ -234,6 +235,7 @@ export function CommandCenter() {
       )}
       <Background3D />
       <StatusBar status={liveStatus} online={online || live} intel={intel} />
+      <ProgressStrip />
 
       {mrr === 0 && (
         <div className="mt-3 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-4 py-3 text-xs text-hud-amber">

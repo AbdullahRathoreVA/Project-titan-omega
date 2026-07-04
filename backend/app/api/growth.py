@@ -47,6 +47,96 @@ def seo_report(req: SeoRequest) -> dict:
     return autonomous.seo_report(req.keyword, STORE)
 
 
+class RepurposeRequest(BaseModel):
+    idea: str = Field(..., min_length=3)
+    lang: str = Field(default="en")
+
+
+@router.post("/content/repurpose", tags=["growth"])
+def content_repurpose(req: RepurposeRequest) -> dict:
+    """One idea → blog + LinkedIn + X thread + IG caption + email + Shorts
+    script. The pack is also saved to Deliverables."""
+    from ..engines import repurpose
+
+    return repurpose.repurpose(req.idea, req.lang, STORE)
+
+
+# --- gamification + performance (REAL events only, no fake progress) --------
+
+_MILESTONES = [
+    ("First real order logged", lambda s: len(s.revenue_entries) > 0),
+    ("First $100 earned", lambda s: float(s.metrics.get("mrr", 0)) >= 100),
+    ("First lead won", lambda s: any(l.get("status") == "won" for l in s.leads.values())),
+    ("10 posts scheduled", lambda s: len(s.posts) >= 10),
+    ("First job application", lambda s: any(i.get("applied") for i in (s.jobs or {}).get("items", []))),
+    ("Telegram connected", lambda s: len(s.telegram_log) > 0),
+    ("First council decision", lambda s: len(s.decisions) > 0),
+]
+
+
+def _counters(s) -> dict:
+    return {
+        "posts_scheduled": len(s.posts),
+        "posts_published": sum(1 for p in s.posts.values() if p.get("status") == "published"),
+        "deliverables": len(s.deliverables),
+        "jobs_found": len((s.jobs or {}).get("items", [])),
+        "jobs_applied": sum(1 for i in (s.jobs or {}).get("items", []) if i.get("applied")),
+        "leads_total": len(s.leads),
+        "leads_won": sum(1 for l in s.leads.values() if l.get("status") == "won"),
+        "telegram_commands": len(s.telegram_log),
+        "council_decisions": len(s.decisions),
+    }
+
+
+@router.get("/progress", tags=["growth"])
+def progress() -> dict:
+    """XP and level computed ONLY from real events — revenue, wins, real work."""
+    s = STORE
+    c = _counters(s)
+    leads_contacted = sum(
+        1 for l in s.leads.values() if l.get("status") in ("contacted", "replied", "won")
+    )
+    xp = int(
+        float(s.metrics.get("mrr", 0)) * 10
+        + c["leads_won"] * 50
+        + leads_contacted * 5
+        + c["posts_scheduled"] * 10
+        + c["deliverables"] * 5
+        + c["jobs_applied"] * 15
+        + c["telegram_commands"] * 2
+        + len(s.expenses)
+    )
+    level = 1
+    while xp >= (level ** 2) * 100:
+        level += 1
+    return {
+        "xp": xp,
+        "level": level,
+        "level_floor": ((level - 1) ** 2) * 100,
+        "next_level_xp": (level ** 2) * 100,
+        "milestones": [{"label": label, "done": bool(check(s))} for label, check in _MILESTONES],
+    }
+
+
+@router.get("/performance", tags=["growth"])
+def performance() -> dict:
+    """Automation output counters + an ESTIMATED time-saved figure (labelled
+    estimate — ~30min/deliverable, 15min/post, 20min/proposal-application,
+    2min/telegram command)."""
+    c = _counters(STORE)
+    minutes = (
+        c["deliverables"] * 30
+        + c["posts_scheduled"] * 15
+        + c["jobs_applied"] * 20
+        + c["telegram_commands"] * 2
+    )
+    return {
+        **c,
+        "research_last_run": (STORE.intel or {}).get("last_run"),
+        "time_saved_minutes_estimate": minutes,
+    }
+
+
 class PrRequest(BaseModel):
     instruction: str = Field(
         default="Improve this file to be clearer, more compelling, and SEO-friendly "

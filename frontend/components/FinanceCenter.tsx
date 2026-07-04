@@ -1,22 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Banknote, Plus, Trash2, TrendingUp, Wallet } from "lucide-react";
+import { Gauge, Plus, Trash2, TrendingUp, Wallet } from "lucide-react";
 import { api } from "@/lib/api";
-import type { FinanceState } from "@/lib/types";
+import type { FinanceState, Performance } from "@/lib/types";
 import { money } from "@/lib/format";
 
 // Financial Center: real revenue (from the ledger) vs real expenses; profit and
 // an honest run-rate forecast (last 30 days projected forward — no fake curves).
 export function FinanceCenter() {
   const [state, setState] = useState<FinanceState | null>(null);
+  const [perf, setPerf] = useState<Performance | null>(null);
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("tools");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
-    setState(await api.finance());
+    const [f, p] = await Promise.all([api.finance(), api.performance()]);
+    setState(f);
+    setPerf(p);
   }, []);
 
   useEffect(() => {
@@ -135,6 +138,43 @@ export function FinanceCenter() {
           </div>
         </div>
       </section>
+
+      {perf && (
+        <section className="panel">
+          <header className="panel-header">
+            <div className="flex items-center gap-2">
+              <Gauge className="h-4 w-4 text-hud-violet" strokeWidth={1.6} />
+              <h2 className="text-sm font-medium text-slate-200">Automation Performance</h2>
+            </div>
+            <span className="hud-label">
+              ≈ {(perf.time_saved_minutes_estimate / 60).toFixed(1)}h saved (estimated)
+            </span>
+          </header>
+          <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-4">
+            {(
+              [
+                ["Posts scheduled", perf.posts_scheduled],
+                ["Posts published", perf.posts_published],
+                ["Deliverables", perf.deliverables],
+                ["Jobs found", perf.jobs_found],
+                ["Jobs applied", perf.jobs_applied],
+                ["Leads tracked", perf.leads_total],
+                ["Leads won", perf.leads_won],
+                ["Council decisions", perf.council_decisions],
+              ] as [string, number][]
+            ).map(([label, value]) => (
+              <div key={label} className="rounded-lg border border-edge/60 bg-panel-2/40 px-3 py-2 text-center">
+                <div className="font-mono text-lg font-semibold text-hud-violet">{value}</div>
+                <div className="text-[9px] uppercase tracking-wide text-slate-500">{label}</div>
+              </div>
+            ))}
+          </div>
+          <div className="px-3 pb-3 text-[10px] text-slate-600">
+            Time-saved is an estimate (~30min per deliverable, 15min per post, 20min per application,
+            2min per Telegram command) — real output counts, honest math.
+          </div>
+        </section>
+      )}
     </div>
   );
 }
