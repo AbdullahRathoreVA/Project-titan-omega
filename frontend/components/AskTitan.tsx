@@ -42,6 +42,8 @@ export function AskTitan() {
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
   const [voiceOut, setVoiceOut] = useState(true);
+  // Language code whose TTS voice is missing on this device (honest notice).
+  const [voiceMissing, setVoiceMissing] = useState<string | null>(null);
   const recRef = useRef<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -71,7 +73,11 @@ export function AskTitan() {
         // 'spoken' is Hindi/Devanagari for Urdu so the Hindi voice can read it.
         const spoken = data?.spoken ?? answer;
         setTurns((t) => [...t, { role: "titan", text: answer }]);
-        if (voiceOut) void speakText(spoken, lang === "ur" ? "hi" : lang);
+        if (voiceOut) {
+          void speakText(spoken, lang === "ur" ? "hi" : lang).then((found) =>
+            setVoiceMissing(found ? null : lang),
+          );
+        }
       } catch {
         setTurns((t) => [
           ...t,
@@ -129,7 +135,10 @@ export function AskTitan() {
         <div className="flex items-center gap-1.5">
           <select
             value={lang}
-            onChange={(e) => setLang(e.target.value)}
+            onChange={(e) => {
+              setLang(e.target.value);
+              setVoiceMissing(null);
+            }}
             title="Titan speaks your language"
             className="rounded-lg border border-edge bg-panel-2/60 px-2 py-1 text-[11px] text-slate-300 focus:border-hud-violet/40 focus:outline-none"
           >
@@ -183,6 +192,15 @@ export function AskTitan() {
         )}
         <div ref={endRef} />
       </div>
+
+      {voiceMissing && (
+        <div className="border-t border-hud-amber/20 bg-hud-amber/5 px-3 py-2 text-[10px] leading-relaxed text-hud-amber">
+          No {LANGS.find(([c]) => c === voiceMissing)?.[1] ?? voiceMissing} voice is installed in this
+          browser, so the answer is text-only. Fix: open Titan in <span className="font-semibold">Microsoft Edge</span>{" "}
+          (natural voices for ALL languages, including اردو and العربية), or install the voice in
+          Windows Settings → Time &amp; Language → Speech.
+        </div>
+      )}
 
       <div className="flex items-center gap-2 border-t border-edge/60 p-3">
         <button

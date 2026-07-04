@@ -61,19 +61,45 @@ export async function loadVoices(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
+// Voice-name hints — some engines label voices by language NAME, not tag.
+const NAME_HINTS: Record<string, RegExp> = {
+  en: /english/i,
+  ur: /urdu/i,
+  hi: /hindi|हिन्दी/i,
+  ar: /arab|العربية/i,
+  es: /spanish|español/i,
+  fr: /french|français/i,
+  de: /german|deutsch/i,
+  zh: /chinese|mandarin|中文|普通话/i,
+  ja: /japanese|日本語/i,
+  tr: /turkish|türk/i,
+  pt: /portug/i,
+  ru: /russian|русский/i,
+};
+
 export function pickVoice(
   voices: SpeechSynthesisVoice[],
   lang: SpeakLang,
 ): SpeechSynthesisVoice | null {
-  if (lang === "ur") {
-    // Urdu first, then Hindi (same phonetics, widely available).
+  const code = lang.toLowerCase();
+  const byTag = (v: SpeechSynthesisVoice) =>
+    v.lang.toLowerCase().replace("_", "-").split("-")[0] === code;
+  const hint = NAME_HINTS[code];
+  const byName = (v: SpeechSynthesisVoice) => (hint ? hint.test(v.name) : false);
+
+  if (code === "ur") {
+    // Urdu first, then Hindi (same phonetics, far more widely installed).
     return (
-      voices.find((v) => v.lang.startsWith("ur") || v.name.toLowerCase().includes("urdu")) ??
-      voices.find((v) => v.lang.startsWith("hi") || v.name.toLowerCase().includes("hindi")) ??
+      voices.find((v) => byTag(v) || byName(v)) ??
+      voices.find(
+        (v) => v.lang.toLowerCase().startsWith("hi") || /hindi/i.test(v.name),
+      ) ??
       null
     );
   }
-  return voices.find((v) => v.lang.toLowerCase().startsWith(lang.toLowerCase())) ?? null;
+  // Prefer non-local (higher-quality online) voices when several match.
+  const matches = voices.filter((v) => byTag(v) || byName(v));
+  return matches.find((v) => !v.localService) ?? matches[0] ?? null;
 }
 
 // Chrome silently stops long utterances after ~15s (a long-standing bug), so we
@@ -114,16 +140,17 @@ export async function speakText(
   const synth = window.speechSynthesis;
   const voices = await loadVoices();
   synth.cancel();
+  // Chrome race: speak() immediately after cancel() gets silently swallowed.
+  await new Promise((r) => setTimeout(r, 90));
 
   const voice = pickVoice(voices, lang);
   const chunks = chunkText(text);
 
-  // Keep-alive: nudge the engine so Chrome doesn't stall mid-briefing.
+  // Keep-alive: resume() only. NEVER pause() here — Chrome kills its online
+  // (Google) voices on pause, which is exactly how non-English speech died.
   const keepAlive = setInterval(() => {
     try {
-      if (!synth.speaking) return;
-      synth.pause();
-      synth.resume();
+      if (synth.speaking) synth.resume();
     } catch {
       /* no-op */
     }
