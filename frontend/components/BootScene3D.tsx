@@ -1,7 +1,7 @@
 "use client";
 
 // Boot sequence 3D scene: thousands of glowing particles fly in from a chaos
-// sphere and assemble into "TITAN Ω / HELLO ABDULLAH BOSS", then the camera
+// sphere and assemble into "TITAN Ω / HELLO ABDULLAH", then the camera
 // flies straight through the text into the dashboard. Text pixels are sampled
 // from an offscreen canvas so the letters literally form from light.
 
@@ -26,7 +26,7 @@ function sampleTextPoints(): Float32Array {
   g.font = "bold 96px 'Segoe UI', monospace";
   g.fillText("TITAN Ω", W / 2, 78);
   g.font = "bold 44px 'Segoe UI', monospace";
-  g.fillText("HELLO ABDULLAH BOSS", W / 2, 195);
+  g.fillText("HELLO ABDULLAH", W / 2, 195);
   const data = g.getImageData(0, 0, W, H).data;
   const pts: number[] = [];
   for (let y = 0; y < H; y += 3) {

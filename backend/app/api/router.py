@@ -159,13 +159,13 @@ def agent_chat(agent_id: str, req: AgentChatRequest) -> dict:
             "Abdullah's autonomous company, Titan Omega. Speak in character as this "
             f"agent. Your mission: {s.mission}. Right now you are working on: "
             f"{rt.current_task or 'advancing your division objectives'}. Address the "
-            "founder as 'Boss'. Be concrete and specific about what YOU (this role) "
+            "founder as 'Abdullah'. Be concrete and specific about what YOU (this role) "
             f"are doing or will do. Keep it 2-4 sentences. Reply in {lang_name}."
         ),
         prompt=req.message,
         max_tokens=400,
     ) or (
-        f"Boss, {s.name} here. I'm on it — {rt.current_task or 'advancing my objectives'}. "
+        f"Abdullah, {s.name} here. I'm on it — {rt.current_task or 'advancing my objectives'}. "
         "Set an LLM key (Groq/Hermes, free) to unlock my full conversational replies."
     )
 
@@ -462,7 +462,7 @@ def log_revenue(entry: RevenueLog) -> dict:
     STORE.emit(
         "revenue-tracker", "revenue",
         f"💰 REAL ORDER: +${entry.amount:.2f} from {source} — {label}. "
-        f"Total earned now ${m['mrr']:.2f}. Abdullah Boss, the empire is EARNING!",
+        f"Total earned now ${m['mrr']:.2f}. Abdullah, the empire is EARNING!",
         "success",
     )
     persistence.save(STORE)
@@ -661,8 +661,8 @@ def voice_report() -> dict:
         earn_ur = "ابھی تک کوئی آمدنی شروع نہیں ہوئی، لیکن ایجنٹس پہلا آرڈر لانے پر کام کر رہے ہیں۔"
         earn_hi = "अभी तक कोई आमदनी शुरू नहीं हुई, लेकिन एजेंट्स पहला ऑर्डर लाने पर काम कर रहे हैं।"
     else:
-        earn_ur = f"اب تک آپ نے کل {c['mrr']:.0f} ڈالر کمائے ہیں۔ مبارک ہو باس!"
-        earn_hi = f"अब तक आपने कुल {c['mrr']:.0f} डॉलर कमाए हैं। मुबारक हो बॉस!"
+        earn_ur = f"اب تک آپ نے کل {c['mrr']:.0f} ڈالر کمائے ہیں۔ مبارک ہو عبداللہ!"
+        earn_hi = f"अब तक आपने कुल {c['mrr']:.0f} डॉलर कमाए हैं। मुबारक हो अब्दुल्लाह!"
 
     if c["cm_users"] > 0 or c["cm_active"] > 0:
         cm_ur = f"آپ کے کیئرئیر مائنڈ پر اس وقت {c['cm_users']} یوزرز ہیں، جن میں سے {c['cm_active']} فعال ہیں۔ "
@@ -672,16 +672,16 @@ def voice_report() -> dict:
         cm_hi = "आपके करियर माइंड पर अभी नए यूज़र्स का इंतज़ार है, मार्केटिंग एजेंट्स इस पर काम कर रहे हैं। "
 
     urdu_text = (
-        f"اسلام و علیکم عبداللہ باس! یہ رہی آپ کی تازہ ترین رپورٹ۔ "
+        f"اسلام و علیکم عبداللہ! یہ رہی آپ کی تازہ ترین رپورٹ۔ "
         f"{cm_ur}{earn_ur} "
         f"اس وقت آپ کے {c['active_agents']} ڈیجیٹل ملازمین کام کر رہے ہیں، کل {c['total_agents']} میں سے۔ "
-        f"{c['open_opportunities']} نئے کاروباری مواقع دستیاب ہیں۔ باس، آگے بڑھتے رہیں!"
+        f"{c['open_opportunities']} نئے کاروباری مواقع دستیاب ہیں۔ عبداللہ، آگے بڑھتے رہیں!"
     )
     hindi_text = (
-        f"अस्सलाम वालेकुम अब्दुल्लाह बॉस! ये रही आपकी ताज़ा तरीन रिपोर्ट। "
+        f"अस्सलाम वालेकुम अब्दुल्लाह! ये रही आपकी ताज़ा तरीन रिपोर्ट। "
         f"{cm_hi}{earn_hi} "
         f"इस वक्त आपके {c['active_agents']} डिजिटल मुलाज़िमीन काम कर रहे हैं, कुल {c['total_agents']} में से। "
-        f"{c['open_opportunities']} नए कारोबारी मौके मौजूद हैं। बॉस, आगे बढ़ते रहिए!"
+        f"{c['open_opportunities']} नए कारोबारी मौके मौजूद हैं। अब्दुल्लाह, आगे बढ़ते रहिए!"
     )
     return {"urdu": urdu_text, "hindi": hindi_text, **c}
 
@@ -721,7 +721,7 @@ def assistant(req: AssistantRequest) -> dict:
         system=(
             "You are Titan, the AI chief-of-staff for Abdullah's autonomous business "
             "empire (Career Mind AI student platform + Fiverr AI gigs). "
-            f"Always address the founder as 'Abdullah Boss'. {instructions} "
+            f"Always address the founder simply as 'Abdullah'. {instructions} "
             "Be concise (2-4 sentences), concrete, and motivating. Use the live data below "
             "when relevant.\n\n" + context
         ),
@@ -739,16 +739,16 @@ def assistant(req: AssistantRequest) -> dict:
     if not raw:
         if is_urdu:
             answer = (
-                f"عبداللہ باس، اس وقت آپ نے کل {c['mrr']:.0f} ڈالر کمائے ہیں اور "
+                f"عبداللہ، اس وقت آپ نے کل {c['mrr']:.0f} ڈالر کمائے ہیں اور "
                 f"{c['active_agents']} ایجنٹس کام کر رہے ہیں۔"
             )
             spoken = (
-                f"अब्दुल्लाह बॉस, इस वक्त आपने कुल {c['mrr']:.0f} डॉलर कमाए हैं और "
+                f"अब्दुल्लाह, इस वक्त आपने कुल {c['mrr']:.0f} डॉलर कमाए हैं और "
                 f"{c['active_agents']} एजेंट्स काम कर रहे हैं।"
             )
         else:
             answer = (
-                f"Abdullah Boss, you've earned ${c['mrr']:.0f} so far and "
+                f"Abdullah, you've earned ${c['mrr']:.0f} so far and "
                 f"{c['active_agents']} agents are working. Set GROQ_API_KEY in your Space "
                 f"secrets to unlock full conversational AI answers (free, no card)."
             )

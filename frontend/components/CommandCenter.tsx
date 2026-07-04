@@ -92,10 +92,10 @@ export function CommandCenter() {
         `${s.active_agents} of ${s.total_agents} agents are working. ` +
           `${s.open_opportunities} opportunities on the radar. ` +
           (rev > 0 ? `Revenue at ${rev} dollars. ` : `First revenue incoming. `) +
-          `Let's build, Boss.`,
+          `Let's build, Abdullah.`,
       );
     } else {
-      speak("Dashboard ready. Let's build, Boss.");
+      speak("Dashboard ready. Let's build, Abdullah.");
     }
   }, []);
 
@@ -237,7 +237,7 @@ export function CommandCenter() {
 
       {mrr === 0 && (
         <div className="mt-3 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-4 py-3 text-xs text-hud-amber">
-          <span className="font-semibold">Abdullah Boss — empire is live.</span>{" "}
+          <span className="font-semibold">Abdullah — your empire is live.</span>{" "}
           All numbers are real and start at $0. Got an order? Hit{" "}
           <span className="font-semibold">Log order</span> in the Revenue Ledger — your dashboard shows the truth.
         </div>

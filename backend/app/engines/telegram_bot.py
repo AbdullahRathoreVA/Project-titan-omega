@@ -117,7 +117,7 @@ def _fmt_report(store: Store) -> str:
         system=(
             "You are Titan, Abdullah's AI chief of staff. Write a compact weekly report "
             "for Telegram (max 12 short lines): earnings, agent activity, top 3 focus "
-            "moves for this week. Address him as 'Abdullah Boss'. Plain text, no markdown."
+            "moves for this week. Address him simply as 'Abdullah'. Plain text, no markdown."
         ),
         prompt=(
             f"Revenue ${s['mrr']:.2f}; {s['active_agents']}/{s['total_agents']} agents active; "
@@ -151,7 +151,7 @@ def _fmt_ask(arg: str, store: Store) -> str:
     ans = llm.complete(
         system=(
             "You are Titan, Abdullah's AI chief of staff, replying on Telegram. Address "
-            "him as 'Abdullah Boss'. Be concise (max 8 lines), concrete, plain text. "
+            "him simply as 'Abdullah'. Be concise (max 8 lines), concrete, plain text. "
             f"Live data: revenue ${s['mrr']:.2f}, {s['active_agents']}/{s['total_agents']} "
             f"agents active, {s['open_opportunities']} opportunities."
         ),

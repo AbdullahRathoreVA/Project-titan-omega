@@ -48,8 +48,8 @@ export function AskTitan() {
         const answer =
           data?.answer ??
           (lang === "ur"
-            ? "معذرت باس، سرور سے جواب نہیں ملا۔ دوبارہ کوشش کریں۔"
-            : "Sorry Boss, no answer from the core. Please try again.");
+            ? "معذرت عبداللہ، سرور سے جواب نہیں ملا۔ دوبارہ کوشش کریں۔"
+            : "Sorry Abdullah, no answer from the core. Please try again.");
         // 'spoken' is Hindi/Devanagari for Urdu so the Hindi voice can read it.
         const spoken = data?.spoken ?? answer;
         setTurns((t) => [...t, { role: "titan", text: answer }]);
@@ -106,7 +106,7 @@ export function AskTitan() {
       <header className="panel-header">
         <div className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-hud-violet" strokeWidth={1.6} />
-          <h2 className="text-sm font-medium text-slate-200">Ask Titan — عبداللہ باس</h2>
+          <h2 className="text-sm font-medium text-slate-200">Ask Titan — عبداللہ</h2>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -139,8 +139,8 @@ export function AskTitan() {
         {turns.length === 0 && (
           <p className="px-1 py-6 text-center text-xs text-slate-500">
             {lang === "ur"
-              ? "باس، کوئی بھی سوال پوचھیں — آواز یا ٹیکسٹ سے۔"
-              : "Boss, ask me anything — by voice or text."}
+              ? "عبداللہ، کوئی بھی سوال پوचھیں — آواز یا ٹیکسٹ سے۔"
+              : "Abdullah, ask me anything — by voice or text."}
           </p>
         )}
         {turns.map((t, i) => (

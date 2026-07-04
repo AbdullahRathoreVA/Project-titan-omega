@@ -104,7 +104,7 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
           </div>
           <p className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-500">
             <TrendingUp className="h-3 w-3 text-hud-emerald" />
-            {total === 0 ? "Log your first order — it's coming, Boss!" : "Every dollar counts toward the billion."}
+            {total === 0 ? "Log your first order — it's coming, Abdullah!" : "Every dollar counts toward the billion."}
           </p>
         </div>
         <button

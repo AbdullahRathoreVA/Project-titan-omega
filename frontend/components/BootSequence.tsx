@@ -45,7 +45,7 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
     if (started !== true) return;
     bootSound();
     const voice = setTimeout(
-      () => speak("Welcome back Abdullah Boss. Titan Founder A I is online. All systems operational."),
+      () => speak("Welcome back Abdullah. Titan Founder A I is online. All systems operational."),
       900,
     );
     const t = setTimeout(() => finish(false), BOOT_MS);

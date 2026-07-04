@@ -31,8 +31,8 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
       // Hindi (Devanagari) so the installed Hindi voice can actually read it.
       const hindiFallback =
         mrr === 0
-          ? `अस्सलाम वालेकुम अब्दुल्लाह बॉस! अभी तक कोई आमदनी नहीं हुई। ${active} एजेंट्स काम कर रहे हैं। आगे बढ़ते रहिए!`
-          : `अस्सलाम वालेकुम अब्दुल्लाह बॉस! अब तक आपने कुल ${mrr.toFixed(0)} डॉलर कमाए हैं। ${active} एजेंट्स काम कर रहे हैं, कुल ${total} में से। मुबारक हो बॉस!`;
+          ? `अस्सलाम वालेकुम अब्दुल्लाह! अभी तक कोई आमदनी नहीं हुई। ${active} एजेंट्स काम कर रहे हैं। आगे बढ़ते रहिए!`
+          : `अस्सलाम वालेकुम अब्दुल्लाह! अब तक आपने कुल ${mrr.toFixed(0)} डॉलर कमाए हैं। ${active} एजेंट्स काम कर रहे हैं, कुल ${total} में से। मुबारक हो अब्दुल्लाह!`;
 
       const hindiText = data?.hindi ?? hindiFallback;
 
@@ -56,7 +56,7 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
     <button
       onClick={speaking ? stop : speak}
       disabled={loading}
-      title={speaking ? "آواز بند کریں" : "اردو رپورٹ سنیں — عبداللہ باس"}
+      title={speaking ? "آواز بند کریں" : "اردو رپورٹ سنیں — عبداللہ"}
       className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${
         speaking
           ? "animate-pulse border-hud-amber/60 bg-hud-amber/10 text-hud-amber"
@@ -72,7 +72,7 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
       ) : (
         <Volume2 className="h-3.5 w-3.5" />
       )}
-      {speaking ? "رکیں ◼" : loading ? "لوڈ ہو رہا ہے…" : "🎙 اردو رپورٹ — باس"}
+      {speaking ? "رکیں ◼" : loading ? "لوڈ ہو رہا ہے…" : "🎙 اردو رپورٹ — عبداللہ"}
     </button>
   );
 }

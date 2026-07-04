@@ -513,7 +513,7 @@ def agent_act(req: ActRequest) -> dict:
         post = publisher.schedule(content, ["linkedin"], None, None, store=STORE)
         return _resp(
             "publish",
-            f'Done Boss — drafted & scheduled a post: "{content[:140]}". It publishes on the next '
+            f'Done, Abdullah — drafted & scheduled a post: "{content[:140]}". It publishes on the next '
             "cycle. Connect Make.com to push it live to your real socials.",
             "marketing-head",
             ["scheduled_post:" + str(post.get("id", ""))],
@@ -564,14 +564,14 @@ def agent_act(req: ActRequest) -> dict:
 
     ans = llm.complete(
         system=(
-            "You are Titan, Abdullah's AI chief of staff. Address him as 'Abdullah Boss'. "
+            "You are Titan, Abdullah's AI chief of staff. Address him simply as 'Abdullah'. "
             "Be concise and actionable. If he wants an action, tell him you can post, scan "
             "opportunities, generate reports, or draft outreach."
         ),
         prompt=text,
         max_tokens=400,
     ) or (
-        "Boss, I can post to socials, scan opportunities, generate reports, or draft outreach. "
+        "Abdullah, I can post to socials, scan opportunities, generate reports, or draft outreach. "
         "Tell me which and I'll do it."
     )
     return _resp("answer", ans, "executive-core", [])
