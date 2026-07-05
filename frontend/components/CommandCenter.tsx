@@ -54,6 +54,7 @@ import { CrmLite } from "./CrmLite";
 import { AICity } from "./AICity";
 import { BootSequence } from "./BootSequence";
 import { ProgressStrip } from "./ProgressStrip";
+import { Universe } from "./Universe";
 import { chime, speak, tap } from "@/lib/sound";
 
 // Global 3D backdrop — behind the whole app, never blocks clicks.
@@ -75,8 +76,10 @@ export function CommandCenter() {
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
   const [view, setView] = useState<
-    "dashboard" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm"
-  >("dashboard");
+    "universe" | "dashboard" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm"
+  >("universe");
+  // Increments whenever real feed activity arrives → fires comets in the Universe.
+  const [pulse, setPulse] = useState(0);
 
   // Cinematic boot: plays on EVERY open/reload (founder's preference) — the
   // dashboard loads underneath it, and SKIP is always available. When the boot
@@ -196,6 +199,7 @@ export function CommandCenter() {
       const seen = new Set(prev.map((e) => e.id));
       const fresh = frame.events.filter((e) => !seen.has(e.id));
       if (!fresh.length) return prev;
+      setPulse((p) => p + 1); // real activity → light packets fire in the Universe
       return [...fresh.reverse(), ...prev].slice(0, 60);
     });
   }, [frame]);
@@ -282,6 +286,7 @@ export function CommandCenter() {
           {/* View switcher */}
           <div className="flex gap-2">
             {([
+              ["universe", "Universe"],
               ["dashboard", "Dashboard"],
               ["city", "AI City"],
               ["warroom", "War Room"],
@@ -316,6 +321,18 @@ export function CommandCenter() {
             transition={{ duration: 0.32, ease: "easeOut" }}
             className="space-y-4"
           >
+          {view === "universe" && (
+            <Universe
+              status={liveStatus}
+              divisions={divisions}
+              agents={agents}
+              posts={posts}
+              intensity={intensity}
+              pulse={pulse}
+              onNavigate={(v) => setView(v as typeof view)}
+            />
+          )}
+
           {view === "city" && (
             <AICity divisions={divisions} agents={agents} intensity={intensity} />
           )}
