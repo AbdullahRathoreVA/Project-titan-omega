@@ -17,4 +17,13 @@ jobs:
       - name: Push to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push --force https://careermind2026:$HF_TOKEN@huggingface.co/spaces/careermind2026/project-titan-omega main
+        # HF rejects plain-git binaries (Xet policy), so deploy a single clean
+        # commit with showcase media stripped — the Space never needs docs/media.
+        run: |
+          rm -rf docs/media
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git checkout --orphan hf-deploy
+          git add -A
+          git commit -m "Deploy $GITHUB_SHA"
+          git push --force https://careermind2026:$HF_TOKEN@huggingface.co/spaces/careermind2026/project-titan-omega hf-deploy:main
