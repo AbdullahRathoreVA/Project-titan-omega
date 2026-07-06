@@ -128,19 +128,26 @@ def _complete_groq(system: str, prompt: str, max_tokens: int) -> Optional[str]:
     # this still fails and the chain moves on to Gemini.
     import httpx
 
+    payload = {
+        "model": _GROQ_MODEL,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    if _GROQ_MODEL.startswith("openai/gpt-oss"):
+        # gpt-oss is a reasoning model: hidden reasoning consumes completion
+        # tokens BEFORE any visible text, so a tiny budget (the health probe's
+        # max_tokens=10) yields content="" — keep effort low and floor the cap.
+        payload["reasoning_effort"] = "low"
+        payload["max_tokens"] = max(max_tokens, 256)
     resp = httpx.post(
         "https://api.groq.com/openai/v1/chat/completions",
         # .strip() everywhere a key is used: a newline pasted into an HF secret
         # becomes an illegal HTTP header and kills the provider silently.
         headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY', '').strip()}"},
-        json={
-            "model": _GROQ_MODEL,
-            "max_tokens": max_tokens,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-        },
+        json=payload,
         timeout=20.0,
         trust_env=True,
     )
@@ -203,7 +210,13 @@ def _complete_hermes(system: str, prompt: str, max_tokens: int) -> Optional[str]
                     {"role": "user",   "content": prompt},
                 ],
             )
-            text = (resp.choices[0].message.content or "").strip()
+            # OpenRouter surfaces provider errors as a 200 with choices=None —
+            # subscripting that raised TypeError and looked like a code crash.
+            choices = getattr(resp, "choices", None)
+            if not choices or choices[0].message is None:
+                last_exc = RuntimeError(f"{model}: provider returned no choices")
+                continue
+            text = (choices[0].message.content or "").strip()
             if text:
                 return text
         except Exception as exc:  # rate-limited/retired — try the next one

@@ -467,7 +467,10 @@ def doctor() -> dict:
 def llm_health() -> dict:
     """Run a tiny real completion and report what actually happened — so a model
     deprecation or bad key is visible instead of silently falling back."""
-    sample = llm.complete(system="Reply with exactly: OK", prompt="Say OK", max_tokens=10)
+    # 128, not 10: reasoning models (gpt-oss, many :free OpenRouter ids) spend
+    # completion tokens on hidden reasoning first — a 10-token budget always
+    # returns empty content and made healthy providers look dead.
+    sample = llm.complete(system="Reply with exactly: OK", prompt="Say OK", max_tokens=128)
     return {
         "provider": llm.provider(),
         "model": llm.active_model(),
