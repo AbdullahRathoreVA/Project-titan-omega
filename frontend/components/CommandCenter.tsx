@@ -55,7 +55,7 @@ import { AICity } from "./AICity";
 import { BootSequence } from "./BootSequence";
 import { ProgressStrip } from "./ProgressStrip";
 import { Universe } from "./Universe";
-import { chime, speak, tap } from "@/lib/sound";
+import { chime, speak, tap, unlockAudio } from "@/lib/sound";
 
 // Global 3D backdrop — behind the whole app, never blocks clicks.
 const Background3D = dynamic(() => import("./Background3D"), { ssr: false });
@@ -89,6 +89,10 @@ export function CommandCenter() {
   const finishBoot = useCallback(() => {
     setBoot("done");
     chime();
+    const guest =
+      typeof window !== "undefined" &&
+      (window as unknown as { __TITAN_GUEST?: boolean }).__TITAN_GUEST === true;
+    const closer = guest ? "Explore the command center." : "Let's build, Abdullah.";
     const s = statusRef.current;
     if (s) {
       const rev = Math.round(s.mrr);
@@ -96,11 +100,23 @@ export function CommandCenter() {
         `${s.active_agents} of ${s.total_agents} agents are working. ` +
           `${s.open_opportunities} opportunities on the radar. ` +
           (rev > 0 ? `Revenue at ${rev} dollars. ` : `First revenue incoming. `) +
-          `Let's build, Abdullah.`,
+          closer,
       );
     } else {
-      speak("Dashboard ready. Let's build, Abdullah.");
+      speak(guest ? `Titan Omega ready. ${closer}` : `Dashboard ready. ${closer}`);
     }
+  }, []);
+
+  // Belt-and-suspenders: unlock audio on the first interaction anywhere, so the
+  // voice assistant works even if the boot was skipped without a tap.
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
   }, []);
 
   // Live SSE stream — makes the dashboard move the instant it opens.
@@ -233,11 +249,14 @@ export function CommandCenter() {
   return (
     <main className="mx-auto max-w-[1600px] px-3 py-4 sm:px-5">
       {boot === "boot" && (
-        <div className="fixed inset-0 z-[300] bg-[#020409]">
+        <div className="fixed inset-0 z-[900] bg-[#020409]">
           <BootSequence onDone={finishBoot} />
         </div>
       )}
-      <Background3D />
+      {/* Only mount the 3D backdrop after boot — during boot a fixed WebGL
+          canvas can bleed through the overlay on mobile, showing the universe
+          behind the intro. Mounting it later also keeps the boot smooth. */}
+      {boot === "done" && <Background3D />}
       <StatusBar status={liveStatus} online={online || live} intel={intel} />
       <ProgressStrip />
 

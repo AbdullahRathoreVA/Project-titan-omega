@@ -2,23 +2,35 @@
 
 // Cinematic boot overlay: black screen → startup sound + AI voice → particle
 // text assembly → camera fly-through → dashboard reveal. Plays on every open;
-// always skippable. On touch devices we gate behind a TAP — phones refuse to
-// play audio/voice until the user interacts, so the tap unlocks the sound.
+// always skippable.
+//
+// Audio policy: EVERY browser (desktop Chrome/Safari included, not just phones)
+// blocks sound and speech until the user interacts. So we gate the whole boot
+// behind a single tap/click and fire the sound + voice INSIDE that gesture —
+// that is the only thing that makes Titan speak reliably on Android, iPhone,
+// Mac and desktop alike.
 
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
-import { bootSound, speak } from "@/lib/sound";
-import { isCoarsePointer } from "@/lib/device";
+import { bootSound, speak, unlockAudio } from "@/lib/sound";
 
 const Scene = dynamic(() => import("./BootScene3D"), { ssr: false, loading: () => null });
 
 const BOOT_MS = 7200;
 
+function isGuest(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    (window as unknown as { __TITAN_GUEST?: boolean }).__TITAN_GUEST === true
+  );
+}
+
 export function BootSequence({ onDone }: { onDone: () => void }) {
   const [visible, setVisible] = useState(true);
-  // null = deciding, false = waiting for tap (touch devices), true = running
-  const [started, setStarted] = useState<boolean | null>(null);
+  // Wait for a tap/click on ALL devices — the only reliable cross-device
+  // audio + voice unlock. false = waiting for the gesture, true = running.
+  const [started, setStarted] = useState(false);
   const done = useRef(false);
 
   const finish = (skipped = false) => {
@@ -37,22 +49,24 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
     setTimeout(onDone, 650); // let the exit fade play
   };
 
-  useEffect(() => {
-    setStarted(isCoarsePointer() ? false : true);
-  }, []);
+  const begin = () => {
+    if (started) return;
+    // All three of these MUST run synchronously inside the click/tap handler,
+    // otherwise iOS/Android/Safari silently refuse the audio and the voice.
+    unlockAudio();
+    bootSound();
+    speak(
+      isGuest()
+        ? "Welcome to Titan Omega. Autonomous A I business system, online. All systems operational."
+        : "Welcome back Abdullah. Titan Founder A I is online. All systems operational.",
+    );
+    setStarted(true);
+  };
 
   useEffect(() => {
-    if (started !== true) return;
-    bootSound();
-    const voice = setTimeout(
-      () => speak("Welcome back Abdullah. Titan Founder A I is online. All systems operational."),
-      900,
-    );
+    if (!started) return;
     const t = setTimeout(() => finish(false), BOOT_MS);
-    return () => {
-      clearTimeout(t);
-      clearTimeout(voice);
-    };
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [started]);
 
@@ -63,17 +77,20 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
           initial={{ opacity: 1 }}
           exit={{ opacity: 0, scale: 1.06 }}
           transition={{ duration: 0.65, ease: "easeInOut" }}
-          className="fixed inset-0 z-[300] bg-[#020409]"
+          className="fixed inset-0 z-[900] bg-[#020409]"
+          // Force this overlay onto its own compositor layer so a fixed WebGL
+          // backdrop can't bleed through it on mobile (iOS/Android quirk).
+          style={{ transform: "translateZ(0)" }}
         >
-          {started === true && (
+          {started && (
             <div className="absolute inset-0">
               <Scene />
             </div>
           )}
 
-          {started === false && (
+          {!started && (
             <button
-              onClick={() => setStarted(true)}
+              onClick={begin}
               className="absolute inset-0 flex flex-col items-center justify-center gap-4"
             >
               <span className="h-16 w-16 animate-pulseGlow rounded-full border border-hud-cyan/60 shadow-glow" />
@@ -81,12 +98,12 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
                 TAP TO INITIALIZE TITAN
               </span>
               <span className="font-mono text-[9px] tracking-widest text-slate-600">
-                sound + voice unlock on tap
+                turns on sound + voice · works on every device
               </span>
             </button>
           )}
 
-          {started === true && (
+          {started && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -101,7 +118,7 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
             onClick={() => finish(true)}
             className="absolute bottom-5 right-6 rounded-lg border border-edge bg-panel/60 px-3 py-1.5 font-mono text-[10px] tracking-widest text-slate-500 transition-colors hover:border-hud-cyan/40 hover:text-hud-cyan"
           >
-            SKIP ▸
+            {started ? "SKIP ▸" : "ENTER SILENTLY ▸"}
           </button>
         </motion.div>
       )}
