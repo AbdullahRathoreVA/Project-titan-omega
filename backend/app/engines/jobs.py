@@ -16,15 +16,17 @@ from . import research
 
 # Abdullah's REAL, verifiable profile — used for scoring + proposals. No lies.
 PROFILE = (
-    "Abdullah Rathore — AI-augmented full-stack developer (Pakistan, remote). "
-    "Shipped products: Career Mind AI (live student career-guidance platform: "
-    "FastAPI + Next.js + multi-LLM, deployed on Hugging Face Spaces), Project "
-    "Titan Omega (autonomous business dashboard: FastAPI, Next.js, react-three-"
-    "fiber 3D, SSE realtime, Telegram bot, multi-provider LLM layer), and an AI "
-    "Job-Search Toolkit digital product sold on Fiverr. Skills: Python/FastAPI, "
+    "Muhammad Abdullah Rathore — AI Integration & Automation Developer "
+    "(Pakistan, remote). Shipped products: Career Mind AI (live student "
+    "career-guidance platform: FastAPI + Next.js + multi-LLM, deployed on "
+    "Hugging Face Spaces), Project Titan Omega (autonomous business dashboard: "
+    "FastAPI, Next.js, react-three-fiber 3D, SSE realtime, Telegram bot, "
+    "multi-provider LLM layer), and an AI Job-Search Toolkit digital product "
+    "sold on Fiverr. Skills: Python/FastAPI, SQLAlchemy, Streamlit, "
     "Next.js/React/TypeScript/Tailwind, LLM APIs (Anthropic/Groq/OpenRouter), "
-    "automation (Make.com), Docker deploys, Git/GitHub. Builds fast with AI "
-    "pair-programming tools. English + Urdu."
+    "local LLMs with Ollama, OCR/document-processing pipelines, workflow "
+    "automation (n8n, Make.com), Docker deploys, Git/GitHub. Builds fast with "
+    "AI pair-programming tools. English + Urdu."
 )
 
 _DEFAULT_QUERIES = [
