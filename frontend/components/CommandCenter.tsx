@@ -55,7 +55,7 @@ import { AICity } from "./AICity";
 import { BootSequence } from "./BootSequence";
 import { ProgressStrip } from "./ProgressStrip";
 import { Universe } from "./Universe";
-import { chime, speak, tap, unlockAudio } from "@/lib/sound";
+import { chime, speak, speakPremium, tap, unlockAudio } from "@/lib/sound";
 
 // Global 3D backdrop — behind the whole app, never blocks clicks.
 const Background3D = dynamic(() => import("./Background3D"), { ssr: false });
@@ -94,17 +94,17 @@ export function CommandCenter() {
       (window as unknown as { __TITAN_GUEST?: boolean }).__TITAN_GUEST === true;
     const closer = guest ? "Explore the command center." : "Let's build, Abdullah.";
     const s = statusRef.current;
-    if (s) {
-      const rev = Math.round(s.mrr);
-      speak(
-        `${s.active_agents} of ${s.total_agents} agents are working. ` +
-          `${s.open_opportunities} opportunities on the radar. ` +
-          (rev > 0 ? `Revenue at ${rev} dollars. ` : `First revenue incoming. `) +
-          closer,
-      );
-    } else {
-      speak(guest ? `Titan Omega ready. ${closer}` : `Dashboard ready. ${closer}`);
-    }
+    const line = s
+      ? `${s.active_agents} of ${s.total_agents} agents are working. ` +
+        `${s.open_opportunities} opportunities on the radar. ` +
+        (Math.round(s.mrr) > 0 ? `Revenue at ${Math.round(s.mrr)} dollars. ` : `First revenue incoming. `) +
+        closer
+      : guest
+        ? `Titan Omega ready. ${closer}`
+        : `Dashboard ready. ${closer}`;
+    // Premium ElevenLabs voice for the founder (if a key is set), else the free
+    // browser voice — audio is already unlocked by the boot tap.
+    void speakPremium(line, () => speak(line));
   }, []);
 
   // Belt-and-suspenders: unlock audio on the first interaction anywhere, so the

@@ -1,7 +1,27 @@
 // Futuristic UI sounds, synthesized live with WebAudio — no audio files, no
 // bundle cost. Everything is wrapped in try/catch: sound must never break UI.
 
+import { authHeaders } from "@/lib/api";
+
 let ctx: AudioContext | null = null;
+
+// Broadcast speaking state so the HoloFounder / mouth animations can react.
+function emitSpeech(speaking: boolean) {
+  try {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("titan-speech", { detail: { speaking } }));
+    }
+  } catch {
+    /* silent */
+  }
+}
+
+// One reusable <audio> element for premium (ElevenLabs) playback. Reusing a
+// single element that was unlocked inside a gesture is what lets iOS replay
+// audio later. A tiny silent WAV primes it.
+let mediaEl: HTMLAudioElement | null = null;
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=";
 
 function ac(): AudioContext | null {
   if (typeof window === "undefined") return null;
@@ -44,6 +64,15 @@ export function unlockAudio(): void {
       primer.volume = 0;
       ss.speak(primer);
       ss.getVoices(); // warm the (async) voice list
+    }
+    // Prime the media element for premium (ElevenLabs) playback inside the gesture.
+    try {
+      if (!mediaEl) mediaEl = new Audio();
+      mediaEl.src = SILENT_WAV;
+      const p = mediaEl.play();
+      if (p && typeof p.then === "function") p.then(() => mediaEl?.pause()).catch(() => {});
+    } catch {
+      /* silent */
     }
     audioUnlocked = true;
   } catch {
@@ -148,21 +177,14 @@ export function speak(text: string) {
     } catch {
       /* silent */
     }
-    const emit = (speaking: boolean) => {
-      try {
-        window.dispatchEvent(new CustomEvent("titan-speech", { detail: { speaking } }));
-      } catch {
-        /* silent */
-      }
-    };
     const parts = text.split(/(?<=[.!?])\s+/).filter(Boolean);
     const chunks = parts.length ? parts : [text];
     const voice = pickVoice(ss);
-    emit(true);
+    emitSpeech(true);
     let finished = 0;
     const done = () => {
       finished += 1;
-      if (finished >= chunks.length) emit(false);
+      if (finished >= chunks.length) emitSpeech(false);
     };
     for (const chunk of chunks) {
       const u = new SpeechSynthesisUtterance(chunk);
@@ -180,4 +202,47 @@ export function speak(text: string) {
   } catch {
     /* silent */
   }
+}
+
+/** Premium voice via the backend ElevenLabs proxy (founder-only + $0-safe). If
+ * the backend returns audio (200), play it through the primed media element;
+ * on ANY miss (204/403/no key/guest/error) run `fallback()` — the free browser
+ * voice — so speech NEVER goes silent. Returns when playback (or fallback) starts. */
+export async function speakPremium(text: string, fallback: () => void): Promise<void> {
+  let played = false;
+  try {
+    const res = await fetch("/api/tts", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ text }),
+    });
+    if (res.status === 200) {
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > 200) {
+        played = await new Promise<boolean>((resolve) => {
+          try {
+            const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+            const el = mediaEl ?? (mediaEl = new Audio());
+            el.src = url;
+            el.volume = 0.9;
+            emitSpeech(true);
+            const finish = (ok: boolean) => {
+              emitSpeech(false);
+              URL.revokeObjectURL(url);
+              resolve(ok);
+            };
+            el.onended = () => finish(true);
+            el.onerror = () => finish(false);
+            const p = el.play();
+            if (p && typeof p.then === "function") p.catch(() => finish(false));
+          } catch {
+            resolve(false);
+          }
+        });
+      }
+    }
+  } catch {
+    /* fall through to browser voice */
+  }
+  if (!played) fallback();
 }

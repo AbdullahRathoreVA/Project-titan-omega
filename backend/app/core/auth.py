@@ -31,6 +31,12 @@ def require_auth() -> bool:
     return os.getenv("TITAN_REQUIRE_AUTH") == "1"
 
 
+def guest_mode() -> bool:
+    # Production is never a guest deploy; present so shared modules (e.g. the
+    # premium-TTS route) can check it uniformly. Only true if explicitly set.
+    return os.getenv("TITAN_GUEST_MODE") == "1"
+
+
 def using_demo_credentials() -> bool:
     return (os.getenv("TITAN_USERNAME"), os.getenv("TITAN_PASSWORD")) == (None, None)
 

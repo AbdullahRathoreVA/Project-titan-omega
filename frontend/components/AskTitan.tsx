@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Mic, MicOff, Send, Sparkles, Volume2 } from "lucide-react";
 import { langTag, speakText } from "@/lib/voice";
+import { speakPremium } from "@/lib/sound";
 import { HoloFounder } from "./HoloFounder";
 
 // Universal voice: Titan answers and SPEAKS in any of these languages.
@@ -74,9 +75,17 @@ export function AskTitan() {
         const spoken = data?.spoken ?? answer;
         setTurns((t) => [...t, { role: "titan", text: answer }]);
         if (voiceOut) {
-          void speakText(spoken, lang === "ur" ? "hi" : lang).then((found) =>
-            setVoiceMissing(found ? null : lang),
-          );
+          if (lang === "en") {
+            // Founder gets the premium ElevenLabs voice for English (if a key is
+            // set); everyone else, and every other language, uses the browser voice.
+            void speakPremium(answer, () => {
+              void speakText(answer, "en").then((found) => setVoiceMissing(found ? null : "en"));
+            });
+          } else {
+            void speakText(spoken, lang === "ur" ? "hi" : lang).then((found) =>
+              setVoiceMissing(found ? null : lang),
+            );
+          }
         }
       } catch {
         setTurns((t) => [

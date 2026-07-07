@@ -27,6 +27,7 @@ from .api.comms import router as comms_router
 from .api.finance import router as finance_router
 from .api.growth import router as growth_router
 from .api.router import router
+from .api.tts import router as tts_router
 from .connectors import careermind, github
 from .core import auth, executive
 from .engines import opportunity, publisher
@@ -159,6 +160,7 @@ app.include_router(actions_router)
 app.include_router(growth_router)
 app.include_router(comms_router)
 app.include_router(finance_router)
+app.include_router(tts_router)
 
 
 @app.get("/health", tags=["system"])
