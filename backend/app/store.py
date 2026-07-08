@@ -26,6 +26,10 @@ class AgentRuntime:
     success_rate: float = 0.0
     impact_score: float = 0.0
     last_active: Optional[datetime] = None
+    # Living-agent workflow position: which stage of its division's pipeline the
+    # agent is on, and 0..1 progress through that pipeline.
+    step: int = 0
+    progress: float = 0.0
 
 
 @dataclass

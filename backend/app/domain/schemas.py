@@ -33,6 +33,7 @@ class AgentView(BaseModel):
     status: AgentStatus
     mission: str
     current_task: Optional[str] = None
+    progress: float = 0.0
     goals: List[str] = Field(default_factory=list)
     kpis: List[str] = Field(default_factory=list)
     tools: List[str] = Field(default_factory=list)

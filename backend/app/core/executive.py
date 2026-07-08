@@ -271,24 +271,48 @@ def _command_reply(text: str, division: str, head_name: str) -> str:
 # --- Heartbeat ------------------------------------------------------------
 
 def heartbeat(store: Store = STORE) -> None:
-    """One tick of autonomous life: rotate agent focus and emit a signal.
+    """One tick of autonomous life: advance every working agent one stage through
+    its division's workflow, hand off between divisions, and emit a signal.
 
     Called by the background loop so the live feed and agent activity keep moving
-    even with no operator input — the empire works 24/7.
+    even with no operator input — the empire works 24/7. Agent task changes are
+    picked up by the dashboard's agents poll; feed emits are kept to a couple per
+    tick so the activity stream stays readable.
     """
+    from ..engines import workflows
 
     rng = store._rng
     runtimes = list(store.agents.values())
     if not runtimes:
         return
-    runtime = rng.choice(runtimes)
-    runtime.last_active = now()
-    if runtime.status is AgentStatus.IDLE and rng.random() < 0.6:
-        runtime.status = AgentStatus.WORKING
 
-    store.emit(
-        runtime.spec.id,
-        "activity",
-        f"{runtime.spec.name}: {runtime.current_task or 'advancing objectives'}.",
-        "info",
-    )
+    # The empire ramps up: nudge a few idle agents into work each tick.
+    for rt in runtimes:
+        if rt.status is AgentStatus.IDLE and rng.random() < 0.2:
+            rt.status = AgentStatus.WORKING
+
+    working = [r for r in runtimes if r.status is AgentStatus.WORKING]
+    if not working:
+        return
+
+    # Advance a rotating batch so movement is visible without thrashing.
+    batch = working if len(working) <= 20 else rng.sample(working, 20)
+    handoffs: list[str] = []
+    for rt in batch:
+        stages = workflows.stages_for(rt.spec.division.value)
+        rt.step = (rt.step + 1) % len(stages)
+        text, handoff = stages[rt.step]
+        rt.current_task = text
+        rt.progress = round((rt.step + 1) / len(stages), 3)
+        rt.last_active = now()
+        if rt.step == 0:  # completed a full workflow pass → real progress
+            rt.tasks_completed += 1
+            rt.impact_score = min(100.0, rt.impact_score + rng.uniform(0.1, 0.5))
+        if handoff and rng.random() < 0.5:
+            handoffs.append(f"{rt.spec.name} → {handoff.title()} division: {text.lower()}")
+
+    # Emit at most one headline activity + one hand-off per tick (keeps feed clean).
+    star = rng.choice(batch)
+    store.emit(star.spec.id, "activity", f"{star.spec.name}: {star.current_task}.", "info")
+    if handoffs:
+        store.emit("executive-core", "handoff", rng.choice(handoffs) + ".", "info")

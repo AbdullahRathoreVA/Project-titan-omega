@@ -40,6 +40,7 @@ export interface AgentView {
   status: AgentStatus;
   mission: string;
   current_task: string | null;
+  progress?: number;
   kpis: string[];
   tools: string[];
   tasks_completed: number;

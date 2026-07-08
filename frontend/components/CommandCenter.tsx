@@ -54,6 +54,7 @@ import { CrmLite } from "./CrmLite";
 import { AICity } from "./AICity";
 import { BootSequence } from "./BootSequence";
 import { ProgressStrip } from "./ProgressStrip";
+import { ThinkingTrace } from "./ThinkingTrace";
 import { Universe } from "./Universe";
 import { chime, speak, speakPremium, tap, unlockAudio } from "@/lib/sound";
 
@@ -417,6 +418,19 @@ export function CommandCenter() {
             ))}
             <UrduVoiceAssistant status={liveStatus} />
           </div>
+
+          {/* AI thinking visualization — shown while a command runs */}
+          <AnimatePresence>
+            {actionBusy && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+              >
+                <ThinkingTrace label={`Executing: ${actionBusy}`} />
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Revenue ledger + Ask Titan */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

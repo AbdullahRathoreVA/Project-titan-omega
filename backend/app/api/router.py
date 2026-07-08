@@ -70,6 +70,7 @@ def _agent_view(rt: AgentRuntime) -> AgentView:
         status=rt.status,
         mission=s.mission,
         current_task=rt.current_task,
+        progress=rt.progress,
         goals=s.goals,
         kpis=s.kpis,
         tools=s.tools,
