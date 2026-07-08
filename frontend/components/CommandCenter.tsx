@@ -254,9 +254,10 @@ export function CommandCenter() {
           <BootSequence onDone={finishBoot} />
         </div>
       )}
-      {/* Only mount the 3D backdrop after boot — during boot a fixed WebGL
-          canvas can bleed through the overlay on mobile, showing the universe
-          behind the intro. Mounting it later also keeps the boot smooth. */}
+      {/* During boot, hide the ENTIRE dashboard (display:none) so no WebGL
+          canvas — the backdrop OR the Universe — can bleed through the intro
+          overlay. `contents` restores the exact layout once boot completes. */}
+      <div className={boot === "done" ? "contents" : "hidden"}>
       {boot === "done" && <Background3D />}
       <StatusBar status={liveStatus} online={online || live} intel={intel} />
       <ProgressStrip />
@@ -478,6 +479,7 @@ export function CommandCenter() {
           {liveStatus ? `updated ${new Date(liveStatus.updated_at).toLocaleTimeString()}` : "connecting…"}
         </span>
       </footer>
+      </div>
     </main>
   );
 }
