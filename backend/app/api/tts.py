@@ -114,31 +114,31 @@ def tts_health() -> dict:
                 "https://api.elevenlabs.io/v1/user/subscription",
                 headers={"xi-api-key": key},
             )
-        if r.status_code == 200:
-            j = r.json()
-            limit, used = j.get("character_limit"), j.get("character_count")
-            out["valid"] = True
-            out["tier"] = j.get("tier")
-            if isinstance(limit, int) and isinstance(used, int):
-                out["characters_used"] = used
-                out["characters_limit"] = limit
-                out["characters_remaining"] = max(0, limit - used)
-        else:
-            # /user 401/403 can mean a *scoped* key (TTS allowed, account-read
-            # not). Settle it definitively with a tiny 2-char TTS probe.
-            probe = c.post(
-                f"https://api.elevenlabs.io/v1/text-to-speech/{_VOICE}",
-                headers={"xi-api-key": key, "accept": "audio/mpeg", "content-type": "application/json"},
-                json={"text": "OK", "model_id": _MODEL},
-            )
-            if probe.status_code == 200 and probe.content:
+            if r.status_code == 200:
+                j = r.json()
+                limit, used = j.get("character_limit"), j.get("character_count")
                 out["valid"] = True
-                out["tts_ok"] = True
-                out["note"] = "Key works for Text-to-Speech (account-read scope not granted, which is fine)."
-            elif probe.status_code == 401:
-                out["error"] = "401 — key rejected. Recopy the FULL key (starts with 'sk_'); make sure it isn't truncated."
+                out["tier"] = j.get("tier")
+                if isinstance(limit, int) and isinstance(used, int):
+                    out["characters_used"] = used
+                    out["characters_limit"] = limit
+                    out["characters_remaining"] = max(0, limit - used)
             else:
-                out["error"] = f"TTS probe returned {probe.status_code}: {probe.text[:120]}"
+                # /user 401/403 can mean a *scoped* key (TTS allowed, account-read
+                # not). Settle it definitively with a tiny 2-char TTS probe.
+                probe = c.post(
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{_VOICE}",
+                    headers={"xi-api-key": key, "accept": "audio/mpeg", "content-type": "application/json"},
+                    json={"text": "OK", "model_id": _MODEL},
+                )
+                if probe.status_code == 200 and probe.content:
+                    out["valid"] = True
+                    out["tts_ok"] = True
+                    out["note"] = "Key works for Text-to-Speech (account-read scope not granted, which is fine)."
+                elif probe.status_code == 401:
+                    out["error"] = "401 — key rejected. Recopy the FULL key (starts with 'sk_'); make sure it isn't truncated."
+                else:
+                    out["error"] = f"TTS probe returned {probe.status_code}: {probe.text[:120]}"
     except Exception as e:  # network blocked / timeout
         out["error"] = f"{type(e).__name__}: {e}"[:160]
 
