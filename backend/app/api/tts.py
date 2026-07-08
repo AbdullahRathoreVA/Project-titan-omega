@@ -23,6 +23,9 @@ from ..core import auth
 
 router = APIRouter(prefix="/api", tags=["tts"])
 
+# Cached result of the (zero-credit) key validity check.
+_health_cache: dict = {"ts": 0.0, "data": None}
+
 # A calm, clear default voice ("Adam"); override with ELEVENLABS_VOICE_ID.
 _VOICE = os.getenv("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB").strip()
 # turbo = fastest + cheapest credits; multilingual handles Urdu/Hindi too.
@@ -83,3 +86,50 @@ async def tts(request: Request) -> Response:
     except Exception:
         pass
     return Response(status_code=204)
+
+
+@router.get("/tts/health")
+def tts_health() -> dict:
+    """Open diagnostic: is the ElevenLabs key present AND valid, and how much
+    free quota is left? Uses the /user/subscription endpoint, which costs ZERO
+    TTS credits. Cached 60s. Safe to open in a browser."""
+    import time as _t
+
+    key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    if not key:
+        return {
+            "key_present": False,
+            "valid": False,
+            "note": "No ELEVENLABS_API_KEY in this container. Add it as a Space SECRET and restart/redeploy.",
+        }
+    if _health_cache["data"] and _t.monotonic() - _health_cache["ts"] < 60:
+        return _health_cache["data"]
+
+    out: dict = {"key_present": True, "valid": False, "voice_id": _VOICE, "model": _MODEL}
+    try:
+        import httpx
+
+        with httpx.Client(timeout=15.0) as c:
+            r = c.get(
+                "https://api.elevenlabs.io/v1/user/subscription",
+                headers={"xi-api-key": key},
+            )
+        if r.status_code == 200:
+            j = r.json()
+            limit, used = j.get("character_limit"), j.get("character_count")
+            out["valid"] = True
+            out["tier"] = j.get("tier")
+            if isinstance(limit, int) and isinstance(used, int):
+                out["characters_used"] = used
+                out["characters_limit"] = limit
+                out["characters_remaining"] = max(0, limit - used)
+        elif r.status_code == 401:
+            out["error"] = "401 — key rejected (invalid, revoked, or has a trailing space)."
+        else:
+            out["error"] = f"ElevenLabs returned {r.status_code}."
+    except Exception as e:  # network blocked / timeout
+        out["error"] = f"{type(e).__name__}: {e}"[:160]
+
+    _health_cache["ts"] = _t.monotonic()
+    _health_cache["data"] = out
+    return out
