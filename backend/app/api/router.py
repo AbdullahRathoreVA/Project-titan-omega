@@ -46,7 +46,11 @@ class LoginRequest(BaseModel):
 
 @router.get("/auth", tags=["auth"])
 def auth_status() -> dict:
-    return {"required": auth.require_auth(), "demo": auth.using_demo_credentials()}
+    return {
+        "required": auth.require_auth(),
+        "demo": auth.using_demo_credentials(),
+        "guest": auth.guest_mode(),
+    }
 
 
 @router.post("/login", tags=["auth"])
@@ -196,6 +200,12 @@ def list_executions() -> List[ExecutionAction]:
         STORE.executions.values(), key=lambda a: a["created_at"], reverse=True
     )
     return [ExecutionAction(**a) for a in actions]
+
+
+@router.get("/decisions", tags=["executive"])
+def list_decisions(limit: int = 20) -> List[dict]:
+    """Council decision history (memory timeline), newest first."""
+    return list(reversed(STORE.decisions[-max(1, min(limit, 50)):]))
 
 
 @router.post("/executions/from-opportunity/{opportunity_id}",

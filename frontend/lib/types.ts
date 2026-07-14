@@ -30,6 +30,26 @@ export interface DivisionView {
   kpis: string[];
 }
 
+// Mission Control (GET /api/executions, /api/decisions)
+export interface ExecutionItem {
+  id: string;
+  title: string;
+  description: string;
+  agent_id: string;
+  division: Division;
+  status: string;
+  requires_approval: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DecisionEntry {
+  goal: string;
+  decision: string;
+  confidence: number;
+  time: string;
+}
+
 export interface AgentView {
   id: string;
   name: string;

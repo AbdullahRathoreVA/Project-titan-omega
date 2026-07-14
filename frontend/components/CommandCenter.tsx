@@ -19,9 +19,11 @@ import type {
   AgentView,
   ChannelTile,
   Connector,
+  DecisionEntry,
   Deliverable,
   DivisionView,
   EmpireStatus,
+  ExecutionItem,
   FeedEvent,
   IntelligenceStatus,
   NextPost as NextPostType,
@@ -53,6 +55,8 @@ import { FinanceCenter } from "./FinanceCenter";
 import { CrmLite } from "./CrmLite";
 import { AICity } from "./AICity";
 import { BootSequence } from "./BootSequence";
+import { KnowledgeGraph } from "./KnowledgeGraph";
+import { MissionControl } from "./MissionControl";
 import { ProgressStrip } from "./ProgressStrip";
 import { ThinkingTrace } from "./ThinkingTrace";
 import { Universe } from "./Universe";
@@ -77,8 +81,10 @@ export function CommandCenter() {
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
   const [view, setView] = useState<
-    "universe" | "dashboard" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm"
+    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm"
   >("universe");
+  const [executions, setExecutions] = useState<ExecutionItem[]>([]);
+  const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
   // Increments whenever real feed activity arrives → fires comets in the Universe.
   const [pulse, setPulse] = useState(0);
 
@@ -133,7 +139,7 @@ export function CommandCenter() {
     }
     setOnline(isOnline);
 
-    const [s, d, a, o, f, dv, cn, ps, ig, ch, np] = await Promise.all([
+    const [s, d, a, o, f, dv, cn, ps, ig, ch, np, ex, dc] = await Promise.all([
       api.status(),
       api.divisions(),
       api.agents(),
@@ -145,6 +151,8 @@ export function CommandCenter() {
       api.intelligence(),
       api.channels(),
       api.nextPost(),
+      api.executions(),
+      api.decisions(),
     ]);
     setStatus(s);
     setDivisions(d);
@@ -157,6 +165,8 @@ export function CommandCenter() {
     setIntel(ig);
     setChannels(ch.channels);
     setNextPost(np);
+    setExecutions(ex);
+    setDecisions(dc);
   }, []);
 
   const refreshNextPost = useCallback(async () => {
@@ -309,6 +319,8 @@ export function CommandCenter() {
             {([
               ["universe", "Universe"],
               ["dashboard", "Dashboard"],
+              ["mission", "Mission"],
+              ["graph", "Graph"],
               ["city", "AI City"],
               ["warroom", "War Room"],
               ["telegram", "Telegram"],
@@ -353,6 +365,19 @@ export function CommandCenter() {
               onNavigate={(v) => setView(v as typeof view)}
             />
           )}
+
+          {view === "mission" && (
+            <MissionControl
+              status={liveStatus}
+              agents={agents}
+              opportunities={opportunities}
+              executions={executions}
+              decisions={decisions}
+              feed={feed}
+            />
+          )}
+
+          {view === "graph" && <KnowledgeGraph divisions={divisions} agents={agents} />}
 
           {view === "city" && (
             <AICity divisions={divisions} agents={agents} intensity={intensity} />

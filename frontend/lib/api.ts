@@ -6,9 +6,11 @@ import type {
   CommandResponse,
   Connector,
   Debate,
+  DecisionEntry,
   Deliverable,
   DivisionView,
   EmpireStatus,
+  ExecutionItem,
   ExpenseItem,
   FeedEvent,
   FinanceState,
@@ -110,6 +112,8 @@ export const api = {
   opportunities: () => get<Opportunity[]>("/opportunities", MOCK.opportunities),
   feed: (limit = 40) => get<FeedEvent[]>(`/feed?limit=${limit}`, MOCK.feed),
   deliverables: () => get<Deliverable[]>("/deliverables", []),
+  executions: () => get<ExecutionItem[]>("/executions", []),
+  decisions: () => get<DecisionEntry[]>("/decisions", []),
   connectors: () => get<Connector[]>("/connectors", []),
   posts: () => get<ScheduledPost[]>("/posts", []),
   intelligence: () =>
@@ -121,7 +125,11 @@ export const api = {
 
   // auth
   authStatus: () =>
-    get<{ required: boolean; demo: boolean }>("/auth", { required: false, demo: true }),
+    get<{ required: boolean; demo: boolean; guest?: boolean }>("/auth", {
+      required: false,
+      demo: true,
+      guest: false,
+    }),
   async login(username: string, password: string): Promise<boolean> {
     const res = await fetch("/api/login", {
       method: "POST",

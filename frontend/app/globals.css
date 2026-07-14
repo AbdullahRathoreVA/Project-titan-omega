@@ -66,3 +66,40 @@ body::after {
     background: transparent;
   }
 }
+
+/* --- Vision X polish: microinteractions + accessibility ------------------- */
+
+/* Signature press feel on every control — subtle, GPU-cheap. */
+button {
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+button:active {
+  transform: scale(0.97);
+}
+
+/* Keyboard users get a clear cyan focus ring (mouse clicks stay clean). */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid rgba(34, 211, 238, 0.65);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Respect users (and recorders) who ask for reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
