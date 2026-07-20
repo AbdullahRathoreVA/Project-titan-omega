@@ -58,3 +58,26 @@ def check_login(username: str, password: str) -> bool:
 def valid_token(token: str) -> bool:
     user, _ = credentials()
     return bool(token) and hmac.compare_digest(token, make_token(user))
+
+
+# --- Guest (public demo) session -------------------------------------------
+# One Space serves BOTH the founder's real dashboard and a public read-only
+# demo. A guest token is a distinct, non-privileged credential: it unlocks
+# GET-only access, and every endpoint carrying private business data is served
+# demo-safe sample content instead (see core/demo_data.py). It can never write.
+
+GUEST_USER = "__titan_guest__"
+
+
+def make_guest_token() -> str:
+    return hmac.new(_secret(), GUEST_USER.encode(), hashlib.sha256).hexdigest()
+
+
+def valid_guest_token(token: str) -> bool:
+    return bool(token) and hmac.compare_digest(token, make_guest_token())
+
+
+def guest_enabled() -> bool:
+    """Public demo button on the login screen. On by default; set
+    TITAN_DEMO_ENABLED=0 to hide it entirely."""
+    return os.getenv("TITAN_DEMO_ENABLED", "1") != "0"

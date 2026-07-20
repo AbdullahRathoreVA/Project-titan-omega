@@ -29,7 +29,7 @@ from .api.growth import router as growth_router
 from .api.router import router
 from .api.tts import router as tts_router
 from .connectors import careermind, github
-from .core import auth, executive
+from .core import auth, demo_data, executive
 from .engines import opportunity, publisher
 from .engines.evolution import ensure_weights
 from .store import STORE, seed
@@ -113,6 +113,7 @@ app.add_middleware(
 _OPEN_PATHS = {
     "/api/login",
     "/api/auth",
+    "/api/demo/enter",
     "/health",
     "/api/voice-report",
     "/api/assistant",
@@ -122,8 +123,11 @@ _OPEN_PATHS = {
     "/api/doctor",
     "/api/content/daily",
     "/api/intel/news",
-    "/api/revenue/log",
     "/api/inbox/auto-reply",
+    # NOTE: /api/revenue/log is deliberately NOT open. It writes to the real
+    # money ledger, and this deployment is publicly reachable (demo button), so
+    # it now requires the founder token or the X-Webhook-Secret header. Make.com
+    # must send:  X-Webhook-Secret: <TITAN_WEBHOOK_SECRET>
 }
 
 
@@ -148,6 +152,28 @@ async def auth_guard(request: Request, call_next):
         if not token and path == "/api/stream":
             token = request.query_params.get("token", "").strip()
         if not auth.valid_token(token):
+            # --- public read-only demo session ---------------------------
+            # A guest token unlocks GET only, and every endpoint holding real
+            # business data is answered with demo-safe sample content.
+            if auth.valid_guest_token(token):
+                if request.method not in ("GET", "HEAD"):
+                    return JSONResponse(
+                        {"detail": "Read-only demo — actions are disabled.", "guest": True},
+                        status_code=403,
+                    )
+                try:
+                    limit = int(request.query_params.get("limit", 50))
+                except ValueError:
+                    limit = 50
+                payload = demo_data.guest_payload(path, limit)
+                if payload is not None:
+                    return JSONResponse(payload)
+                if demo_data.is_sensitive(path):
+                    # Any private path without an explicit sample is refused
+                    # outright — fail closed, never leak.
+                    return JSONResponse({"detail": "Hidden in demo", "guest": True}, status_code=403)
+                return await call_next(request)
+
             # Automation (Make.com) can authenticate with the webhook secret instead.
             secret = request.headers.get("x-webhook-secret", "")
             expected = os.getenv("TITAN_WEBHOOK_SECRET")

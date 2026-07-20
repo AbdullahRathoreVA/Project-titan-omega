@@ -50,7 +50,23 @@ def auth_status() -> dict:
         "required": auth.require_auth(),
         "demo": auth.using_demo_credentials(),
         "guest": auth.guest_mode(),
+        # Public "View demo" button on the login screen.
+        "guest_available": auth.guest_enabled(),
     }
+
+
+@router.post("/demo/enter", tags=["auth"])
+def enter_demo() -> dict:
+    """Start a public, read-only demo session — no login required.
+
+    Returns a guest token that unlocks GET-only access. Every endpoint holding
+    real business data is served demo-safe sample content instead, and any
+    write is refused, so a visitor can explore the whole system without ever
+    seeing the founder's private data or changing anything.
+    """
+    if not auth.guest_enabled():
+        raise HTTPException(status_code=404, detail="Demo mode is disabled")
+    return {"token": auth.make_guest_token(), "guest": True}
 
 
 @router.post("/login", tags=["auth"])

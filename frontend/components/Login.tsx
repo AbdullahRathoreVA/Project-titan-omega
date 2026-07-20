@@ -1,14 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import { Hexagon, Lock } from "lucide-react";
+import { Hexagon, Lock, PlayCircle } from "lucide-react";
 import { api } from "@/lib/api";
 
-export function Login({ onSuccess, demo }: { onSuccess: () => void; demo: boolean }) {
+export function Login({
+  onSuccess,
+  demo,
+  guestAvailable = true,
+  onGuest,
+}: {
+  onSuccess: () => void;
+  demo: boolean;
+  guestAvailable?: boolean;
+  onGuest?: () => void;
+}) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [guestBusy, setGuestBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -18,6 +29,15 @@ export function Login({ onSuccess, demo }: { onSuccess: () => void; demo: boolea
     setBusy(false);
     if (ok) onSuccess();
     else setError("Invalid username or password.");
+  }
+
+  async function startDemo() {
+    setGuestBusy(true);
+    setError("");
+    const ok = await api.enterDemo();
+    setGuestBusy(false);
+    if (ok) onGuest?.();
+    else setError("Demo is unavailable right now.");
   }
 
   return (
@@ -65,6 +85,28 @@ export function Login({ onSuccess, demo }: { onSuccess: () => void; demo: boolea
           <Lock className="h-4 w-4" />
           {busy ? "Signing in…" : "Enter command center"}
         </button>
+
+        {guestAvailable && (
+          <>
+            <div className="my-4 flex items-center gap-3">
+              <span className="h-px flex-1 bg-edge" />
+              <span className="font-mono text-[10px] uppercase tracking-widest text-slate-600">or</span>
+              <span className="h-px flex-1 bg-edge" />
+            </div>
+            <button
+              type="button"
+              onClick={startDemo}
+              disabled={guestBusy}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-hud-violet/40 bg-hud-violet/10 py-2 text-sm font-medium text-hud-violet transition-colors hover:bg-hud-violet/20 disabled:opacity-50"
+            >
+              <PlayCircle className="h-4 w-4" />
+              {guestBusy ? "Starting demo…" : "View the live demo"}
+            </button>
+            <p className="mt-2 text-center text-[10px] leading-relaxed text-slate-500">
+              No login needed · read-only · sample business data
+            </p>
+          </>
+        )}
 
         {demo && (
           <p className="mt-4 text-[11px] leading-relaxed text-hud-amber">

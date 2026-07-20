@@ -354,3 +354,63 @@ def test_execute_opportunity_and_evolution(client):
     # Evolution weights should have changed.
     w_after = client.get("/api/evolution").json()["weights"]
     assert w_after != w_before
+
+# ── single-Space public demo (guest session) ───────────────────────────────
+
+def _guest_headers(client):
+    r = client.post("/api/demo/enter")
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['token']}"}
+
+
+def test_guest_can_read_but_never_write(monkeypatch):
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    client = TestClient(app)
+    h = _guest_headers(client)
+
+    # reads allowed
+    assert client.get("/api/agents", headers=h).status_code == 200
+    assert client.get("/api/status", headers=h).status_code == 200
+    # writes refused
+    assert client.post("/api/revenue/log", json={"amount": 5, "source": "x"}, headers=h).status_code == 403
+    assert client.post("/api/leads", json={"name": "x"}, headers=h).status_code == 403
+    # anonymous still locked out
+    assert client.get("/api/agents").status_code == 401
+
+
+def test_guest_never_sees_real_business_data(monkeypatch):
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    client = TestClient(app)
+    h = _guest_headers(client)
+
+    # Plant unmistakably real private data in the live store.
+    STORE.metrics["mrr"] = 91234.0
+    STORE.leads["lead-real"] = {"id": "lead-real", "name": "REAL CLIENT ACME", "status": "won",
+                                "source": "x", "contact": "secret@acme.com", "note": "",
+                                "created_at": "", "updated_at": ""}
+    STORE.revenue_entries.append({"id": "rev-real", "amount": 91234.0, "source": "client",
+                                  "note": "REAL ORDER private", "created_at": ""})
+
+    assert client.get("/api/revenue", headers=h).json()["total"] != 91234.0
+    assert client.get("/api/status", headers=h).json()["mrr"] != 91234.0
+    leads_body = client.get("/api/leads", headers=h).text
+    assert "ACME" not in leads_body and "secret@acme.com" not in leads_body
+    entries = client.get("/api/revenue/entries", headers=h).text
+    assert "REAL ORDER private" not in entries
+    fin = client.get("/api/finance", headers=h).json()
+    assert fin["revenue_total"] != 91234.0
+
+
+def test_revenue_log_requires_auth_or_webhook_secret(monkeypatch):
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    monkeypatch.setenv("TITAN_WEBHOOK_SECRET", "hook-secret")
+    client = TestClient(app)
+    # anonymous write refused
+    assert client.post("/api/revenue/log", json={"amount": 5, "source": "x"}).status_code == 401
+    # automation with the secret still works
+    ok = client.post("/api/revenue/log", json={"amount": 5, "source": "x"},
+                     headers={"X-Webhook-Secret": "hook-secret"})
+    assert ok.status_code == 200

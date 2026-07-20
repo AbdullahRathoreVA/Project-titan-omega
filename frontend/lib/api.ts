@@ -125,11 +125,24 @@ export const api = {
 
   // auth
   authStatus: () =>
-    get<{ required: boolean; demo: boolean; guest?: boolean }>("/auth", {
+    get<{ required: boolean; demo: boolean; guest?: boolean; guest_available?: boolean }>("/auth", {
       required: false,
       demo: true,
       guest: false,
+      guest_available: true,
     }),
+  /** Start the public read-only demo session (no login). */
+  async enterDemo(): Promise<boolean> {
+    try {
+      const res = await fetch("/api/demo/enter", { method: "POST" });
+      if (!res.ok) return false;
+      const data = (await res.json()) as { token: string };
+      setToken(data.token);
+      return true;
+    } catch {
+      return false;
+    }
+  },
   async login(username: string, password: string): Promise<boolean> {
     const res = await fetch("/api/login", {
       method: "POST",
