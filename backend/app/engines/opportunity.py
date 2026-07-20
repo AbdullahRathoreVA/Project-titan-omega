@@ -39,7 +39,7 @@ _CANDIDATES = [
         ],
     },
     {
-        "title": "Fiverr: target underpriced 'AI resume' keyword cluster",
+        "title": "Upwork: target underpriced 'AI resume' keyword cluster",
         "description": "High-impression, low-competition keywords identified with "
         "weak top-3 gigs. Re-optimize gig titles and tags to rank.",
         "source_agent": "intelligence-niche-scout",

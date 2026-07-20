@@ -151,8 +151,8 @@ def _sample_task(spec: AgentSpec, rng: random.Random) -> Optional[str]:
     pool = {
         "marketing": [
             "Drafting LinkedIn post for Career Mind launch",
-            "Writing Fiverr gig description optimisation",
-            "Researching competitor pricing on Fiverr",
+            "Writing Upwork gig description optimisation",
+            "Researching competitor pricing on Upwork",
             "Creating social media content calendar",
             "Researching school/university outreach strategy",
             "Writing cold email templates for Career Mind B2B",
@@ -165,13 +165,13 @@ def _sample_task(spec: AgentSpec, rng: random.Random) -> Optional[str]:
             "Building student audience targeting model",
         ],
         "intelligence": [
-            "Scanning Fiverr category trends",
+            "Scanning Upwork category trends",
             "Surfacing high-demand AI gig niches",
             "Aggregating student platform market signals",
             "Monitoring Amazon Kindle bestseller rankings in AI career category",
         ],
         "revenue": [
-            "Identifying first 10 potential Fiverr clients",
+            "Identifying first 10 potential Upwork clients",
             "Drafting outreach message templates",
             "Building lead qualification criteria",
             "Researching Amazon KDP royalty optimisation",
@@ -198,9 +198,9 @@ def _seed_connectors(store: Store) -> None:
              "total_users": 0.0, "active_users": 0.0},
         ),
         (
-            "Fiverr Gig Network",
+            "Upwork Profile",
             ConnectorKind.MARKETPLACE,
-            "https://fiverr.com",
+            "https://www.upwork.com/freelancers/~01afb00378bd38d964?mp_source=share",
             {"impressions": 0, "clicks": 0, "orders": 0, "revenue": 0.0},
         ),
         (

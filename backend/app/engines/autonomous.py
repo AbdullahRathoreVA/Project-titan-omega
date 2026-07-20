@@ -56,7 +56,7 @@ def growth_cycle(store: Store = STORE) -> dict:
     )
     comp = research.search(
         "AI career guidance platform for students competitors, "
-        "and high-demand Fiverr AI gig niches and keywords 2026",
+        "and high-demand Upwork AI gig niches and keywords 2026",
         6,
     )
     heads = news.fetch_headlines("AI careers OR freelancing OR edtech students jobs", 6)
@@ -75,7 +75,7 @@ def growth_cycle(store: Store = STORE) -> dict:
         system=(
             "You are Abdullah's autonomous Growth Operator. From the live research below, "
             "write a tight brief: the 3 best money-making moves to act on THIS WEEK "
-            "(freelance/Fiverr/Career Mind), who the real competitors are and their weak "
+            "(freelance/Upwork/Career Mind), who the real competitors are and their weak "
             "spot, and the single highest-leverage zero-cost action right now. Short bullets."
         ),
         prompt=src,
@@ -88,7 +88,7 @@ def growth_cycle(store: Store = STORE) -> dict:
     kw_raw = llm.complete(
         system=(
             "List 8 specific, high-intent SEO keywords Abdullah should target for Career "
-            "Mind AI (student career platform) and his Fiverr AI gigs. Output ONLY a "
+            "Mind AI (student career platform) and his Upwork AI gigs. Output ONLY a "
             "comma-separated list, no numbering."
         ),
         prompt=src if live else "AI career guidance for students; affordable AI freelance services",
@@ -127,7 +127,7 @@ _TEAM = [
 def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
     """The marketing team argues; the head decides and gives an action plan."""
     goal = topic.strip() or (
-        "Grow Career Mind AI signups and Fiverr orders with a $0 budget this week."
+        "Grow Career Mind AI signups and Upwork orders with a $0 budget this week."
     )
 
     proposals: List[Dict[str, str]] = []
@@ -238,7 +238,7 @@ def seo_report(keyword: str = "", store: Store = STORE) -> dict:
         system=(
             f"You are an SEO strategist. For the keyword '{kw}', use the live results to: "
             "(1) identify who currently ranks and why, (2) find concrete content/keyword "
-            "gaps, (3) give Abdullah (Career Mind AI student platform + Fiverr AI gigs) a "
+            "gaps, (3) give Abdullah (Career Mind AI student platform + Upwork AI gigs) a "
             "prioritised, zero-cost action list to climb toward page one. Be specific and "
             "practical. Be honest: never promise a guaranteed #1 ranking."
         ),

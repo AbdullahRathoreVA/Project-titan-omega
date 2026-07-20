@@ -22,7 +22,7 @@ PROFILE = (
     "Hugging Face Spaces), Project Titan Omega (autonomous business dashboard: "
     "FastAPI, Next.js, react-three-fiber 3D, SSE realtime, Telegram bot, "
     "multi-provider LLM layer), and an AI Job-Search Toolkit digital product "
-    "sold on Fiverr. Skills: Python/FastAPI, SQLAlchemy, Streamlit, "
+    "sold on Upwork. Skills: Python/FastAPI, SQLAlchemy, Streamlit, "
     "Next.js/React/TypeScript/Tailwind, LLM APIs (Anthropic/Groq/OpenRouter), "
     "local LLMs with Ollama, OCR/document-processing pipelines, workflow "
     "automation (n8n, Make.com), Docker deploys, Git/GitHub. Builds fast with "

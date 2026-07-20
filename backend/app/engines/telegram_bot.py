@@ -79,7 +79,7 @@ def _fmt_revenue(store: Store) -> str:
     m = store.metrics
     lines = [
         f"💰 REVENUE — total ${m.get('mrr', 0.0):.2f}",
-        f"Fiverr: ${m.get('fiverr_revenue', 0.0):.2f} ({int(m.get('fiverr_orders', 0))} orders)",
+        f"Upwork: ${m.get('fiverr_revenue', 0.0):.2f} ({int(m.get('fiverr_orders', 0))} orders)",
         f"Career Mind: ${m.get('cm_revenue', 0.0):.2f}",
         f"Kindle: ${m.get('kindle_royalties', 0.0):.2f}",
         f"Other: ${m.get('other_revenue', 0.0):.2f}",

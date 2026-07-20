@@ -17,7 +17,7 @@ SECTIONS = ["BLOG", "LINKEDIN", "XTHREAD", "INSTAGRAM", "EMAIL", "SHORTS"]
 
 _PROMPT = (
     "You are the content team for Abdullah's businesses (Career Mind AI — a free "
-    "AI career-guidance platform for students — and his Fiverr AI services). "
+    "AI career-guidance platform for students — and his Upwork AI services). "
     "From the single idea below, produce SIX pieces of ready-to-publish content. "
     "Output EXACTLY this structure, each section starting with its delimiter line:\n"
     "===BLOG===\n(a 350-500 word blog post with a strong title on the first line)\n"

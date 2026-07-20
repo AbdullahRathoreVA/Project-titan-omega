@@ -25,6 +25,10 @@ from ..store import STORE, Store, now
 
 router = APIRouter(prefix="/api")
 
+# Abdullah sells his services on UPWORK (not Fiverr). Override with the
+# UPWORK_PROFILE_URL env var; this default is his real public profile.
+UPWORK_PROFILE_URL = "https://www.upwork.com/freelancers/~01afb00378bd38d964?mp_source=share"
+
 
 # --- live news + market analysis ------------------------------------------
 
@@ -37,7 +41,7 @@ class NewsRequest(BaseModel):
 def intel_news(req: NewsRequest) -> dict:
     """Live headlines + AI market analysis tuned to Abdullah's businesses."""
     query = req.topic or (
-        "AI career tools OR freelancing OR Fiverr gig economy OR ed-tech students jobs"
+        "AI career tools OR freelancing OR Upwork gig economy OR ed-tech students jobs"
     )
     heads = news.fetch_headlines(query, 8)
     lang_name = "Urdu (اردو)" if req.lang == "ur" else "English"
@@ -47,7 +51,7 @@ def intel_news(req: NewsRequest) -> dict:
         analysis = llm.complete(
             system=(
                 "You are a market analyst for Abdullah's Career Mind AI (a student "
-                "career-guidance platform) and his Fiverr AI service gigs. From today's "
+                "career-guidance platform) and his Upwork AI service gigs. From today's "
                 "real headlines, extract what matters for HIS marketing and earning, then "
                 f"give 3 concrete, zero-cost moves to capitalize THIS WEEK. Write in {lang_name}."
             ),
@@ -96,7 +100,7 @@ def find_leads(req: LeadRequest) -> dict:
             system=(
                 "You are Abdullah's lead-generation analyst. From these LIVE web results, "
                 "extract concrete leads (organisations / people / places) he can reach to "
-                "sell Career Mind AI (student career platform) or his Fiverr AI gigs. For "
+                "sell Career Mind AI (student career platform) or his Upwork AI gigs. For "
                 "each lead give: name, why they're a fit, where/how to contact, and a 1-line "
                 f"opening message. Be specific and practical. Write in {lang_name}."
             ),
@@ -111,11 +115,11 @@ def find_leads(req: LeadRequest) -> dict:
         content = llm.complete(
             system=(
                 "You are Abdullah's lead-generation analyst. Give a concrete, practical list "
-                "of WHERE to find buyers for Career Mind AI and his Fiverr AI gigs — specific "
+                "of WHERE to find buyers for Career Mind AI and his Upwork AI gigs — specific "
                 "communities, directories, search queries, and outreach angles. "
                 f"Write in {lang_name}."
             ),
-            prompt=req.query or "Find buyers for an AI career platform + Fiverr AI services.",
+            prompt=req.query or "Find buyers for an AI career platform + Upwork AI services.",
             max_tokens=700,
         ) or (
             "Add a free TAVILY_API_KEY (tavily.com) in your Space to unlock LIVE lead search. "
@@ -164,7 +168,7 @@ def _build_next_post(
     Shared by the daily auto-content endpoint and the HUD "Next Post" card.
     """
     cm = os.getenv("CAREERMIND_URL", "https://careermind2026-career-mind.hf.space")
-    fiverr = os.getenv("FIVERR_GIG_URL", "").strip()
+    upwork = os.getenv("UPWORK_PROFILE_URL", UPWORK_PROFILE_URL).strip()
     # Set TITAN_PRODUCT_URL (landing/waitlist/demo link) and Titan starts
     # marketing ITSELF in the daily rotation — build-in-public style.
     titan_url = os.getenv("TITAN_PRODUCT_URL", "").strip()
@@ -173,8 +177,8 @@ def _build_next_post(
     t = (target or "auto").lower()
     if t == "auto":
         pool = ["career_mind"]
-        if fiverr:
-            pool.append("fiverr")
+        if upwork:
+            pool.append("upwork")
         if titan_url:
             pool.append("titan")
         t = pool[len(store.feed) % len(pool)]
@@ -190,10 +194,10 @@ def _build_next_post(
             "a glowing holographic 3D business dashboard floating in a dark modern room, "
             "futuristic AI command center with neon cyan interface, cinematic"
         )
-    elif t == "fiverr" and fiverr:
-        link = fiverr
+    elif t == "upwork" and upwork:
+        link = upwork
         pitch = (
-            "Abdullah's Fiverr AI services: custom AI chatbots, business automation, "
+            "Abdullah's Upwork AI services: custom AI chatbots, business automation, "
             "AI content writing, and resume/LinkedIn optimisation. Affordable, fast delivery."
         )
         img_subject = (
@@ -451,7 +455,7 @@ def doctor() -> dict:
         "telegram_bot": has("TELEGRAM_BOT_TOKEN"),
         "telegram_locked": has("TELEGRAM_CHAT_ID"),
         "publish_webhook": has("TITAN_PUBLISH_WEBHOOK"),
-        "fiverr_url": has("FIVERR_GIG_URL"),
+        "upwork_url": has("UPWORK_PROFILE_URL"),
         "titan_product_url": has("TITAN_PRODUCT_URL"),
         "auth_enabled": os.getenv("TITAN_REQUIRE_AUTH") == "1",
         # Failure detail from the most recent LLM call (does NOT run a new one) —
@@ -507,7 +511,7 @@ def agent_act(req: ActRequest) -> dict:
         content = llm.complete(
             system=(
                 "Write ONE punchy social media post (max 280 chars) promoting Abdullah's "
-                "Career Mind AI (free AI career guidance for students) or his Fiverr AI gigs, "
+                "Career Mind AI (free AI career guidance for students) or his Upwork AI gigs, "
                 "based on the instruction. Include a clear call to action. Output only the post."
             ),
             prompt=text,
@@ -548,9 +552,9 @@ def agent_act(req: ActRequest) -> dict:
         elif any(k in low for k in ["customer", "reply", "care", "support"]):
             brief = "Warm, professional customer-care reply that resolves the issue."
         elif any(k in low for k in ["business", "sell", "contact"]):
-            brief = "Cold email to a small business owner offering Abdullah's Fiverr AI services (chatbots, automation, content)."
+            brief = "Cold email to a small business owner offering Abdullah's Upwork AI services (chatbots, automation, content)."
         else:
-            brief = "Helpful community message for job-seekers introducing Career Mind AI + Abdullah's Fiverr resume services."
+            brief = "Helpful community message for job-seekers introducing Career Mind AI + Abdullah's Upwork resume services."
         content = llm.complete(
             system="You are Abdullah's sales/outreach writer. Draft specific, professional, ready-to-send copy.",
             prompt=brief + "\n\nContext from Abdullah: " + text,

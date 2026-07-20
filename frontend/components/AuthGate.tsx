@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { LogOut } from "lucide-react";
 import { api, getToken, setToken, verifyToken } from "@/lib/api";
 import { Login } from "./Login";
 import { CommandCenter } from "./CommandCenter";
@@ -108,13 +109,29 @@ export function AuthGate() {
       />
     );
   }
+  const signOut = () => {
+    setToken(null);
+    markGuest(false);
+    setState("login");
+  };
+
   return (
     <>
-      {guest && (
-        <div className="fixed right-3 top-3 z-[999] rounded border border-hud-violet/40 bg-black/70 px-3 py-1 font-mono text-[11px] tracking-wide text-hud-violet">
-          DEMO · read-only · sample data
-        </div>
-      )}
+      <div className="fixed right-3 top-3 z-[999] flex items-center gap-2">
+        {guest && (
+          <span className="rounded border border-hud-violet/40 bg-black/70 px-3 py-1 font-mono text-[11px] tracking-wide text-hud-violet">
+            DEMO · read-only · sample data
+          </span>
+        )}
+        <button
+          onClick={signOut}
+          title={guest ? "Exit the demo and sign in" : "Sign out"}
+          className="flex items-center gap-1.5 rounded border border-edge bg-black/70 px-3 py-1 font-mono text-[11px] tracking-wide text-slate-400 transition-colors hover:border-hud-cyan/40 hover:text-hud-cyan"
+        >
+          <LogOut className="h-3 w-3" />
+          {guest ? "Exit demo" : "Sign out"}
+        </button>
+      </div>
       <CommandCenter />
     </>
   );

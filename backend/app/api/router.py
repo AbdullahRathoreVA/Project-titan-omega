@@ -33,6 +33,7 @@ from ..domain.schemas import (
 )
 from ..engines import deliverables, evolution, execution, opportunity, publisher
 from ..store import STORE, AgentRuntime, now
+from .actions import UPWORK_PROFILE_URL
 
 router = APIRouter(prefix="/api")
 
@@ -420,7 +421,7 @@ def bulk_update_metrics(
     return {"updated": keys, "count": len(keys), "source": update.source}
 
 
-# --- REAL revenue ledger (Fiverr orders, Career Mind sales, Kindle, etc.) ---
+# --- REAL revenue ledger (Upwork orders, Career Mind sales, Kindle, etc.) ---
 
 _SOURCE_KEY = {
     "fiverr": "fiverr_revenue",
@@ -540,15 +541,15 @@ def inbox_auto_reply(msg: InboxMessage) -> dict:
     """Draft a professional, sales-savvy reply to an incoming DM."""
     is_urdu = msg.lang == "ur"
     lang_name = "Urdu (اردو)" if is_urdu else "English"
-    fiverr_link = os.getenv("FIVERR_GIG_URL", "my Fiverr gig")
+    upwork_link = os.getenv("UPWORK_PROFILE_URL", UPWORK_PROFILE_URL)
     cm_link = os.getenv("CAREERMIND_URL", "https://careermind2026-career-mind.hf.space")
 
     reply = llm.complete(
         system=(
             "You are Abdullah's professional sales assistant replying to a potential "
             f"client on {msg.platform}. Reply ONLY in {lang_name}. Be warm, fast, and "
-            "close the sale. Abdullah sells AI services on Fiverr and runs Career Mind AI "
-            f"(a student career platform at {cm_link}). Fiverr gig: {fiverr_link}. "
+            "close the sale. Abdullah sells AI services on Upwork and runs Career Mind AI "
+            f"(a student career platform at {cm_link}). Upwork profile: {upwork_link}. "
             "Keep it 2-4 sentences, friendly, and end with a clear call to action. "
             "Never invent prices — invite them to share their requirements."
         ),
@@ -582,7 +583,7 @@ def inbox_auto_reply(msg: InboxMessage) -> dict:
 _INTEL_PROMPTS = {
     "market_analysis": (
         "You are a sharp market analyst for Abdullah's AI businesses (Career Mind AI "
-        "— a student career-guidance platform — and his Fiverr AI service gigs). "
+        "— a student career-guidance platform — and his Upwork AI service gigs). "
         "Produce a concise, actionable market analysis: current demand, the best target "
         "segments, a competitor angle, simple pricing ideas, and 3 ZERO-COST growth moves "
         "to execute THIS WEEK. Use clear headings and short bullets."
@@ -595,13 +596,13 @@ _INTEL_PROMPTS = {
     ),
     "business_outreach": (
         "Write a short cold email / DM to a small business owner offering Abdullah's AI "
-        "services from his Fiverr gigs (custom chatbots, automation, AI content). Give a "
+        "services from his Upwork gigs (custom chatbots, automation, AI content). Give a "
         "subject line, a 4-6 sentence body focused on concrete value, and a clear CTA. "
         "No hype, no fake promises."
     ),
     "jobseeker_outreach": (
         "Write a genuinely helpful community post aimed at people struggling to find a job. "
-        "Introduce Career Mind AI (free career guidance) and Abdullah's affordable Fiverr "
+        "Introduce Career Mind AI (free career guidance) and Abdullah's affordable Upwork "
         "resume / LinkedIn services. Helpful tone, NOT spammy. Then list 5 specific places "
         "(subreddits, Facebook groups, Discords) where it is appropriate to share it."
     ),
@@ -611,7 +612,7 @@ _INTEL_PROMPTS = {
     ),
     "youtube_ideas": (
         "Suggest 8 specific YouTube video / Short ideas Abdullah can make for FREE to promote "
-        "Career Mind AI and his Fiverr AI gigs — each with a punchy title and a one-line hook. "
+        "Career Mind AI and his Upwork AI gigs — each with a punchy title and a one-line hook. "
         "Then give 5 YouTube search queries he can use to study what is trending in this niche."
     ),
 }
@@ -632,7 +633,7 @@ def intel_generate(req: IntelRequest) -> dict:
     content = llm.complete(
         system=base + f" Write the entire output in {lang_name}.",
         prompt=req.topic
-        or "Use Abdullah's businesses: Career Mind AI (student career platform) and Fiverr AI gigs.",
+        or "Use Abdullah's businesses: Career Mind AI (student career platform) and Upwork AI gigs.",
         max_tokens=900,
     )
 
@@ -657,7 +658,7 @@ def _empire_context() -> dict:
     cm = STORE.connectors.get("careermind-main", {}).get("metrics", {})
     fiverr = next(
         (c["metrics"] for c in STORE.connectors.values()
-         if c.get("name") == "Fiverr Gig Network"),
+         if c.get("name") == "Upwork Gig Network"),
         {},
     )
     return {
@@ -752,7 +753,7 @@ def assistant(req: AssistantRequest) -> dict:
         f"Live empire state — "
         f"Total revenue earned: ${c['mrr']:.0f}. "
         f"Career Mind AI: {c['cm_users']} total users, {c['cm_active']} active, {c['cm_signups']} new signups. "
-        f"Fiverr: {c['fiverr_orders']} orders, {c['fiverr_impressions']} impressions. "
+        f"Upwork: {c['fiverr_orders']} orders, {c['fiverr_impressions']} impressions. "
         f"{c['active_agents']} of {c['total_agents']} AI agents active. "
         f"{c['open_opportunities']} open opportunities. Empire health {c['health']:.0f}%."
     )
@@ -768,7 +769,7 @@ def assistant(req: AssistantRequest) -> dict:
     raw = llm.complete(
         system=(
             "You are Titan, the AI chief-of-staff for Abdullah's autonomous business "
-            "empire (Career Mind AI student platform + Fiverr AI gigs). "
+            "empire (Career Mind AI student platform + Upwork AI gigs). "
             f"Always address the founder simply as 'Abdullah'. {instructions} "
             "Be concise (2-4 sentences), concrete, and motivating. Use the live data below "
             "when relevant.\n\n" + context
