@@ -443,3 +443,24 @@ def test_guest_progress_is_sampled_not_derived_from_real_revenue(monkeypatch):
     h = _guest_headers(client)
     body = client.get("/api/progress", headers=h).json()
     assert body["level"] > 1 and body["xp"] > 0
+
+
+def test_session_endpoint_identifies_token_kind(monkeypatch):
+    """Regression: guest-ness was inferred from sessionStorage, so a demo token
+    restored in a NEW TAB rendered as the founder while being served sample
+    data ('Sign out' shown above $693 of sample revenue)."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    from app.core import auth
+    client = TestClient(app)
+
+    gtok = client.post("/api/demo/enter").json()["token"]
+    g = client.get("/api/session", headers={"Authorization": f"Bearer {gtok}"}).json()
+    assert g["guest"] is True and g["founder"] is False
+
+    ftok = auth.make_token(auth.credentials()[0])
+    f = client.get("/api/session", headers={"Authorization": f"Bearer {ftok}"}).json()
+    assert f["founder"] is True and f["guest"] is False
+
+    anon = client.get("/api/session").json()
+    assert anon["founder"] is False and anon["guest"] is False

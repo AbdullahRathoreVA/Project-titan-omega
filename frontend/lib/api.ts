@@ -131,6 +131,10 @@ export const api = {
       guest: false,
       guest_available: true,
     }),
+  /** What kind of session does the stored token represent? Authoritative —
+   *  never infer this from browser storage. */
+  sessionKind: () =>
+    get<{ founder: boolean; guest: boolean }>("/session", { founder: false, guest: false }),
   /** Start the public read-only demo session (no login). */
   async enterDemo(): Promise<boolean> {
     try {

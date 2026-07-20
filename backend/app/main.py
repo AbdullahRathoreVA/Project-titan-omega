@@ -114,6 +114,7 @@ _OPEN_PATHS = {
     "/api/login",
     "/api/auth",
     "/api/demo/enter",
+    "/api/session",
     "/health",
     "/api/voice-report",
     "/api/assistant",

@@ -10,7 +10,7 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .. import persistence
@@ -54,6 +54,15 @@ def auth_status() -> dict:
         # Public "View demo" button on the login screen.
         "guest_available": auth.guest_enabled(),
     }
+
+
+@router.get("/session", tags=["auth"])
+def session(request: Request) -> dict:
+    """What KIND of session is this token? The front end must not guess from
+    browser storage — a demo token restored in a new tab would otherwise be
+    presented as the founder while still being served sample data."""
+    tok = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    return {"founder": auth.valid_token(tok), "guest": auth.valid_guest_token(tok)}
 
 
 @router.post("/demo/enter", tags=["auth"])

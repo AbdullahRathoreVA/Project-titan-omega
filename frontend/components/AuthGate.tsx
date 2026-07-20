@@ -61,15 +61,12 @@ export function AuthGate() {
     // Verify the stored token really works; if it's stale, force a fresh login.
     const ok = await verifyToken();
     if (ok) {
-      // Restore the guest badge if this tab's session was a demo session.
-      let wasGuest = false;
-      try {
-        wasGuest = sessionStorage.getItem(GUEST_FLAG) === "1";
-      } catch {
-        /* ignore */
-      }
-      markGuest(wasGuest);
-      setGuest(wasGuest);
+      // Ask the server what this token actually is. Guessing from
+      // sessionStorage broke in a new tab: a restored DEMO token was shown as
+      // the founder while still being served sample data.
+      const kind = await api.sessionKind();
+      markGuest(kind.guest);
+      setGuest(kind.guest);
       setState("ready");
     } else {
       setToken(null);
