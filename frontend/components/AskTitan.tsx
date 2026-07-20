@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Mic, MicOff, Send, Sparkles, Volume2 } from "lucide-react";
 import { langTag, speakText } from "@/lib/voice";
 import { speakPremium } from "@/lib/sound";
+import { isGuest } from "@/lib/guest";
 import { HoloFounder } from "./HoloFounder";
 
 // Universal voice: Titan answers and SPEAKS in any of these languages.
@@ -69,8 +70,8 @@ export function AskTitan() {
         const answer =
           data?.answer ??
           (lang === "ur"
-            ? "معذرت عبداللہ، سرور سے جواب نہیں ملا۔ دوبارہ کوشش کریں۔"
-            : "Sorry Abdullah, no answer from the core. Please try again.");
+            ? "معذرت، سرور سے جواب نہیں ملا۔ دوبارہ کوشش کریں۔"
+            : "Sorry, no answer from the core. Please try again.");
         // 'spoken' is Hindi/Devanagari for Urdu so the Hindi voice can read it.
         const spoken = data?.spoken ?? answer;
         setTurns((t) => [...t, { role: "titan", text: answer }]);
@@ -139,7 +140,7 @@ export function AskTitan() {
       <header className="panel-header">
         <div className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-hud-violet" strokeWidth={1.6} />
-          <h2 className="text-sm font-medium text-slate-200">Ask Titan — عبداللہ</h2>
+          <h2 className="text-sm font-medium text-slate-200">{isGuest() ? "Ask Titan" : "Ask Titan — عبداللہ"}</h2>
         </div>
         <div className="flex items-center gap-1.5">
           <select

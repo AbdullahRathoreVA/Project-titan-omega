@@ -61,6 +61,7 @@ import { ProgressStrip } from "./ProgressStrip";
 import { ThinkingTrace } from "./ThinkingTrace";
 import { Universe } from "./Universe";
 import { chime, speak, speakPremium, tap, unlockAudio } from "@/lib/sound";
+import { isGuest } from "@/lib/guest";
 
 // Global 3D backdrop — behind the whole app, never blocks clicks.
 const Background3D = dynamic(() => import("./Background3D"), { ssr: false });
@@ -272,7 +273,7 @@ export function CommandCenter() {
       <StatusBar status={liveStatus} online={online || live} intel={intel} />
       <ProgressStrip />
 
-      {mrr === 0 && (
+      {mrr === 0 && !isGuest() && (
         <div className="mt-3 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-4 py-3 text-xs text-hud-amber">
           <span className="font-semibold">Abdullah — your empire is live.</span>{" "}
           All numbers are real and start at $0. Got an order? Hit{" "}
@@ -435,7 +436,8 @@ export function CommandCenter() {
               <button
                 key={key}
                 onClick={() => runAction(key, fn)}
-                disabled={actionBusy === key}
+                disabled={actionBusy === key || isGuest()}
+                title={isGuest() ? "Disabled in the read-only demo" : label}
                 className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel/80 px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-hud-cyan/40 hover:text-hud-cyan disabled:opacity-50"
               >
                 <Icon className={`h-3.5 w-3.5 ${actionBusy === key ? "animate-spin" : ""}`} />

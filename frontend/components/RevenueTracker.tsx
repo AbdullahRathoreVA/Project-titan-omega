@@ -36,6 +36,8 @@ function whenLabel(iso: string): string {
   }
 }
 
+import { isGuest } from "@/lib/guest";
+
 export function RevenueTracker({ total, onLogged }: { total: number; onLogged: () => void }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -104,16 +106,22 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
           </div>
           <p className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-500">
             <TrendingUp className="h-3 w-3 text-hud-emerald" />
-            {total === 0 ? "Log your first order — it's coming, Abdullah!" : "Every dollar counts toward the billion."}
+            {isGuest()
+              ? "Sample earnings history — this is a read-only demo."
+              : total === 0
+                ? "Log your first order — it's coming, Abdullah!"
+                : "Every dollar counts toward the billion."}
           </p>
         </div>
-        <button
-          onClick={() => setOpen((o) => !o)}
-          className="flex items-center gap-1.5 rounded-lg border border-hud-emerald/40 bg-hud-emerald/10 px-3 py-2 text-xs font-medium text-hud-emerald transition-colors hover:bg-hud-emerald/20"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Log order
-        </button>
+        {!isGuest() && (
+          <button
+            onClick={() => setOpen((o) => !o)}
+            className="flex items-center gap-1.5 rounded-lg border border-hud-emerald/40 bg-hud-emerald/10 px-3 py-2 text-xs font-medium text-hud-emerald transition-colors hover:bg-hud-emerald/20"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Log order
+          </button>
+        )}
       </div>
 
       {open && (

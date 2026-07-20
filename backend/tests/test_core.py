@@ -414,3 +414,32 @@ def test_revenue_log_requires_auth_or_webhook_secret(monkeypatch):
     ok = client.post("/api/revenue/log", json={"amount": 5, "source": "x"},
                      headers={"X-Webhook-Secret": "hook-secret"})
     assert ok.status_code == 200
+
+
+def test_guest_stream_and_status_agree_and_hide_real_money(monkeypatch):
+    """Regression: the SSE stream used to send REAL mrr, overriding the masked
+    /api/status value — the dashboard showed $0 next to $693 of sample orders."""
+    from app.api.actions import _stream_frame
+    from app.core import demo_data
+
+    STORE.metrics["mrr"] = 91234.0          # founder's real (private) revenue
+    STORE.emit("revenue-tracker", "revenue", "REAL ORDER: +$91234 from client", "success")
+
+    frame, _ = _stream_frame(STORE, 0, guest=True)
+    assert frame["status"]["mrr"] == demo_data.DEMO_MRR
+    assert frame["status"]["mrr"] != 91234.0
+    # real order lines must never reach a demo visitor
+    assert not any("REAL ORDER" in e.get("message", "") for e in frame["events"])
+
+    # founder still sees the truth
+    real, _ = _stream_frame(STORE, 0, guest=False)
+    assert real["status"]["mrr"] == 91234.0
+
+
+def test_guest_progress_is_sampled_not_derived_from_real_revenue(monkeypatch):
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    client = TestClient(app)
+    h = _guest_headers(client)
+    body = client.get("/api/progress", headers=h).json()
+    assert body["level"] > 1 and body["xp"] > 0

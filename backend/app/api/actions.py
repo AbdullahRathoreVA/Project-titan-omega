@@ -19,7 +19,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..core import executive, llm
+from ..core import auth, demo_data, executive, llm
 from ..engines import deliverables, news, opportunity, publisher, research
 from ..store import STORE, Store, now
 
@@ -367,11 +367,20 @@ def _intensity(new_count: int, status: dict) -> float:
     return round(min(1.0, base + 0.1 * new_count), 3)
 
 
-def _stream_frame(store: Store, last_id: int):
+def _stream_frame(store: Store, last_id: int, guest: bool = False):
     events = [e for e in list(store.feed) if _feed_id_num(e["id"]) > last_id]
     if events:
         last_id = max(_feed_id_num(e["id"]) for e in events)
+    if guest:
+        # A public demo visitor must never receive real order lines, and the
+        # money must match the sampled numbers the rest of the demo shows —
+        # otherwise the ledger says $693 while this stream overwrites it with $0.
+        events = [e for e in events if not demo_data.is_revenue_event(e)]
     status = executive.empire_status(store)
+    if guest:
+        status = {**status, "mrr": demo_data.DEMO_MRR,
+                  "pipeline_value": demo_data.DEMO_PIPELINE,
+                  "traffic": demo_data.DEMO_TRAFFIC}
     frame = {
         "ts": now().isoformat(),
         "status": {
@@ -396,12 +405,16 @@ async def stream(request: Request) -> StreamingResponse:
     activity ``intensity`` that drives the 3D core. The dashboard feels alive the
     moment it opens — no manual refresh."""
 
+    tok = (request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+           or request.query_params.get("token", "").strip())
+    guest = auth.valid_guest_token(tok)
+
     async def gen():
         last_id = 0
         while True:
             if await request.is_disconnected():
                 break
-            frame, last_id = _stream_frame(STORE, last_id)
+            frame, last_id = _stream_frame(STORE, last_id, guest)
             yield "data: " + json.dumps(frame, default=str) + "\n\n"
             await asyncio.sleep(1.5)
 

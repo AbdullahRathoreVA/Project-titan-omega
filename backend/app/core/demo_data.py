@@ -34,6 +34,17 @@ _SENSITIVE_PREFIXES = (
 
 _LEAD_STATUSES = ["new", "contacted", "replied", "won", "lost"]
 
+# One source of truth for the demo's headline numbers, so the status card, the
+# live SSE stream, the revenue ledger and the finance panel can never disagree.
+DEMO_MRR = 693.0
+DEMO_PIPELINE = 4200.0
+DEMO_TRAFFIC = 1280
+
+
+def is_revenue_event(e: dict) -> bool:
+    """Real order/revenue lines must never reach a public demo visitor."""
+    return e.get("kind") == "revenue" or "REAL ORDER" in str(e.get("message", ""))
+
 
 def _iso(days_ago: int) -> str:
     return (now() - timedelta(days=days_ago)).isoformat()
@@ -89,7 +100,7 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
     """Demo-safe replacement for a guest GET, or None to serve the live response."""
     # --- private business data: fully substituted -------------------------
     if path == "/api/finance":
-        rev, exp = 693.0, 37.0
+        rev, exp = DEMO_MRR, 37.0
         return {
             "revenue_total": rev, "expenses_total": exp, "profit": rev - exp,
             "revenue_30d": 455.0, "expenses_30d": 25.0,
@@ -105,7 +116,7 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
         }
     if path == "/api/revenue":
         return {
-            "total": 693.0,
+            "total": DEMO_MRR,
             "by_source": {"fiverr": 89.0, "career_mind": 0.0, "kindle": 0.0, "other": 604.0},
             "fiverr_orders": 1,
         }
@@ -119,15 +130,30 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
         return _sample_jobs()
     if path == "/api/deliverables":
         return []
+    if path == "/api/progress":
+        # XP is computed from real revenue/leads, so it must be sampled too —
+        # otherwise the demo shows "LV 1 · 0 XP" beside $693 of sample earnings.
+        return {
+            "xp": 7180, "level": 9, "level_floor": 6400, "next_level_xp": 8100,
+            "milestones": [
+                {"label": "First real order logged", "done": True},
+                {"label": "First lead contacted", "done": True},
+                {"label": "First lead won", "done": True},
+                {"label": "10 posts scheduled", "done": True},
+                {"label": "First deliverable produced", "done": True},
+                {"label": "First job application sent", "done": False},
+                {"label": "$1,000 earned", "done": False},
+            ],
+        }
 
     # --- live but money-masked -------------------------------------------
     if path == "/api/status":
         from . import executive
 
         s = executive.empire_status(STORE)
-        s["mrr"] = 693.0            # SAMPLE — never the founder's real revenue
-        s["pipeline_value"] = 4200.0
-        s["traffic"] = 1280
+        s["mrr"] = DEMO_MRR          # SAMPLE — never the founder's real revenue
+        s["pipeline_value"] = DEMO_PIPELINE
+        s["traffic"] = DEMO_TRAFFIC
         s["updated_at"] = s["updated_at"].isoformat() if hasattr(s["updated_at"], "isoformat") else s["updated_at"]
         return s
 
@@ -135,7 +161,7 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
         out = []
         for e in STORE.recent_feed(limit):
             # Never leak real order/revenue lines into the public demo.
-            if e.get("kind") == "revenue" or "REAL ORDER" in str(e.get("message", "")):
+            if is_revenue_event(e):
                 continue
             ev = dict(e)
             ts = ev.get("timestamp")
