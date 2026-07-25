@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List
 
+from ..core import learning
 from ..domain.enums import OpportunityStatus
 from ..store import STORE, Store, now
 
@@ -149,17 +150,25 @@ def discover(store: Store = STORE) -> List[dict]:
     created: List[dict] = []
     for cand in _CANDIDATES:
         oid = store.new_id("opp")
-        priority = score(
+        formula = score(
             cand["expected_revenue"],
             cand["difficulty"],
             cand["risk"],
             cand["time_estimate_days"],
         )
+        # Learned re-rank: the formula is fixed, but which KINDS of opportunity
+        # Abdullah actually pursues is not. Until enough decisions exist this
+        # returns the formula score unchanged and says so.
+        text = f"{cand.get('title', '')} {cand.get('rationale', '')}"
+        priority, why = learning.rerank(text, formula)
+
         opp = {
             "id": oid,
             **cand,
             "status": OpportunityStatus.SCORED,
             "priority_score": priority,
+            "formula_score": formula,
+            "rank_reason": why,
             "discovered_at": now(),
         }
         store.opportunities[oid] = opp

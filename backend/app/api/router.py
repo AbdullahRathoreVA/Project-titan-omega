@@ -14,7 +14,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .. import persistence
-from ..core import auth, executive, llm
+from ..core import auth, executive, learning, llm
 from ..domain.enums import Horizon
 from ..domain.schemas import (
     AgentView,
@@ -847,3 +847,35 @@ def evolution_status() -> dict:
             and a.get("opportunity_id")
         ),
     }
+
+
+# ---------------------------------------------------------------- learning ---
+# Titan adapting its ranking to what Abdullah actually pursues, rather than
+# ranking identically forever. See core/learning.py for the honesty rules.
+
+class LearnIn(BaseModel):
+    text: str = Field(..., description="Opportunity title + rationale")
+    pursued: bool = Field(..., description="True if he acted on it")
+
+
+@router.get("/learning", tags=["system"])
+def learning_stats() -> dict:
+    """What the model has learned, with cross-validated accuracy."""
+    return learning.stats()
+
+
+@router.post("/learning/record", tags=["system"])
+def learning_record(payload: LearnIn) -> dict:
+    """Log one real decision so the ranking improves."""
+    learning.record(payload.text, payload.pursued)
+    return {"ok": True, "stats": learning.stats()}
+
+
+@router.post("/learning/opportunity/{opportunity_id}", tags=["system"])
+def learning_from_opportunity(opportunity_id: str, pursued: bool = Query(...)) -> dict:
+    """Teach from a stored opportunity by id — what the dashboard calls."""
+    opp = STORE.opportunities.get(opportunity_id)
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    learning.record(f"{opp.get('title','')} {opp.get('rationale','')}", pursued)
+    return {"ok": True, "stats": learning.stats()}

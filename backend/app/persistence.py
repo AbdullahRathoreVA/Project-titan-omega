@@ -16,6 +16,7 @@ import json
 import os
 import tempfile
 
+from .core import learning
 from .store import STORE, Store
 
 
@@ -38,6 +39,9 @@ def save(store: Store = STORE) -> None:
             "expenses": store.expenses,
             "leads": store.leads,
             "decisions": store.decisions,
+            # Learned preference must survive restarts, or Titan forgets his
+            # judgement every rebuild and re-enters its cold start forever.
+            "learning": learning.export_state(),
         }
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -71,5 +75,8 @@ def load(store: Store = STORE) -> None:
         decisions = data.get("decisions")
         if isinstance(decisions, list):
             store.decisions = decisions
+        learned = data.get("learning")
+        if isinstance(learned, dict):
+            learning.import_state(learned)
     except Exception:
         pass

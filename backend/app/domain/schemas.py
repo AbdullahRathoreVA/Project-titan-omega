@@ -63,7 +63,12 @@ class Opportunity(BaseModel):
     difficulty: float = 0.0                # 0-100, higher = harder
     risk: float = 0.0                      # 0-100, higher = riskier
     time_estimate_days: float = 0.0
-    priority_score: float = 0.0            # composite, computed by the engine
+    priority_score: float = 0.0            # composite, after learned re-rank
+    # The raw formula score before Titan applied what it learned about which
+    # opportunities Abdullah actually pursues, plus a plain-language reason.
+    # Surfacing both keeps the ranking auditable instead of a black box.
+    formula_score: Optional[float] = None
+    rank_reason: Optional[str] = None
     execution_plan: List[str] = Field(default_factory=list)
     discovered_at: datetime
 
