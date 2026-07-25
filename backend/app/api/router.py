@@ -879,3 +879,30 @@ def learning_from_opportunity(opportunity_id: str, pursued: bool = Query(...)) -
         raise HTTPException(status_code=404, detail="Opportunity not found")
     learning.record(f"{opp.get('title','')} {opp.get('rationale','')}", pursued)
     return {"ok": True, "stats": learning.stats()}
+
+
+@router.post("/learning/bootstrap", tags=["system"])
+def learning_bootstrap() -> dict:
+    """Teach the ranker from the LLM chain so it works without waiting for clicks.
+
+    Judges the currently-known opportunities against Abdullah's real situation
+    (solo, no capital, needs revenue in weeks) and learns from those verdicts.
+    His own execute/dismiss decisions still override this later.
+    """
+    items = [
+        (f"{o.get('title','')} {o.get('rationale','') or o.get('description','')}",
+         float(o.get("formula_score") or o.get("priority_score") or 0.0))
+        for o in STORE.opportunities.values()
+    ]
+    if not items:
+        opportunity.discover(STORE)
+        items = [
+            (f"{o.get('title','')} {o.get('rationale','') or o.get('description','')}",
+             float(o.get("formula_score") or o.get("priority_score") or 0.0))
+            for o in STORE.opportunities.values()
+        ]
+    result = learning.teach_from_llm(items)
+    # Re-score everything now that the model knows something.
+    opportunity.discover(STORE)
+    persistence.save(STORE)
+    return result

@@ -22,6 +22,7 @@ Design constraints, deliberately matching the rest of the codebase:
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import threading
@@ -196,6 +197,76 @@ def stats() -> dict:
         "learned_ignore": m.top_tokens(0, 6) if m else [],
         "vocab": len(m.vocab) if m else 0,
     }
+
+
+# ----------------------------------------------------------------- teacher ---
+# Cold start removal. Waiting for Abdullah to execute or dismiss 10
+# opportunities means Titan ranks by the frozen formula for weeks. Instead we
+# let the LLM chain judge the seed opportunities against his actual situation,
+# and learn from that. His own decisions still override these later, because he
+# is ground truth and the model is only a bootstrap.
+
+_TEACHER_SYSTEM = (
+    "You advise a solo technical founder in Pakistan with no capital, no team, "
+    "and an unlaunched digital product. He needs revenue in weeks, not quarters. "
+    "You judge whether he would realistically pursue a given business "
+    "opportunity NOW. Work that reaches paying customers fast scores HIGH. "
+    "Internal tooling, compliance, enterprise infrastructure and anything "
+    "requiring a team or existing revenue scores LOW."
+)
+
+_TEACHER_PROMPT = (
+    "Opportunity:\n{text}\n\n"
+    'Reply with JSON only: {{"score": <0-10 how likely he pursues this now>}}'
+)
+
+
+def teach_from_llm(items: Iterable[tuple[str, float]], max_items: int = 12) -> dict:
+    """Label opportunities with the LLM chain so ranking works from day one.
+
+    items: (text, formula_score) pairs. Returns a summary dict; never raises.
+    """
+    from . import llm as _llm  # local import: avoids a cycle at module load
+
+    labelled = skipped = 0
+    for text, _formula in list(items)[:max_items]:
+        if not text or not text.strip():
+            continue
+        raw = _llm.complete(_TEACHER_SYSTEM,
+                            _TEACHER_PROMPT.format(text=text[:1200]),
+                            max_tokens=120)
+        score = _parse_score(raw)
+        if score is None:
+            skipped += 1
+            continue
+        # The middle is genuinely ambiguous - teaching from it adds noise.
+        if 4.0 < score < 6.0:
+            skipped += 1
+            continue
+        record(text, score >= 6.0)
+        labelled += 1
+
+    return {"labelled": labelled, "skipped": skipped,
+            "source": "llm_teacher", "stats": stats()}
+
+
+def _parse_score(raw: str | None) -> float | None:
+    if not raw:
+        return None
+    fenced = re.search(r"```(?:json)?\s*(.+?)```", raw, re.S)
+    if fenced:
+        raw = fenced.group(1)
+    start = raw.find("{")
+    if start != -1:
+        for end in range(len(raw), start, -1):
+            try:
+                obj = json.loads(raw[start:end])
+                if isinstance(obj, dict) and "score" in obj:
+                    return max(0.0, min(10.0, float(obj["score"])))
+            except Exception:
+                continue
+    m = re.search(r"\b(10|\d(?:\.\d)?)\b", raw)
+    return max(0.0, min(10.0, float(m.group(1)))) if m else None
 
 
 def export_state() -> dict:
