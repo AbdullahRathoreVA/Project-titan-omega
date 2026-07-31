@@ -178,6 +178,18 @@ def update(cid: str, **fields) -> dict:
         return public(cid)
 
 
+def update_raw(cid: str, **fields) -> None:
+    """Set internal fields not exposed through the editable allow-list.
+
+    Used for cached derived data (e.g. the last audit result) that the client
+    must be able to READ but never SET through the public update path.
+    """
+    with _lock:
+        c = _clients.get(cid)
+        if c:
+            c.update(fields)
+
+
 def set_password(cid: str, password: str) -> bool:
     with _lock:
         c = _clients.get(cid)

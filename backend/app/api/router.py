@@ -32,7 +32,8 @@ from ..domain.schemas import (
     ScheduledPost,
     StrategicPlan,
 )
-from ..engines import (brand_playbook, client_content, client_report, client_seo,
+from ..engines import (brand_playbook, client_content, client_report,
+                       client_seo, discovery,
                        deliverables, evolution, execution,
                        opportunity, publisher)
 from ..store import STORE, AgentRuntime, now
@@ -996,6 +997,9 @@ def admin_run_client_seo(cid: str) -> dict:
     clients.bump(cid, "seo_audits")
     if result.get("ok"):
         clients.bump(cid, "issues_found", len(result.get("findings", [])))
+        # Keep the last result so discovery can aggregate across clients
+        # without re-crawling every site on every request.
+        clients.update_raw(cid, last_audit=result)
         clients.log_activity(
             cid, "seo",
             f"SEO audit: {result['score']}/100 ({result['grade']}), "
@@ -1102,13 +1106,12 @@ def admin_report_pdf(cid: str):
 
 
 @router.get("/client/content", tags=["clients"])
-def client_content_week(dishes: str = Query(""),
+def client_content_week(dishes: str = Query(""), lang: str = Query("en"),
                         x_client_token: Optional[str] = Header(None)) -> dict:
-    """A week of ready-to-post captions, written in the client's own language."""
+    """A week of captions in English, each with a market-language twin."""
     cid = _client_from_header(x_client_token)
-    rec = clients.get(cid) or {}
     out = client_content.week_of_posts(
-        clients.public(cid),
+        clients.public(cid), lang=lang,
         dishes=[d.strip() for d in dishes.split(",") if d.strip()])
     clients.bump(cid, "posts_drafted", len(out.get("posts", [])))
     clients.log_activity(cid, "content",
@@ -1118,13 +1121,31 @@ def client_content_week(dishes: str = Query(""),
 
 
 @router.post("/admin/clients/{cid}/content", tags=["clients"])
-def admin_client_content(cid: str, dishes: str = Query("")) -> dict:
-    rec = clients.get(cid)
-    if not rec:
+def admin_client_content(cid: str, dishes: str = Query(""),
+                         lang: str = Query("en")) -> dict:
+    if not clients.get(cid):
         raise HTTPException(status_code=404, detail="Client not found")
     out = client_content.week_of_posts(
-        clients.public(cid),
+        clients.public(cid), lang=lang,
         dishes=[d.strip() for d in dishes.split(",") if d.strip()])
     clients.bump(cid, "posts_drafted", len(out.get("posts", [])))
     persistence.save(STORE)
     return out
+
+
+# ---- discovery: opportunities and risks found in real client data ----------
+
+@router.get("/admin/discovery", tags=["clients"])
+def admin_discovery(live: bool = Query(False)) -> dict:
+    """Sellable offers derived from recurring findings, plus portfolio risks.
+
+    live=true re-audits every client website (slow). Default reads the last
+    stored audit result per client.
+    """
+    cache = {}
+    if not live:
+        for c in clients.all_clients():
+            last = c.get("last_audit")
+            if last:
+                cache[c["id"]] = last
+    return discovery.report(cache, live=live)

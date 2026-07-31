@@ -85,10 +85,15 @@ BANNED = [
 ]
 
 
-def language_for(country: str) -> str:
+def market_language(country: str) -> str:
+    """The language the client's own CUSTOMERS actually search and read in."""
     return {"Germany": "de", "Austria": "de", "Switzerland": "de",
             "France": "fr", "Italy": "it", "Spain": "es",
             "Netherlands": "nl"}.get(country or "", "en")
+
+
+# Kept for callers that used the old name.
+language_for = market_language
 
 
 def _violates(caption: str) -> Optional[str]:
@@ -173,13 +178,24 @@ def write_caption(pillar: str, *, business: str, cuisine: str, city: str,
     }
 
 
-def week_of_posts(client: dict, *, dishes: Optional[list[str]] = None) -> dict:
-    """A full week of ready-to-post captions for one client."""
-    lang = language_for(client.get("country", ""))
+def week_of_posts(client: dict, *, dishes: Optional[list[str]] = None,
+                  lang: str = "en", with_market_language: bool = True) -> dict:
+    """A full week of ready-to-post captions.
+
+    Defaults to ENGLISH so Abdullah can read, judge and edit every caption
+    before it goes out under a client's name — reviewing copy you cannot read
+    is not review.
+
+    When the client's customers speak something else, each post also carries a
+    `local` caption in that market language. A Berlin restaurant's diners search
+    and read in German, so posting only English would cost the client reach.
+    English is the working copy; local is what actually gets published.
+    """
     business = client.get("business_name", "the restaurant")
     cuisine = client.get("industry") or "restaurant"
     city = client.get("city", "")
     dishes = [d for d in (dishes or []) if d]
+    market = market_language(client.get("country", ""))
 
     slots = [("Monday", "season"), ("Tuesday", "craft"),
              ("Thursday", "people"), ("Saturday", "guest")]
@@ -190,11 +206,25 @@ def week_of_posts(client: dict, *, dishes: Optional[list[str]] = None) -> dict:
         post = write_caption(pillar, business=business, cuisine=cuisine,
                              city=city, lang=lang, dish=dish)
         post["day"] = day
+
+        if with_market_language and market != lang:
+            twin = write_caption(pillar, business=business, cuisine=cuisine,
+                                 city=city, lang=market, dish=dish)
+            post["local"] = twin["caption"]
+            post["local_language"] = market
+            post["local_source"] = twin["source"]
         posts.append(post)
 
     return {
         "business": business,
         "language": lang,
+        "market_language": market,
+        "language_note": (
+            f"Captions are in English for your review. Each also has a "
+            f"'{market}' version — post that one, because the client's "
+            f"customers search in {LANG_NAME.get(market, market)}."
+            if market != lang else
+            "Client's market speaks English, so one version is enough."),
         "posts": posts,
         "cadence": brand_playbook.CADENCE,
         "avoid": brand_playbook.FORBIDDEN,
