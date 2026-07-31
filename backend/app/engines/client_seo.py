@@ -28,6 +28,8 @@ import urllib.parse
 import urllib.request
 from typing import Optional
 
+from . import compliance
+
 TIMEOUT = 15
 
 # A normal browser UA. This audit only ever runs against a site the client has
@@ -68,7 +70,8 @@ def _text(pattern: str, html: str, group: int = 1) -> str:
     return (m.group(group) or "").strip() if m else ""
 
 
-def audit(url: str, *, business_name: str = "", city: str = "") -> dict:
+def audit(url: str, *, business_name: str = "", city: str = "",
+          country: str = "") -> dict:
     """Full audit of one page. Never raises."""
     if not url:
         return {"ok": False, "error": "no website configured"}
@@ -222,12 +225,21 @@ def audit(url: str, *, business_name: str = "", city: str = "") -> dict:
         "Add robots.txt allowing crawl and listing the sitemap.",
         key="robots", ok=bool(rb))
 
+    # ------------------------------------------------------- compliance ----
+    # Legal exposure is reported ALONGSIDE SEO, not folded into the SEO score.
+    # A missing Impressum is not "8 points off" - it is a fine and an open
+    # invitation for a competitor Abmahnung, and it must not be averaged away.
+    tld = parsed.netloc.rsplit(".", 1)[-1] if "." in parsed.netloc else ""
+    legal = compliance.check(html, country=country, tld=tld, url=url)
+    findings.extend(legal["findings"])
+
     # ----------------------------------------------------------- score ----
     total = sum(WEIGHTS.values())
     got = sum(w for k, w in WEIGHTS.items() if earned.get(k))
     score = round(100 * got / total)
 
-    order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    order = {"legal-critical": 0, "critical": 1, "high": 2,
+             "medium": 3, "low": 4}
     findings.sort(key=lambda f: order.get(f["severity"], 9))
 
     return {
@@ -241,7 +253,9 @@ def audit(url: str, *, business_name: str = "", city: str = "") -> dict:
         "failed": [k for k, v in earned.items() if not v],
         "schema_types": sorted(set(types)),
         "findings": findings,
+        "legal": legal,
         "counts": {
+            "legal_critical": legal["legal_critical"],
             "critical": sum(1 for f in findings if f["severity"] == "critical"),
             "high": sum(1 for f in findings if f["severity"] == "high"),
             "medium": sum(1 for f in findings if f["severity"] == "medium"),
@@ -254,22 +268,23 @@ def audit(url: str, *, business_name: str = "", city: str = "") -> dict:
 
 
 def suggested_schema(business_name: str, city: str, website: str,
-                     cuisine: str = "", phone: str = "") -> str:
+                     cuisine: str = "", phone: str = "",
+                     country_code: str = "DE") -> str:
     """A ready-to-paste JSON-LD block — the highest-value single fix."""
     node = {
         "@context": "https://schema.org",
         "@type": "Restaurant",
         "name": business_name or "Your Restaurant",
         "url": website or "",
-        "servesCuisine": cuisine or "Pakistani",
+        "servesCuisine": cuisine or "European",
         "priceRange": "$$",
         "address": {
             "@type": "PostalAddress",
             "streetAddress": "<street address>",
             "addressLocality": city or "<city>",
-            "addressCountry": "PK",
+            "addressCountry": country_code or "DE",
         },
-        "telephone": phone or "<+92 …>",
+        "telephone": phone or "<+49 …>",
         "openingHoursSpecification": [{
             "@type": "OpeningHoursSpecification",
             "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday",
