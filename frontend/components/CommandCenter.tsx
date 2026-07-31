@@ -1,5 +1,6 @@
 "use client";
 
+import ClientCommand from "./ClientCommand";
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -82,7 +83,7 @@ export function CommandCenter() {
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
   const [view, setView] = useState<
-    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm"
+    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm" | "clients"
   >("universe");
   const [executions, setExecutions] = useState<ExecutionItem[]>([]);
   const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
@@ -321,6 +322,7 @@ export function CommandCenter() {
               ["universe", "Universe"],
               ["dashboard", "Dashboard"],
               ["mission", "Mission"],
+              ["clients", "Clients"],
               ["graph", "Graph"],
               ["city", "AI City"],
               ["warroom", "War Room"],
@@ -387,6 +389,8 @@ export function CommandCenter() {
           {view === "warroom" && (
             <WarRoomView intensity={intensity} agentCount={liveStatus?.total_agents ?? agents.length} />
           )}
+
+          {view === "clients" && <ClientCommand />}
 
           {view === "telegram" && <TelegramCenter />}
 
