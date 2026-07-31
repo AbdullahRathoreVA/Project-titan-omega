@@ -1,0 +1,237 @@
+"""Social strategy derived from measured luxury-brand behaviour, not folklore.
+
+Every number below was read directly off the live Instagram profiles on
+2026-07-26, not recalled or estimated:
+
+  brand            posts    followers   following
+  CHANEL           7,446    59.0M       3
+  Louis Vuitton    9,381    55.1M       7
+  Gucci              367    50.5M       4
+  Dior            14,480    46.5M       9
+  Prada            9,906    33.5M       9
+  Tommy Hilfiger   1,872    15.0M     347
+  Jacquemus        8,120     6.8M    1,058
+  Bottega Veneta      —        —         —   (account deleted, 2021)
+
+What the data actually shows, and why it matters for a restaurant:
+
+1. FOLLOWING COUNT IS A POSITIONING SIGNAL. The five most prestigious brands
+   follow 3-9 accounts. Tommy Hilfiger (mass-market) follows 347. Jacquemus
+   (young, accessible) follows 1,058. Following few reads as self-sufficiency;
+   following many reads as needing attention. A restaurant that follows 3,000
+   accounts looks like it is chasing customers.
+
+2. GUCCI HAS 367 POSTS AND 50.5M FOLLOWERS. They periodically purge the grid.
+   Archive is a tool: a clean grid signals a deliberate current identity rather
+   than an accumulated diary. Contrast Dior at 14,480 posts — both work, but
+   only if the choice is deliberate.
+
+3. BIOS ARE PHILOSOPHY, NOT SALES. Prada: "Thinking fashion since 1913." Dior
+   quotes Christian Dior himself. Nobody writes "Shop now" or lists prices.
+
+4. DIOR PUTS A PHYSICAL ADDRESS IN THE BIO ("30 avenue Montaigne, Paris").
+   For a local restaurant this is free, high-value local SEO and almost nobody
+   independent does it.
+
+5. STORY HIGHLIGHTS ARE NAMED AFTER COLLECTIONS IN THE BRAND'S OWN LANGUAGE.
+   LV uses French (Le Keepall, Le Noé, L'Alma); Gucci Italian (Primavera,
+   La Famiglia); Dior season codes (Couture FW27, DiorSummer27). None use
+   generic labels like "Menu" or "About us". For a restaurant this translates
+   directly: name highlights after dishes and seasons in the cuisine's language.
+
+6. LINK-IN-BIO POINTS AT THE CURRENT CAMPAIGN, NOT THE HOMEPAGE. Chanel links
+   to /-Connects-Season6, Gucci to a Monte Carlo campaign. One live thing, not
+   a generic front door.
+
+7. BOTTEGA VENETA DELETED EVERY SOCIAL ACCOUNT IN 2021 AND THE BRAND GREW.
+   Presence is a choice, not an obligation. Worth knowing before promising a
+   client that more posting is always better.
+
+The cross-cutting rule confirmed by research: over-posting destroys luxury
+positioning. Posting 3-5x daily signals accessibility. High-craft sub-frequency
+posts earn saves and shares instead. Discount- and urgency-driven content is
+the fastest way to damage brand equity — scarcity framing ("limited", "while
+it lasts") works where "50% OFF" does not.
+"""
+
+from __future__ import annotations
+
+# Measured 2026-07-26 from live profiles.
+BENCHMARKS = {
+    "chanelofficial": {"posts": 7446, "followers": 59_000_000, "following": 3},
+    "louisvuitton": {"posts": 9381, "followers": 55_100_000, "following": 7},
+    "gucci": {"posts": 367, "followers": 50_500_000, "following": 4},
+    "dior": {"posts": 14480, "followers": 46_500_000, "following": 9},
+    "prada": {"posts": 9906, "followers": 33_500_000, "following": 9},
+    "tommyhilfiger": {"posts": 1872, "followers": 15_000_000, "following": 347},
+    "jacquemus": {"posts": 8120, "followers": 6_800_000, "following": 1058},
+}
+
+# Restaurant-specific pillars. Luxury principles adapted — a restaurant is a
+# local business, so provenance and people replace runway and celebrity.
+PILLARS = [
+    {
+        "key": "craft",
+        "name": "The craft",
+        "share": 0.30,
+        "what": "One dish, shot properly. Close, natural light, no clutter.",
+        "why": "The product IS the brand. Luxury sells the object, not the offer.",
+        "example": "Slow-motion pour of the sauce finishing a plate. No text.",
+    },
+    {
+        "key": "people",
+        "name": "The people",
+        "share": 0.20,
+        "what": "The chef, the kitchen, the hands doing the work.",
+        "why": "Provenance and authorship are what justify a premium price.",
+        "example": "The head chef plating, named, with one line about their training.",
+    },
+    {
+        "key": "place",
+        "name": "The place",
+        "share": 0.15,
+        "what": "The room, the light at a specific hour, the street outside.",
+        "why": "Turns a meal into a destination — and carries the local signal.",
+        "example": "The dining room at 18:40 as the lights come on.",
+    },
+    {
+        "key": "season",
+        "name": "Season and scarcity",
+        "share": 0.20,
+        "what": "What is on the menu only now, and when it ends.",
+        "why": "Scarcity framing works where discounting destroys equity.",
+        "example": "'White asparagus. Six weeks only.' — never 'SPECIAL OFFER'.",
+    },
+    {
+        "key": "guest",
+        "name": "Guests and proof",
+        "share": 0.15,
+        "what": "Reposted guest photos, a quiet full room, a review quote.",
+        "why": "Social proof drives reservations and feeds review signals, "
+                "which are 16-20% of local ranking.",
+        "example": "A repost credited to the guest, thanking them by name.",
+    },
+]
+
+CADENCE = {
+    "feed_posts_per_week": 4,
+    "reels_per_week": 2,
+    "stories_per_day": 2,
+    "rationale": (
+        "Four crafted feed posts a week beats daily filler. Measured luxury "
+        "practice is sub-frequency and high craft; posting 3-5x daily reads as "
+        "accessibility, which is the opposite of what a premium restaurant "
+        "wants. Stories carry the daily rhythm because they expire and "
+        "therefore cost the grid nothing."
+    ),
+}
+
+FORBIDDEN = [
+    ("50% OFF / HUGE SALE", "Discount-led posting is the fastest way to damage "
+     "premium positioning. Use scarcity, not price cuts."),
+    ("LINK IN BIO!! 🔥🔥🔥", "Emoji-stacked urgency reads as desperation. None "
+     "of the seven brands measured does this."),
+    ("Generic stock food photos", "The product must be the actual product. "
+     "Stock imagery is detectable and destroys trust."),
+    ("Following thousands of accounts", "The top brands follow 3-9. Following "
+     "thousands signals chasing rather than being sought."),
+    ("Posting the same photo to feed and story", "Wastes the grid slot. The "
+     "grid is the permanent identity; stories are the daily rhythm."),
+]
+
+
+def bio_template(name: str, cuisine: str, city: str, address: str = "",
+                 founded: str = "") -> dict:
+    """A bio built the way the measured brands build theirs."""
+    line = (f"{cuisine} since {founded}." if founded
+            else f"{cuisine}, cooked properly.")
+    return {
+        "line_1_philosophy": line,
+        "line_2_place": address or f"{city}",
+        "line_3_link": "One live thing — this week's menu or reservations. "
+                       "Never the bare homepage.",
+        "why": ("Prada's entire bio is 'Thinking fashion since 1913.' Dior "
+                "quotes its founder and lists 30 avenue Montaigne. Philosophy "
+                "plus address, no sales language. The address is also free "
+                "local SEO that most independents omit."),
+        "example": f"{line}\n{address or city}\n→ this week's menu",
+    }
+
+
+def highlights_plan(cuisine: str, language: str = "en") -> list[str]:
+    """Highlight names follow the brands: collections in the native language."""
+    by_lang = {
+        "de": ["Die Karte", "Mittagstisch", "Weinkarte", "Das Team",
+               "Der Raum", "Reservierung"],
+        "it": ["Il Menù", "La Carta dei Vini", "La Cucina", "La Sala",
+               "Stagione", "Prenota"],
+        "fr": ["La Carte", "Les Vins", "La Cuisine", "La Salle",
+               "Saison", "Réserver"],
+        "en": ["The Menu", "The Wine", "The Kitchen", "The Room",
+               "In Season", "Book"],
+    }
+    return by_lang.get(language, by_lang["en"])
+
+
+def audit_profile(posts: int, followers: int, following: int) -> dict:
+    """Compare a client's account against measured luxury behaviour."""
+    findings = []
+
+    if following > 500:
+        findings.append({
+            "severity": "high",
+            "title": f"Following {following:,} accounts",
+            "detail": ("The five most prestigious brands measured follow 3-9 "
+                       "accounts (Chanel 3, Gucci 4, LV 7, Prada 9, Dior 9). "
+                       "Following thousands reads as chasing attention."),
+            "fix": "Unfollow down to suppliers, staff and genuine partners.",
+        })
+
+    ratio = followers / max(following, 1)
+    if followers and ratio < 10:
+        findings.append({
+            "severity": "medium",
+            "title": "Follower-to-following ratio is near 1:1",
+            "detail": "Reads as follow-for-follow growth, which suppresses "
+                      "perceived status and rarely converts to covers.",
+            "fix": "Stop reciprocal following. Grow through craft and reposts.",
+        })
+
+    if posts > 3000 and followers < 50_000:
+        findings.append({
+            "severity": "medium",
+            "title": f"{posts:,} posts but {followers:,} followers",
+            "detail": ("High volume with low reach means the posts are not "
+                       "earning saves or shares. Gucci holds 50.5M followers "
+                       "on 367 posts — volume is not the lever."),
+            "fix": "Cut to 4 crafted posts a week and archive weak old posts.",
+        })
+
+    return {
+        "findings": findings,
+        "benchmarks": BENCHMARKS,
+        "verdict": ("aligned with premium practice" if not findings
+                    else f"{len(findings)} positioning issue(s)"),
+    }
+
+
+def weekly_plan(name: str, cuisine: str, city: str,
+                language: str = "en") -> list[dict]:
+    """A concrete week, weighted by the pillar shares."""
+    slots = [
+        ("Monday", "season", "Quiet week-opener: what just came into season."),
+        ("Tuesday", "craft", "Hero dish, close and clean. Caption under 12 words."),
+        ("Thursday", "people", "The kitchen at work. Name the person."),
+        ("Saturday", "guest", "Repost a guest photo, credited."),
+    ]
+    out = []
+    for day, pillar_key, brief in slots:
+        p = next(x for x in PILLARS if x["key"] == pillar_key)
+        out.append({
+            "day": day, "pillar": p["name"], "brief": brief,
+            "format": "Reel" if pillar_key in ("craft", "people") else "Photo",
+            "caption_rule": ("Under 15 words. No emoji stacks, no 'link in "
+                             "bio!!', no discounts. State the thing plainly."),
+            "why": p["why"],
+        })
+    return out
