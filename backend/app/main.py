@@ -125,20 +125,26 @@ _OPEN_PATHS = {
     "/api/content/daily",
     "/api/intel/news",
     "/api/inbox/auto-reply",
-    # Client portal. These carry their OWN credential (X-Client-Token) and are
-    # scoped to a single business, so they must bypass the founder token guard
-    # without weakening it: /client/* resolves the token to exactly one client
-    # and fails closed on anything unrecognised. Admin client management stays
-    # behind the founder token.
-    "/api/client/login",
-    "/api/client/me",
-    "/api/client/seo",
-    "/api/client/seo/schema",
+    # NOTE: the client portal is handled by _OPEN_PREFIXES below, not here.
+    # Listing each path individually meant every new client endpoint silently
+    # 401'd until someone remembered to register it — /client/social and
+    # /client/report.pdf both did exactly that.
     # NOTE: /api/revenue/log is deliberately NOT open. It writes to the real
     # money ledger, and this deployment is publicly reachable (demo button), so
     # it now requires the founder token or the X-Webhook-Secret header. Make.com
     # must send:  X-Webhook-Secret: <TITAN_WEBHOOK_SECRET>
 }
+
+
+# Every /api/client/* route carries its OWN credential (X-Client-Token), is
+# scoped to exactly one business, and fails closed on an unrecognised token.
+# So the whole prefix bypasses the FOUNDER token guard without weakening it —
+# admin client management stays behind the founder token.
+#
+# A prefix rather than a list of exact paths: listing them individually meant
+# every new client endpoint silently 401'd until someone remembered to register
+# it, which is exactly what happened to /client/social and /client/report.pdf.
+_OPEN_PREFIXES = ("/api/client/",)
 
 
 @app.get("/portal", include_in_schema=False)
@@ -165,7 +171,9 @@ async def no_cache_html(request: Request, call_next):
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
     path = request.url.path
-    if auth.require_auth() and path.startswith("/api") and path not in _OPEN_PATHS:
+    if (auth.require_auth() and path.startswith("/api")
+            and path not in _OPEN_PATHS
+            and not path.startswith(_OPEN_PREFIXES)):
         token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         # EventSource can't set headers, so the live stream passes its token in
         # the query string instead. Same token, same validation.

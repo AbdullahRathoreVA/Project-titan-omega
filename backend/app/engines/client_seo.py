@@ -212,12 +212,21 @@ def audit(url: str, *, business_name: str = "", city: str = "",
         key="og", ok=og >= 3)
 
     # ------------------------------------------------- site-level checks ----
+    # A sitemap INDEX (<sitemapindex>) is just as valid as a flat <urlset> and
+    # is what larger sites actually serve. Accepting only <urlset> reported
+    # "No sitemap.xml" for vapiano.de while quoting its own HTTP 200 in the same
+    # sentence — a false positive in a client-facing report, which is worse than
+    # missing the finding entirely.
     sm, _, sm_status = _fetch(f"{origin}/sitemap.xml")
-    add("sitemap", "medium", "No sitemap.xml",
-        f"{origin}/sitemap.xml returned {sm_status or 'nothing'}. Search "
-        f"engines find pages slower without it.",
-        "Publish a sitemap.xml and reference it from robots.txt.",
-        key="sitemap", ok=bool(sm) and "<urlset" in (sm or ""))
+    sm_valid = bool(sm) and ("<urlset" in sm or "<sitemapindex" in sm)
+    add("sitemap", "medium", "No valid sitemap.xml",
+        f"{origin}/sitemap.xml returned "
+        f"{('HTTP ' + str(sm_status)) if sm_status else 'nothing'}"
+        + (" but the body is not a sitemap." if sm and not sm_valid else ".")
+        + " Search engines find pages slower without one.",
+        "Publish a sitemap.xml (or sitemap index) and reference it from "
+        "robots.txt.",
+        key="sitemap", ok=sm_valid)
 
     rb, _, rb_status = _fetch(f"{origin}/robots.txt")
     add("robots", "low", "No robots.txt",

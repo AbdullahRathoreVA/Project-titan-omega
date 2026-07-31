@@ -10,7 +10,8 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import (APIRouter, Header, HTTPException, Query, Request,
+                     Response)
 from pydantic import BaseModel, Field
 
 from .. import persistence
@@ -31,7 +32,8 @@ from ..domain.schemas import (
     ScheduledPost,
     StrategicPlan,
 )
-from ..engines import (client_seo, deliverables, evolution, execution,
+from ..engines import (brand_playbook, client_report, client_seo,
+                       deliverables, evolution, execution,
                        opportunity, publisher)
 from ..store import STORE, AgentRuntime, now
 from .actions import UPWORK_PROFILE_URL
@@ -1038,3 +1040,62 @@ def client_seo_schema(x_client_token: Optional[str] = Header(None)) -> dict:
     return {"json_ld": client_seo.suggested_schema(
         rec.get("business_name", ""), rec.get("city", ""),
         rec.get("website", ""), rec.get("industry", ""))}
+
+
+# ---- client report + social plan -------------------------------------------
+
+def _social_pack(rec: dict) -> dict:
+    """Localised social plan for a client, from the measured brand playbook."""
+    lang = {"Germany": "de", "Austria": "de", "Switzerland": "de",
+            "Italy": "it", "France": "fr"}.get(rec.get("country", ""), "en")
+    return {
+        "week": brand_playbook.weekly_plan(
+            rec.get("business_name", ""), rec.get("industry", "Restaurant"),
+            rec.get("city", ""), lang),
+        "highlights": brand_playbook.highlights_plan(
+            rec.get("industry", ""), lang),
+        "pillars": brand_playbook.PILLARS,
+        "cadence": brand_playbook.CADENCE,
+        "avoid": brand_playbook.FORBIDDEN,
+        "benchmarks": brand_playbook.BENCHMARKS,
+    }
+
+
+@router.get("/client/social", tags=["clients"])
+def client_social(x_client_token: Optional[str] = Header(None)) -> dict:
+    cid = _client_from_header(x_client_token)
+    return _social_pack(clients.get(cid) or {})
+
+
+@router.get("/client/report.pdf", tags=["clients"])
+def client_report_pdf(x_client_token: Optional[str] = Header(None)):
+    """The PDF the client downloads — the thing that justifies the fee."""
+    cid = _client_from_header(x_client_token)
+    rec = clients.get(cid) or {}
+    seo = client_seo.audit(rec.get("website", ""),
+                           business_name=rec.get("business_name", ""),
+                           city=rec.get("city", ""),
+                           country=rec.get("country", ""))
+    pdf = client_report.build(clients.public(cid), seo, social=_social_pack(rec))
+    clients.log_activity(cid, "report", "Website & visibility report generated")
+    persistence.save(STORE)
+    fname = (rec.get("business_name", "report").lower()
+             .replace(" ", "-")[:40] + "-report.pdf")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/admin/clients/{cid}/report.pdf", tags=["clients"])
+def admin_report_pdf(cid: str):
+    rec = clients.get(cid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Client not found")
+    seo = client_seo.audit(rec.get("website", ""),
+                           business_name=rec.get("business_name", ""),
+                           city=rec.get("city", ""),
+                           country=rec.get("country", ""))
+    pdf = client_report.build(clients.public(cid), seo, social=_social_pack(rec))
+    fname = (rec.get("business_name", "report").lower()
+             .replace(" ", "-")[:40] + "-report.pdf")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
