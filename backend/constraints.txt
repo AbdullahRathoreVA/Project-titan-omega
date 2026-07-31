@@ -1,0 +1,29 @@
+# Version floor/ceiling for the shared global Python on this machine.
+#
+# Why this file exists: installing browser-use on 2026-07-26 pulled starlette
+# 1.3.1 into the global environment. FastAPI 0.115.6 calls Router(on_startup=…),
+# which starlette removed in 1.x, so Titan died instantly with
+#
+#     TypeError: Router.__init__() got an unexpected keyword argument 'on_startup'
+#
+# Nothing warned. pip reported success, the app imported, and the failure only
+# surfaced when the router was constructed. Titan is the flagship with a paying
+# client attached, so it wins every dependency argument.
+#
+# Use this whenever installing anything new into the global env:
+#
+#     pip install <package> -c backend/constraints.txt
+#
+# If a tool genuinely cannot live inside these bounds, give it its own venv
+# rather than moving these numbers:
+#
+#     python -m venv .venvs/<tool> && .venvs/<tool>/Scripts/pip install <tool>
+
+# --- hard bounds: FastAPI 0.115.6 breaks outside these -----------------------
+starlette>=0.40.0,<0.42.0
+fastapi==0.115.6
+
+# --- soft: huggingface-hub 1.26 wants >=8.4.2; browser-use pins ==8.3.1.
+# 8.4.2 is chosen because hf-hub is used by the deploy path and browser-use
+# tolerates the newer click in practice (verified importing cleanly).
+click>=8.4.2,<9.0.0
