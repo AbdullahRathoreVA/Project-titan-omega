@@ -32,7 +32,7 @@ from ..domain.schemas import (
     ScheduledPost,
     StrategicPlan,
 )
-from ..engines import (brand_playbook, client_report, client_seo,
+from ..engines import (brand_playbook, client_content, client_report, client_seo,
                        deliverables, evolution, execution,
                        opportunity, publisher)
 from ..store import STORE, AgentRuntime, now
@@ -1099,3 +1099,32 @@ def admin_report_pdf(cid: str):
              .replace(" ", "-")[:40] + "-report.pdf")
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/client/content", tags=["clients"])
+def client_content_week(dishes: str = Query(""),
+                        x_client_token: Optional[str] = Header(None)) -> dict:
+    """A week of ready-to-post captions, written in the client's own language."""
+    cid = _client_from_header(x_client_token)
+    rec = clients.get(cid) or {}
+    out = client_content.week_of_posts(
+        clients.public(cid),
+        dishes=[d.strip() for d in dishes.split(",") if d.strip()])
+    clients.bump(cid, "posts_drafted", len(out.get("posts", [])))
+    clients.log_activity(cid, "content",
+                         f"{len(out.get('posts', []))} captions drafted")
+    persistence.save(STORE)
+    return out
+
+
+@router.post("/admin/clients/{cid}/content", tags=["clients"])
+def admin_client_content(cid: str, dishes: str = Query("")) -> dict:
+    rec = clients.get(cid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Client not found")
+    out = client_content.week_of_posts(
+        clients.public(cid),
+        dishes=[d.strip() for d in dishes.split(",") if d.strip()])
+    clients.bump(cid, "posts_drafted", len(out.get("posts", [])))
+    persistence.save(STORE)
+    return out
