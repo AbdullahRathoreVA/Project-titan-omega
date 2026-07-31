@@ -147,14 +147,29 @@ _OPEN_PATHS = {
 _OPEN_PREFIXES = ("/api/client/",)
 
 
+def _static_page(name: str) -> FileResponse:
+    import os as _os
+    page = _os.path.join(_os.path.dirname(__file__), "static", name)
+    if not _os.path.exists(page):
+        raise HTTPException(status_code=404, detail=f"{name} not installed")
+    return FileResponse(page, media_type="text/html")
+
+
 @app.get("/portal", include_in_schema=False)
 def client_portal():
-    """The screen a client actually logs into. Static, no build step."""
-    import os as _os
-    page = _os.path.join(_os.path.dirname(__file__), "static", "client.html")
-    if not _os.path.exists(page):
-        raise HTTPException(status_code=404, detail="portal not installed")
-    return FileResponse(page, media_type="text/html")
+    """The screen a client logs into. Static, no build step."""
+    return _static_page("client.html")
+
+
+@app.get("/clients", include_in_schema=False)
+def admin_console():
+    """Abdullah's console: every business he manages, on one screen.
+
+    The page itself is public HTML — it holds no data. Everything it renders
+    comes from /api/admin/* which stays behind the founder token, so serving
+    the shell openly leaks nothing.
+    """
+    return _static_page("admin.html")
 
 
 @app.middleware("http")

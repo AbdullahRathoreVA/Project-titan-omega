@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Client Command — Titan Omega</title>
+<style>
+:root{
+  --bg:#080b12; --panel:#0f141f; --edge:#1c2536; --fg:#e6ecf5; --mut:#7d8ea6;
+  --gold:#c9a227; --green:#2ecc8f; --amber:#ffb020; --red:#ff5470; --blue:#4a9eff;
+  --violet:#a78bfa;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:14px/1.55 ui-monospace,'SF Mono',Menlo,Consolas,monospace}
+a{color:var(--gold);text-decoration:none}
+.wrap{max-width:1240px;margin:0 auto;padding:22px 20px 70px}
+
+header{display:flex;justify-content:space-between;align-items:center;
+  padding-bottom:16px;border-bottom:1px solid var(--edge);margin-bottom:22px}
+h1{margin:0;font-size:16px;letter-spacing:4px}
+h1 span{color:var(--gold)}
+.sub{font-size:10px;color:var(--mut);letter-spacing:2px;margin-top:4px}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:12px;margin-bottom:20px}
+.kpi{background:var(--panel);border:1px solid var(--edge);border-radius:11px;
+  padding:15px 17px}
+.kpi b{display:block;font-size:27px;line-height:1.1;color:var(--gold)}
+.kpi.green b{color:var(--green)} .kpi.red b{color:var(--red)}
+.kpi.blue b{color:var(--blue)} .kpi.violet b{color:var(--violet)}
+.kpi i{font-style:normal;font-size:9.5px;color:var(--mut);letter-spacing:1.6px;
+  text-transform:uppercase}
+
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:12px;
+  padding:18px 20px;margin-bottom:14px}
+.card h2{margin:0 0 14px;font-size:10px;letter-spacing:2.2px;color:var(--mut);
+  text-transform:uppercase;font-weight:500}
+
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--mut);font-weight:500;font-size:9.5px;
+  letter-spacing:1.4px;text-transform:uppercase;padding:0 10px 9px 0}
+td{padding:12px 10px 12px 0;border-top:1px solid var(--edge);vertical-align:top}
+tr:hover td{background:rgba(201,162,39,.04)}
+.biz{color:#fff;font-size:13px}
+.meta{color:var(--mut);font-size:10.5px;margin-top:3px}
+.badge{display:inline-block;font-size:9px;padding:2px 8px;border-radius:20px;
+  letter-spacing:1px;text-transform:uppercase}
+.badge.trial{background:rgba(74,158,255,.15);color:var(--blue)}
+.badge.active{background:rgba(46,204,143,.15);color:var(--green)}
+.badge.expired{background:rgba(255,84,112,.15);color:var(--red)}
+.days{font-size:16px;color:var(--green)}
+.days.warn{color:var(--amber)} .days.bad{color:var(--red)}
+
+button{font:inherit;font-size:10px;letter-spacing:1px;padding:6px 11px;
+  border-radius:6px;border:1px solid var(--edge);background:transparent;
+  color:var(--fg);cursor:pointer;transition:.15s;margin:2px 3px 2px 0}
+button:hover{border-color:var(--gold);color:var(--gold)}
+button.go{border-color:rgba(46,204,143,.4);color:var(--green)}
+button.warn{border-color:rgba(255,84,112,.35);color:var(--red)}
+input,select{background:#0a0e17;border:1px solid var(--edge);border-radius:7px;
+  padding:9px 11px;color:var(--fg);font:inherit;font-size:12px;width:100%}
+input:focus,select:focus{outline:none;border-color:var(--gold)}
+label{display:block;font-size:9px;letter-spacing:1.4px;color:var(--mut);
+  text-transform:uppercase;margin:11px 0 5px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.empty{color:var(--mut);font-size:12px;text-align:center;padding:28px}
+.alert{border:1px solid rgba(255,176,32,.4);background:rgba(255,176,32,.07);
+  border-radius:10px;padding:13px 16px;margin-bottom:14px;font-size:12px;
+  color:var(--amber)}
+#login{max-width:380px;margin:14vh auto;padding:30px}
+.err{color:var(--red);font-size:11px;min-height:1.3em;margin-top:9px}
+@media(max-width:720px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="card" id="login">
+  <h2>Founder sign-in</h2>
+  <label>Username</label><input id="u" autocomplete="username">
+  <label>Password</label><input id="p" type="password" autocomplete="current-password">
+  <button class="go" id="go" style="width:100%;margin-top:16px;padding:11px">SIGN IN</button>
+  <div class="err" id="err"></div>
+</div>
+
+<div class="wrap" id="app" style="display:none">
+  <header>
+    <div>
+      <h1>CLIENT <span>//</span> COMMAND</h1>
+      <div class="sub">TITAN OMEGA · every business you manage</div>
+    </div>
+    <div><button id="refresh">REFRESH</button><button id="out">SIGN OUT</button></div>
+  </header>
+
+  <div id="expiring"></div>
+
+  <div class="kpis">
+    <div class="kpi"><b id="k-total">0</b><i>Clients</i></div>
+    <div class="kpi green"><b id="k-active">0</b><i>Active</i></div>
+    <div class="kpi red"><b id="k-expired">0</b><i>Expired</i></div>
+    <div class="kpi blue"><b id="k-audits">0</b><i>SEO audits</i></div>
+    <div class="kpi violet"><b id="k-issues">0</b><i>Issues found</i></div>
+    <div class="kpi"><b id="k-posts">0</b><i>Posts drafted</i></div>
+  </div>
+
+  <div class="card">
+    <h2>Clients</h2>
+    <div id="list"><div class="empty">No clients yet. Add your first below.</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Onboard a business</h2>
+    <div class="grid2">
+      <div><label>Business name</label><input id="f-name" placeholder="Ristorante Bella Vista"></div>
+      <div><label>Industry</label><input id="f-ind" placeholder="Restaurant"></div>
+      <div><label>Website</label><input id="f-web" placeholder="https://…"></div>
+      <div><label>Instagram</label><input id="f-ig" placeholder="handle (no @)"></div>
+      <div><label>City</label><input id="f-city" placeholder="Berlin"></div>
+      <div>
+        <label>Country — sets the legal rules checked</label>
+        <select id="f-country">
+          <option>Germany</option><option>Austria</option><option>Switzerland</option>
+          <option>France</option><option>Italy</option><option>Spain</option>
+          <option>Netherlands</option><option>United Kingdom</option>
+          <option>United States</option><option>Pakistan</option>
+        </select>
+      </div>
+      <div><label>Login username</label><input id="f-user" autocomplete="off"></div>
+      <div><label>Login password</label><input id="f-pass" autocomplete="new-password"></div>
+      <div><label>Logo URL (optional)</label><input id="f-logo" placeholder="https://…"></div>
+      <div><label>Free trial (days)</label><input id="f-days" type="number" value="60"></div>
+    </div>
+    <button class="go" id="create" style="margin-top:16px;padding:10px 20px">CREATE CLIENT</button>
+    <div class="err" id="cerr"></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let TOKEN = sessionStorage.getItem('titan_founder') || '';
+
+async function api(path, opts = {}) {
+  const r = await fetch('/api' + path, {...opts, headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ' + TOKEN, ...(opts.headers || {})}});
+  if (r.status === 401) { signOut(); throw new Error('unauthorised'); }
+  return r;
+}
+
+function signOut() {
+  TOKEN = ''; sessionStorage.removeItem('titan_founder');
+  $('#app').style.display = 'none'; $('#login').style.display = 'block';
+}
+
+$('#go').onclick = async () => {
+  $('#err').textContent = '';
+  const r = await fetch('/api/login', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({username: $('#u').value, password: $('#p').value})});
+  if (!r.ok) { $('#err').textContent = 'Wrong username or password.'; return; }
+  const d = await r.json();
+  TOKEN = d.token || d.access_token;
+  sessionStorage.setItem('titan_founder', TOKEN);
+  boot();
+};
+$('#p').onkeydown = e => { if (e.key === 'Enter') $('#go').click(); };
+$('#out').onclick = signOut;
+$('#refresh').onclick = () => load();
+
+async function boot() {
+  $('#login').style.display = 'none';
+  $('#app').style.display = 'block';
+  load();
+}
+
+async function load() {
+  let d;
+  try { d = await (await api('/admin/clients')).json(); } catch (e) { return; }
+
+  $('#k-total').textContent   = d.total;
+  $('#k-active').textContent  = d.active;
+  $('#k-expired').textContent = d.expired;
+  $('#k-audits').textContent  = d.totals.seo_audits;
+  $('#k-issues').textContent  = d.totals.issues_found;
+  $('#k-posts').textContent   = d.totals.posts_drafted;
+
+  $('#expiring').innerHTML = (d.expiring_soon || []).length
+    ? `<div class="alert"><b>Trials ending soon:</b> ` +
+      d.expiring_soon.map(e =>
+        `${esc(e.business_name)} — ${e.days_left} day${e.days_left===1?'':'s'}`)
+        .join(' · ') + `. Convert or extend before they lapse.</div>`
+    : '';
+
+  $('#list').innerHTML = d.clients.length ? `<table>
+    <thead><tr><th>Business</th><th>Trial</th><th>Work done</th>
+    <th>Last seen</th><th></th></tr></thead><tbody>` +
+    d.clients.map(c => {
+      const cls = c.trial_days_left <= 0 ? 'bad'
+                : c.trial_days_left <= 14 ? 'warn' : '';
+      const status = c.trial_days_left <= 0 ? 'expired'
+                   : (c.status === 'active' ? 'active' : 'trial');
+      const seen = c.last_login
+        ? new Date(c.last_login*1000).toLocaleDateString() : 'never';
+      return `<tr>
+        <td><div class="biz">${esc(c.business_name)}</div>
+            <div class="meta">${esc(c.industry||'')} ·
+            ${c.website ? `<a href="${esc(c.website)}" target="_blank">${esc(c.website.replace(/^https?:\/\//,''))}</a>` : 'no website'}
+            ${c.instagram ? ' · @'+esc(c.instagram) : ''}</div></td>
+        <td><span class="days ${cls}">${c.trial_days_left}</span>
+            <span class="meta">days</span><br>
+            <span class="badge ${status}">${status}</span></td>
+        <td class="meta">${c.metrics.seo_audits} audits<br>
+            ${c.metrics.issues_found} issues found</td>
+        <td class="meta">${seen}</td>
+        <td>
+          <button data-a="seo" data-id="${c.id}">RUN AUDIT</button>
+          <button data-a="pdf" data-id="${c.id}">PDF</button>
+          <button data-a="ext" data-id="${c.id}">+30d</button>
+          <button class="warn" data-a="del" data-id="${c.id}"
+                  data-n="${esc(c.business_name)}">DELETE</button>
+        </td></tr>`;
+    }).join('') + '</tbody></table>'
+    : '<div class="empty">No clients yet. Add your first below.</div>';
+
+  $('#list').querySelectorAll('button').forEach(b => b.onclick = () => act(b));
+}
+
+async function act(b) {
+  const id = b.dataset.id, a = b.dataset.a;
+  const original = b.textContent;
+  if (a === 'pdf') { open('/api/admin/clients/' + id + '/report.pdf', '_blank'); return; }
+  if (a === 'del') {
+    if (!confirm(`Delete ${b.dataset.n}? This removes their login and history permanently.`)) return;
+    await api('/admin/clients/' + id, {method:'DELETE'});
+    return load();
+  }
+  b.textContent = '…';
+  if (a === 'seo') {
+    const r = await (await api('/admin/clients/' + id + '/seo', {method:'POST'})).json();
+    b.textContent = r.ok ? `${r.score}/100` : 'FAILED';
+    setTimeout(() => { b.textContent = original; load(); }, 2200);
+    return;
+  }
+  if (a === 'ext') {
+    await api('/admin/clients/' + id + '/extend?days=30', {method:'POST'});
+    b.textContent = original; load();
+  }
+}
+
+$('#create').onclick = async () => {
+  $('#cerr').textContent = '';
+  const body = {
+    business_name: $('#f-name').value, username: $('#f-user').value,
+    password: $('#f-pass').value, website: $('#f-web').value,
+    instagram: $('#f-ig').value, industry: $('#f-ind').value,
+    city: $('#f-city').value, country: $('#f-country').value,
+    logo_url: $('#f-logo').value,
+    trial_days: parseInt($('#f-days').value || '60', 10),
+  };
+  if (!body.business_name || !body.username || !body.password) {
+    $('#cerr').textContent = 'Business name, username and password are required.';
+    return;
+  }
+  const r = await api('/admin/clients', {method:'POST', body: JSON.stringify(body)});
+  if (!r.ok) {
+    $('#cerr').textContent = (await r.json()).detail || 'Could not create client.';
+    return;
+  }
+  ['f-name','f-user','f-pass','f-web','f-ig','f-ind','f-city','f-logo']
+    .forEach(k => $('#'+k).value = '');
+  load();
+};
+
+if (TOKEN) boot();
+</script>
+</body>
+</html>
