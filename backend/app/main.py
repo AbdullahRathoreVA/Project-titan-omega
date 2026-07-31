@@ -16,9 +16,9 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import persistence
@@ -125,11 +125,30 @@ _OPEN_PATHS = {
     "/api/content/daily",
     "/api/intel/news",
     "/api/inbox/auto-reply",
+    # Client portal. These carry their OWN credential (X-Client-Token) and are
+    # scoped to a single business, so they must bypass the founder token guard
+    # without weakening it: /client/* resolves the token to exactly one client
+    # and fails closed on anything unrecognised. Admin client management stays
+    # behind the founder token.
+    "/api/client/login",
+    "/api/client/me",
+    "/api/client/seo",
+    "/api/client/seo/schema",
     # NOTE: /api/revenue/log is deliberately NOT open. It writes to the real
     # money ledger, and this deployment is publicly reachable (demo button), so
     # it now requires the founder token or the X-Webhook-Secret header. Make.com
     # must send:  X-Webhook-Secret: <TITAN_WEBHOOK_SECRET>
 }
+
+
+@app.get("/portal", include_in_schema=False)
+def client_portal():
+    """The screen a client actually logs into. Static, no build step."""
+    import os as _os
+    page = _os.path.join(_os.path.dirname(__file__), "static", "client.html")
+    if not _os.path.exists(page):
+        raise HTTPException(status_code=404, detail="portal not installed")
+    return FileResponse(page, media_type="text/html")
 
 
 @app.middleware("http")
