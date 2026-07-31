@@ -16,7 +16,7 @@ import json
 import os
 import tempfile
 
-from .core import learning
+from .core import clients, learning
 from .store import STORE, Store
 
 
@@ -42,6 +42,7 @@ def save(store: Store = STORE) -> None:
             # Learned preference must survive restarts, or Titan forgets his
             # judgement every rebuild and re-enters its cold start forever.
             "learning": learning.export_state(),
+            "clients": clients.export_state(),
         }
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -78,5 +79,8 @@ def load(store: Store = STORE) -> None:
         learned = data.get("learning")
         if isinstance(learned, dict):
             learning.import_state(learned)
+        client_rows = data.get("clients")
+        if isinstance(client_rows, dict):
+            clients.import_state(client_rows)
     except Exception:
         pass

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .. import persistence
-from ..core import auth, executive, learning, llm
+from ..core import auth, clients, executive, learning, llm
 from ..domain.enums import Horizon
 from ..domain.schemas import (
     AgentView,
@@ -31,7 +31,8 @@ from ..domain.schemas import (
     ScheduledPost,
     StrategicPlan,
 )
-from ..engines import deliverables, evolution, execution, opportunity, publisher
+from ..engines import (client_seo, deliverables, evolution, execution,
+                       opportunity, publisher)
 from ..store import STORE, AgentRuntime, now
 from .actions import UPWORK_PROFILE_URL
 
@@ -906,3 +907,134 @@ def learning_bootstrap() -> dict:
     opportunity.discover(STORE)
     persistence.save(STORE)
     return result
+
+
+# ============================================================ CLIENT PORTAL ==
+# Multi-tenant: each business gets its own login and sees only its own data.
+# Isolation fails closed - an unknown token resolves to nothing, never to
+# everything.
+
+class ClientCreateIn(BaseModel):
+    business_name: str
+    username: str
+    password: str
+    website: str = ""
+    instagram: str = ""
+    industry: str = ""
+    city: str = ""
+    country: str = "Pakistan"
+    logo_url: str = ""
+    brand_voice: str = ""
+    trial_days: int = 60
+    notes: str = ""
+
+
+class ClientLoginIn(BaseModel):
+    username: str
+    password: str
+
+
+def _client_from_header(x_client_token: Optional[str]) -> str:
+    cid = clients.resolve(x_client_token or "")
+    if not cid:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    return cid
+
+
+# ---- admin (Abdullah only) -------------------------------------------------
+@router.post("/admin/clients", tags=["clients"])
+def admin_create_client(payload: ClientCreateIn) -> dict:
+    try:
+        rec = clients.create_client(**payload.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    persistence.save(STORE)
+    return rec
+
+
+@router.get("/admin/clients", tags=["clients"])
+def admin_list_clients() -> dict:
+    return clients.admin_overview()
+
+
+@router.get("/admin/clients/{cid}", tags=["clients"])
+def admin_get_client(cid: str) -> dict:
+    rec = clients.public(cid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return rec
+
+
+@router.post("/admin/clients/{cid}/extend", tags=["clients"])
+def admin_extend_trial(cid: str, days: int = Query(30)) -> dict:
+    rec = clients.extend_trial(cid, days)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Client not found")
+    persistence.save(STORE)
+    return rec
+
+
+@router.delete("/admin/clients/{cid}", tags=["clients"])
+def admin_delete_client(cid: str) -> dict:
+    if not clients.delete_client(cid):
+        raise HTTPException(status_code=404, detail="Client not found")
+    persistence.save(STORE)
+    return {"ok": True}
+
+
+@router.post("/admin/clients/{cid}/seo", tags=["clients"])
+def admin_run_client_seo(cid: str) -> dict:
+    """Run the SEO audit for a client and log it against their account."""
+    rec = clients.get(cid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Client not found")
+    result = client_seo.audit(rec.get("website", ""),
+                              business_name=rec.get("business_name", ""),
+                              city=rec.get("city", ""))
+    clients.bump(cid, "seo_audits")
+    if result.get("ok"):
+        clients.bump(cid, "issues_found", len(result.get("findings", [])))
+        clients.log_activity(
+            cid, "seo",
+            f"SEO audit: {result['score']}/100 ({result['grade']}), "
+            f"{len(result['findings'])} issues found")
+    else:
+        clients.log_activity(cid, "seo",
+                             f"SEO audit failed: {result.get('error')}")
+    persistence.save(STORE)
+    return result
+
+
+# ---- client-facing ---------------------------------------------------------
+@router.post("/client/login", tags=["clients"])
+def client_login(payload: ClientLoginIn) -> dict:
+    token = clients.authenticate(payload.username, payload.password)
+    if not token:
+        raise HTTPException(status_code=401, detail="Wrong username or password")
+    cid = clients.resolve(token)
+    persistence.save(STORE)
+    return {"token": token, "client": clients.public(cid)}
+
+
+@router.get("/client/me", tags=["clients"])
+def client_me(x_client_token: Optional[str] = Header(None)) -> dict:
+    return clients.public(_client_from_header(x_client_token))
+
+
+@router.get("/client/seo", tags=["clients"])
+def client_seo_report(x_client_token: Optional[str] = Header(None)) -> dict:
+    cid = _client_from_header(x_client_token)
+    rec = clients.get(cid) or {}
+    return client_seo.audit(rec.get("website", ""),
+                            business_name=rec.get("business_name", ""),
+                            city=rec.get("city", ""))
+
+
+@router.get("/client/seo/schema", tags=["clients"])
+def client_seo_schema(x_client_token: Optional[str] = Header(None)) -> dict:
+    """The ready-to-paste JSON-LD block — usually the single biggest win."""
+    cid = _client_from_header(x_client_token)
+    rec = clients.get(cid) or {}
+    return {"json_ld": client_seo.suggested_schema(
+        rec.get("business_name", ""), rec.get("city", ""),
+        rec.get("website", ""), rec.get("industry", ""))}
