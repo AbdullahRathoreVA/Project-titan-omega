@@ -33,6 +33,7 @@ from ..domain.schemas import (
     StrategicPlan,
 )
 from ..engines import (brand_playbook, client_content, client_report,
+                       client_watch,
                        client_seo, discovery,
                        deliverables, evolution, execution,
                        opportunity, publisher)
@@ -1149,3 +1150,19 @@ def admin_discovery(live: bool = Query(False)) -> dict:
             if last:
                 cache[c["id"]] = last
     return discovery.report(cache, live=live)
+
+
+@router.get("/admin/watch", tags=["clients"])
+def admin_watch() -> dict:
+    """Autonomous monitoring status: what changed on client sites, unprompted."""
+    return client_watch.summary()
+
+
+@router.post("/admin/clients/{cid}/watch", tags=["clients"])
+def admin_watch_now(cid: str) -> dict:
+    """Force an immediate check for one client."""
+    r = client_watch.check_client(cid)
+    if not r.get("ok"):
+        raise HTTPException(status_code=404, detail=r.get("error", "failed"))
+    persistence.save(STORE)
+    return r

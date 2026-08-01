@@ -30,7 +30,7 @@ from .api.router import router
 from .api.tts import router as tts_router
 from .connectors import careermind, github
 from .core import auth, demo_data, executive
-from .engines import opportunity, publisher
+from .engines import client_watch, opportunity, publisher
 from .engines.evolution import ensure_weights
 from .store import STORE, seed
 
@@ -40,11 +40,15 @@ HEARTBEAT_SECONDS = float(os.getenv("TITAN_HEARTBEAT_SECONDS", "5"))
 # 6 cycles/day x 2 searches = ~360/mo, leaving room for on-demand scans.
 GROWTH_INTERVAL = float(os.getenv("TITAN_GROWTH_INTERVAL", "14400"))  # 4 hours
 _last_growth = 0.0
+# Client site monitoring cadence. 30 min between ticks; each tick checks at most
+# 3 clients whose own 6-hour window has elapsed, so no site is hit often.
+WATCH_INTERVAL = float(os.getenv("TITAN_WATCH_INTERVAL", "1800"))
+_last_watch = 0.0
 
 
 async def _heartbeat_loop() -> None:
     """Drive autonomous activity on a fixed cadence until cancelled."""
-    global _last_growth
+    global _last_growth, _last_watch
     while True:
         await asyncio.sleep(HEARTBEAT_SECONDS)
         with contextlib.suppress(Exception):
@@ -55,6 +59,13 @@ async def _heartbeat_loop() -> None:
         with contextlib.suppress(Exception):
             from .engines import telegram_bot
             await asyncio.to_thread(telegram_bot.poll_once, STORE)
+        # Autonomous client monitoring. Runs with nobody logged in — this is
+        # what makes the service continuous rather than on-demand.
+        if time.monotonic() - _last_watch >= WATCH_INTERVAL:
+            _last_watch = time.monotonic()
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(client_watch.cycle)
+
         # Run the live research engine on its own slow cadence.
         if time.monotonic() - _last_growth >= GROWTH_INTERVAL:
             _last_growth = time.monotonic()
