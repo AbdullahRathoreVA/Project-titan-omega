@@ -91,6 +91,22 @@ section.on{display:block}
 .sev{display:inline-block;font-size:.65rem;letter-spacing:1.2px;padding:2px 8px;
   border-radius:20px;margin-right:8px;text-transform:uppercase;vertical-align:1px}
 .sev.legal-critical,.sev.critical{background:rgba(255,84,112,.16);color:var(--red)}
+.why{background:rgba(74,158,255,.07);border-left:3px solid var(--blue);
+  border-radius:8px;padding:14px 16px;margin:0 0 18px;font-size:.9rem;
+  color:var(--mut);line-height:1.65}
+.why b{color:var(--fg)}
+.steps{counter-reset:s;list-style:none;padding:0;margin:0}
+.steps li{counter-increment:s;position:relative;padding:14px 0 14px 44px;
+  border-top:1px solid var(--edge)}
+.steps li:first-child{border-top:none}
+.steps li::before{content:counter(s);position:absolute;left:0;top:13px;
+  width:28px;height:28px;border-radius:50%;background:var(--gold);color:#151515;
+  font-weight:700;font-size:.82rem;display:flex;align-items:center;
+  justify-content:center}
+.steps .t{color:#fff;font-size:.95rem;margin-bottom:3px}
+.steps .d{color:var(--mut);font-size:.85rem;line-height:1.6}
+.effort{display:inline-block;font-size:.7rem;padding:2px 8px;border-radius:20px;
+  background:#1a2030;color:var(--mut);margin-left:8px}
 .sev.high{background:rgba(255,176,32,.16);color:var(--amber)}
 .sev.medium{background:rgba(74,158,255,.14);color:var(--blue)}
 .sev.low{background:#1a2030;color:var(--mut)}
@@ -144,8 +160,9 @@ pre{background:#0b0f18;border:1px solid var(--edge);border-radius:10px;
       <div class="val"><b id="score">—</b><span id="grade">—</span></div>
     </div>
     <div>
-      <h2 id="verdict">Analysing your website…</h2>
+      <h2 id="verdict">Checking your website…</h2>
       <p id="vsub"></p>
+      <p id="vplain" style="margin-top:10px;color:var(--fg);font-size:.92rem"></p>
     </div>
   </div>
 
@@ -163,7 +180,15 @@ pre{background:#0b0f18;border:1px solid var(--edge);border-radius:10px;
   </nav>
 
   <section class="on" id="s-seo">
-    <div class="card"><h3>What we found</h3><div id="findings"></div></div>
+    <div class="card">
+      <h3>Start here — the 3 things that matter most</h3>
+      <div class="why" id="why-box"></div>
+      <ol class="steps" id="top3"></ol>
+    </div>
+    <div class="card">
+      <h3>Everything we checked</h3>
+      <div id="findings"></div>
+    </div>
   </section>
 
   <section id="s-social">
@@ -203,6 +228,58 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let TOKEN = sessionStorage.getItem('client_token') || '';
+
+/* Plain-language layer. The audit speaks SEO; the owner speaks restaurant.
+   Every technical finding gets a human title, a line explaining what it costs
+   in customers, and an effort estimate so nothing feels open-ended. */
+const PLAIN = {
+  imprint: ["Add your legal details page",
+    "Required by law in your country. Without it you can be fined, and a competitor can send you a legal warning and bill you for it.", "30 min"],
+  privacy: ["Add a privacy page",
+    "Legally required as soon as your site has a contact form or collects any visitor data.", "30 min"],
+  cookie_consent: ["Ask before tracking visitors",
+    "Your site loads tracking scripts before asking permission. That is the most commonly fined privacy mistake.", "1 hour"],
+  local_business: ["Tell Google you are a restaurant",
+    "Google and ChatGPT cannot currently tell what kind of business you are, so you are missing from map results and AI recommendations.", "1 hour"],
+  schema: ["Add machine-readable business details",
+    "This is how Google and ChatGPT decide what to say about you. Only about 17% of sites do it, so it is a real advantage.", "1 hour"],
+  "local:gbp": ["Connect your Google Business Profile",
+    "About a third of local search ranking comes from this. It also shows your opening hours when someone searches at 8pm.", "45 min"],
+  "local:reviews": ["Get reviews regularly, not just once",
+    "Rankings drop after about 3 weeks with no new review. Thirty recent reviews beat two hundred old ones.", "ongoing"],
+  "local:onpage": ["Put your city in your page title",
+    "People search 'restaurant Berlin', not just 'restaurant'. Without your city you are invisible for those searches.", "20 min"],
+  "local:nap": ["Show your address and phone on every page",
+    "Google cross-checks these against Maps, Yelp and Apple. Any mismatch weakens all of them.", "30 min"],
+  "local:schema": ["Mark up your menu",
+    "Lets AI assistants quote individual dishes when someone asks for a recommendation.", "1 hour"],
+  "local:authority": ["Get listed in local guides",
+    "Being on 'best of' lists is the single biggest factor in whether AI recommends you.", "ongoing"],
+  https: ["Turn on the padlock (HTTPS)",
+    "Browsers show 'Not secure' without it. Most people leave immediately.", "1 hour"],
+  title: ["Rewrite your page title",
+    "This is the blue link people click in Google. It is your shop window.", "15 min"],
+  meta_description: ["Write your search description",
+    "The grey text under your link in Google, and what AI often quotes about you.", "15 min"],
+  images_alt: ["Label your food photos",
+    "Your photography is your product. Unlabelled photos cannot appear in image search.", "30 min"],
+  og: ["Fix how links look when shared",
+    "Right now sharing your site to WhatsApp or Instagram shows no photo.", "20 min"],
+  sitemap: ["Add a sitemap", "Helps search engines find all your pages faster.", "15 min"],
+  viewport: ["Fix your site on phones", "Most restaurant searches happen on a phone.", "30 min"],
+  h1: ["Fix your main heading", "Tells search engines what the page is about.", "10 min"],
+  canonical: ["Prevent duplicate pages", "Stops your pages competing with each other.", "10 min"],
+  robots: ["Add a robots file", "Basic housekeeping for search engines.", "10 min"],
+  hreflang: ["Fix your language tags", "Wrong language version can show in the wrong country.", "30 min"],
+  html_lang: ["Declare your page language", "Helps search engines and screen readers.", "5 min"],
+};
+
+function plainFor(f) {
+  const p = PLAIN[f.id] || PLAIN[(f.id || "").split(":")[0]];
+  return p ? {title: p[0], why: p[1], effort: p[2]}
+           : {title: f.title, why: f.detail, effort: ""};
+}
+
 
 async function api(path, opts = {}) {
   const r = await fetch('/api' + path, {
@@ -328,6 +405,30 @@ async function boot() {
     $('#legalList').innerHTML =
       '<li>No missing imprint or privacy notice detected.</li>';
   }
+
+  // Plain verdict
+  const lc2 = seo.counts.legal_critical || 0;
+  $('#vplain').textContent = lc2
+    ? `In plain terms: there ${lc2 > 1 ? 'are' : 'is'} ${lc2} legal ${lc2 > 1 ? 'problems' : 'problem'} to fix first, then the search issues below.`
+    : (seo.score >= 75
+        ? 'In plain terms: your website is doing most things right. The list below is fine-tuning.'
+        : 'In plain terms: customers searching for a restaurant like yours are not finding you. The list below is why.');
+
+  // Start here: the 3 highest-impact fixes, in owner language
+  const rank = {'legal-critical':0, critical:1, high:2, medium:3, low:4};
+  const top3 = [...seo.findings]
+    .sort((a,b) => (rank[a.severity]??9) - (rank[b.severity]??9))
+    .slice(0,3);
+  $('#why-box').innerHTML = top3.length
+    ? `<b>Fix these three first.</b> They are worth more than everything else on the list combined, and together take about
+       ${top3.reduce((n,f)=>{const e=plainFor(f).effort; const m=parseInt(e)||30; return n+m;},0)} minutes.`
+    : '<b>Nothing urgent.</b> Your site is in good shape.';
+  $('#top3').innerHTML = top3.map(f => {
+    const p = plainFor(f);
+    return `<li><div class="t">${esc(p.title)}
+      ${p.effort ? `<span class="effort">${esc(p.effort)}</span>` : ''}</div>
+      <div class="d">${esc(p.why)}</div></li>`;
+  }).join('');
 
   $('#findings').innerHTML = seo.findings.map(f =>
     `<div class="finding ${f.severity}">
