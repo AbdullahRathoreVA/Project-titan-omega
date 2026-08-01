@@ -445,6 +445,109 @@ def test_guest_progress_is_sampled_not_derived_from_real_revenue(monkeypatch):
     assert body["level"] > 1 and body["xp"] > 0
 
 
+# ── jurisdiction detection ─────────────────────────────────────────────────
+
+def test_country_name_selects_jurisdiction():
+    """The onboarding form stores 'Germany', never 'DE'. detect_country only
+    matched 2-letter codes, so the declared value was silently discarded and
+    the jurisdiction fell back to the TLD. A German restaurant on a .com
+    domain was therefore audited as United States — which skips the Impressum
+    check entirely, i.e. drops the one finding the product is sold on."""
+    from app.engines import compliance
+    assert compliance.detect_country("", tld="com", declared="Germany") == "DE"
+    assert compliance.detect_country("", tld="com", declared="germany") == "DE"
+    assert compliance.detect_country("", tld="com", declared="DE") == "DE"
+    assert compliance.detect_country("", tld="com", declared="Austria") == "AT"
+    assert compliance.detect_country("", tld="com", declared="Switzerland") == "CH"
+    # An unknown name must not silently become US — fall through to the
+    # TLD/lang evidence instead of asserting a jurisdiction we cannot support.
+    assert compliance.detect_country("", tld="de", declared="Atlantis") == "DE"
+
+
+def test_german_com_domain_still_gets_impressum_finding():
+    """Regression for the same bug, at the level the client sees it."""
+    from app.engines import compliance
+    html = '<html lang="en"><head><title>Pizza</title></head><body>Hi</body></html>'
+    r = compliance.check(html, country="Germany", tld="com")
+    assert r["country"] == "DE"
+    assert r["abmahnung_risk"] is True
+    assert any(f["id"] == "imprint" for f in r["findings"])
+
+
+@pytest.fixture
+def isolated_clients(monkeypatch, tmp_path):
+    """The client registry is module-level and persisted to disk, and the
+    fresh_store fixture does not touch it. Without this a test that onboards a
+    client writes into the real state file and fails on the next run with
+    'username already exists'."""
+    import copy
+    from app import persistence
+    from app.core import clients as clients_mod
+
+    monkeypatch.setattr(persistence, "STATE_FILE",
+                        str(tmp_path / "titan_state.json"))
+    before = copy.deepcopy(clients_mod.export_state())
+    clients_mod.import_state({"clients": {}})
+    yield
+    clients_mod.import_state(before)
+
+
+def test_admin_seo_audit_passes_client_country(client, isolated_clients,
+                                               monkeypatch):
+    """/admin/clients/{cid}/seo audited without the country, so the Clients tab
+    and the PDF disagreed about the jurisdiction for the same site."""
+    from app.engines import client_seo
+
+    seen: dict = {}
+
+    def fake_audit(url, **kw):
+        seen.update(kw)
+        return {"ok": True, "url": url, "score": 50, "grade": "D",
+                "passed": [], "failed": [], "schema_types": [], "findings": [],
+                "legal": {"country": "DE", "findings": [], "legal_critical": 0},
+                "local": {"score": 0, "findings": []},
+                "counts": {"legal_critical": 0, "critical": 0, "high": 0,
+                           "medium": 0, "low": 0}}
+
+    monkeypatch.setattr(client_seo, "audit", fake_audit)
+
+    created = client.post("/api/admin/clients", json={
+        "business_name": "Trattoria Test", "username": "tt-user",
+        "password": "tt-pass-12345", "website": "https://example.com",
+        "city": "Berlin", "country": "Germany", "industry": "Restaurant",
+    })
+    assert created.status_code == 200, created.text
+    cid = created.json()["id"]
+
+    r = client.post(f"/api/admin/clients/{cid}/seo")
+    assert r.status_code == 200, r.text
+    assert seen.get("country") == "Germany"
+
+
+def test_admin_schema_endpoint_uses_client_jurisdiction(client,
+                                                        isolated_clients):
+    """The SEO view needs the paste-ready JSON-LD without a client token."""
+    import json as _json
+
+    created = client.post("/api/admin/clients", json={
+        "business_name": "Gasthaus Adler", "username": "adler",
+        "password": "adler-pass-12345", "website": "https://adler.example",
+        "city": "München", "country": "Germany", "industry": "Restaurant",
+    })
+    assert created.status_code == 200, created.text
+    cid = created.json()["id"]
+
+    r = client.get(f"/api/admin/clients/{cid}/seo/schema")
+    assert r.status_code == 200, r.text
+    node = _json.loads(r.json()["json_ld"])
+    assert node["name"] == "Gasthaus Adler"
+    assert node["address"]["addressLocality"] == "München"
+    assert node["address"]["addressCountry"] == "DE"
+
+    assert client.get("/api/admin/clients/does-not-exist/seo/schema"
+                      ).status_code == 404
+
+
 def test_session_endpoint_identifies_token_kind(monkeypatch):
     """Regression: guest-ness was inferred from sessionStorage, so a demo token
     restored in a NEW TAB rendered as the founder while being served sample

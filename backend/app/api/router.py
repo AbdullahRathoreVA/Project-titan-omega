@@ -33,7 +33,7 @@ from ..domain.schemas import (
     StrategicPlan,
 )
 from ..engines import (brand_playbook, client_content, client_report,
-                       client_watch,
+                       client_watch, compliance,
                        client_seo, discovery,
                        deliverables, evolution, execution,
                        opportunity, publisher)
@@ -994,7 +994,8 @@ def admin_run_client_seo(cid: str) -> dict:
         raise HTTPException(status_code=404, detail="Client not found")
     result = client_seo.audit(rec.get("website", ""),
                               business_name=rec.get("business_name", ""),
-                              city=rec.get("city", ""))
+                              city=rec.get("city", ""),
+                              country=rec.get("country", ""))
     clients.bump(cid, "seo_audits")
     if result.get("ok"):
         clients.bump(cid, "issues_found", len(result.get("findings", [])))
@@ -1010,6 +1011,23 @@ def admin_run_client_seo(cid: str) -> dict:
                              f"SEO audit failed: {result.get('error')}")
     persistence.save(STORE)
     return result
+
+
+@router.get("/admin/clients/{cid}/seo/schema", tags=["clients"])
+def admin_client_schema(cid: str) -> dict:
+    """The ready-to-paste JSON-LD block, admin side.
+
+    The client portal already had this at /client/seo/schema, but that is
+    behind a client token — so the SEO view in the dashboard, where the work
+    actually gets done, could not show the single highest-value fix.
+    """
+    rec = clients.get(cid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return {"json_ld": client_seo.suggested_schema(
+        rec.get("business_name", ""), rec.get("city", ""),
+        rec.get("website", ""), rec.get("industry", ""),
+        country_code=compliance.code_for(rec.get("country", "")) or "DE")}
 
 
 # ---- client-facing ---------------------------------------------------------
@@ -1034,7 +1052,8 @@ def client_seo_report(x_client_token: Optional[str] = Header(None)) -> dict:
     rec = clients.get(cid) or {}
     return client_seo.audit(rec.get("website", ""),
                             business_name=rec.get("business_name", ""),
-                            city=rec.get("city", ""))
+                            city=rec.get("city", ""),
+                            country=rec.get("country", ""))
 
 
 @router.get("/client/seo/schema", tags=["clients"])

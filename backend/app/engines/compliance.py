@@ -127,10 +127,45 @@ CONSENT_MARKERS = [
 ]
 
 
+# The onboarding form and the client record store a country NAME ("Germany"),
+# never a code. Without this map the declared value failed the `in JURISDICTIONS`
+# test and was silently discarded, so jurisdiction fell back to the TLD — and a
+# German business on a .com domain was audited as United States, which skips the
+# Impressum check entirely. Aliases cover what a client would actually type.
+COUNTRY_NAMES = {
+    "germany": "DE", "deutschland": "DE",
+    "austria": "AT", "österreich": "AT", "oesterreich": "AT",
+    "switzerland": "CH", "schweiz": "CH", "suisse": "CH",
+    "france": "FR",
+    "italy": "IT", "italia": "IT",
+    "spain": "ES", "españa": "ES", "espana": "ES",
+    "netherlands": "NL", "the netherlands": "NL", "nederland": "NL",
+    "united kingdom": "UK", "great britain": "UK", "england": "UK",
+    "scotland": "UK", "wales": "UK", "gb": "UK",
+    "united states": "US", "united states of america": "US", "usa": "US",
+    "america": "US",
+}
+
+
+def code_for(declared: str) -> str:
+    """A declared country code or NAME -> jurisdiction code, or '' if unknown."""
+    d = (declared or "").strip()
+    if not d:
+        return ""
+    if d.upper() in JURISDICTIONS:
+        return d.upper()
+    return COUNTRY_NAMES.get(d.lower(), "")
+
+
 def detect_country(html: str, tld: str = "", declared: str = "") -> str:
-    """Best-effort jurisdiction. Declared value always wins."""
-    if declared and declared.upper() in JURISDICTIONS:
-        return declared.upper()
+    """Best-effort jurisdiction. Declared value always wins.
+
+    A declared value we do not recognise falls through to the TLD and lang
+    evidence rather than asserting a jurisdiction we cannot support.
+    """
+    named = code_for(declared)
+    if named:
+        return named
     tld_map = {"de": "DE", "at": "AT", "ch": "CH", "fr": "FR", "it": "IT",
                "es": "ES", "nl": "NL", "uk": "UK", "co.uk": "UK"}
     if tld and tld.lower() in tld_map:
