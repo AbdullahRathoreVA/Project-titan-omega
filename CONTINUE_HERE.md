@@ -106,6 +106,17 @@ self-healing. Live at `https://abdullahrathoreva.github.io/aether-engine`.
    compatible, `docker-compose.yml` works unchanged, VM on D:.
    Binary: `C:\Program Files\RedHat\Podman\podman.exe`.
 
+8. **`podman compose` delegates to Docker's leftover `docker-compose.exe`** if it
+   is still on PATH, which routes the pull through the broken Docker stack. Put
+   Podman FIRST on PATH, or use `podman pull` / `podman play` directly.
+
+9. **Large image pulls die on his connection** ("unexpected EOF" at ~558 MB).
+   Always pull in a retry loop:
+   ```bash
+   for i in 1 2 3 4 5 6; do podman pull <image> && break; sleep 5; done
+   ```
+   Podman resumes partial layers, so retries make progress rather than restart.
+
 ---
 
 ## 5. Blocked on Abdullah (nobody else can do these)
