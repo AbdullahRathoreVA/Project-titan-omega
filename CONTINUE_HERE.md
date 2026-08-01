@@ -117,6 +117,19 @@ self-healing. Live at `https://abdullahrathoreva.github.io/aether-engine`.
    ```
    Podman resumes partial layers, so retries make progress rather than restart.
 
+10. **The Podman VM stops on its own** and every pull then fails with
+    "connection actively refused" — which looks exactly like a bandwidth
+    problem but is not. **Always check `podman machine list` first**; if LAST UP
+    is in the past, run `podman machine start`. I wasted six retries and wrongly
+    blamed the connection before checking this.
+
+    Working sequence:
+    ```bash
+    export PATH="/c/Program Files/RedHat/Podman:$PATH"   # before Docker's leftovers
+    podman machine start
+    podman pull docker.io/library/nginx:alpine           # verified 63.7 MB OK
+    ```
+
 ---
 
 ## 5. Blocked on Abdullah (nobody else can do these)
