@@ -28,7 +28,7 @@ import urllib.parse
 import urllib.request
 from typing import Optional
 
-from . import compliance
+from . import compliance, local_seo
 
 TIMEOUT = 15
 
@@ -238,6 +238,18 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     # Legal exposure is reported ALONGSIDE SEO, not folded into the SEO score.
     # A missing Impressum is not "8 points off" - it is a fine and an open
     # invitation for a competitor Abmahnung, and it must not be averaged away.
+    # Weighted local scoring on published 2026 ranking factors. Kept separate
+    # from the technical score: a restaurant can have perfect meta tags and
+    # still be invisible locally, and averaging the two would hide that.
+    local = local_seo.analyse(html, business=business_name, city=city,
+                              industry="", url=url)
+    findings.extend([
+        {"id": f"local:{f['dimension']}", "severity": f["severity"],
+         "title": f["title"], "detail": f["detail"] + f"  [{f['source']}]",
+         "fix": f["fix"]}
+        for f in local["findings"]
+    ])
+
     tld = parsed.netloc.rsplit(".", 1)[-1] if "." in parsed.netloc else ""
     legal = compliance.check(html, country=country, tld=tld, url=url)
     findings.extend(legal["findings"])
@@ -263,6 +275,7 @@ def audit(url: str, *, business_name: str = "", city: str = "",
         "schema_types": sorted(set(types)),
         "findings": findings,
         "legal": legal,
+        "local": local,
         "counts": {
             "legal_critical": legal["legal_critical"],
             "critical": sum(1 for f in findings if f["severity"] == "critical"),
