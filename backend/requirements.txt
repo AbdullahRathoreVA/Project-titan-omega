@@ -14,3 +14,7 @@ httpx==0.28.1
 
 # Test
 pytest==8.3.4
+
+# PDF client reports (engines/client_report.py). Pinned because a
+# missing dependency here previously took the WHOLE API down at import.
+reportlab==4.4.9

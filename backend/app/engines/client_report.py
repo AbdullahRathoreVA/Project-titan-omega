@@ -26,23 +26,43 @@ import io
 import time
 from typing import Optional
 
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_LEFT
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.platypus import (HRFlowable, Image, KeepTogether, PageBreak,
-                                Paragraph, SimpleDocTemplate, Spacer, Table,
-                                TableStyle)
+# reportlab is imported defensively on purpose. A hard top-level import of an
+# optional dependency took the ENTIRE API down in production on 2026-08-01:
+# reportlab was installed locally but missing from requirements.txt, so the
+# container raised ModuleNotFoundError at startup and every endpoint died —
+# for a feature nobody had called yet. One optional capability must never be
+# able to kill the whole service, so a missing library now degrades to a clear
+# error from this one endpoint instead.
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (HRFlowable, Image, KeepTogether, PageBreak,
+                                    Paragraph, SimpleDocTemplate, Spacer, Table,
+                                    TableStyle)
+    REPORTLAB_AVAILABLE = True
+    REPORTLAB_ERROR = ""
+except Exception as _e:            # noqa: BLE001 - any import failure must be survivable
+    REPORTLAB_AVAILABLE = False
+    REPORTLAB_ERROR = f"{type(_e).__name__}: {_e}"
+    colors = None  # type: ignore[assignment]
 
-INK = colors.HexColor("#15202b")
-MUT = colors.HexColor("#5b6b7d")
-GOLD = colors.HexColor("#b8912f")
-RED = colors.HexColor("#c0392b")
-AMBER = colors.HexColor("#d68910")
-BLUE = colors.HexColor("#2471a3")
-GREEN = colors.HexColor("#1e8449")
-LINE = colors.HexColor("#dfe4ea")
+# These MUST tolerate reportlab being absent. Guarding only the import while
+# leaving colors.HexColor() calls at module level would still crash on import —
+# which is the exact failure this whole block exists to prevent.
+if REPORTLAB_AVAILABLE:
+    INK = colors.HexColor("#15202b")
+    MUT = colors.HexColor("#5b6b7d")
+    GOLD = colors.HexColor("#b8912f")
+    RED = colors.HexColor("#c0392b")
+    AMBER = colors.HexColor("#d68910")
+    BLUE = colors.HexColor("#2471a3")
+    GREEN = colors.HexColor("#1e8449")
+    LINE = colors.HexColor("#dfe4ea")
+else:
+    INK = MUT = GOLD = RED = AMBER = BLUE = GREEN = LINE = None
 
 SEV_COLOR = {
     "legal-critical": RED, "critical": RED, "high": AMBER,
@@ -52,6 +72,11 @@ SEV_LABEL = {
     "legal-critical": "LEGAL", "critical": "CRITICAL", "high": "HIGH",
     "medium": "MEDIUM", "low": "LOW",
 }
+
+
+def available() -> tuple[bool, str]:
+    """Whether PDF generation can run, and why not if it cannot."""
+    return REPORTLAB_AVAILABLE, REPORTLAB_ERROR
 
 
 def _styles() -> dict:
@@ -91,6 +116,10 @@ def _grade_color(score: int):
 def build(client: dict, seo: dict, *, social: Optional[dict] = None,
           agency: str = "Titan Omega") -> bytes:
     """Render the report. Returns PDF bytes; never raises on missing fields."""
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError(
+            f"PDF generation unavailable: {REPORTLAB_ERROR}. "
+            f"Install reportlab (it is in backend/requirements.txt).")
     st = _styles()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
