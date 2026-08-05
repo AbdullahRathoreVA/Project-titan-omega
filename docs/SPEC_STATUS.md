@@ -69,3 +69,25 @@ Spec Part 3 specifies that startup message. Abdullah's standing instruction is
 to be addressed as **Abdullah, never Boss**, and "Boss" appears nowhere in the
 codebase. The spec line is wrong and should be struck, or a future session will
 reintroduce it.
+
+---
+
+## Live deployment (verified 2026-08-06)
+
+**https://titanomega-ai.com** — Cloudflare Worker reverse-proxy in front of the
+Hugging Face Space. HF's own custom-domain feature is PRO-only ($9/mo, ~2x the
+annual budget), so the Worker does the same job on the free plan.
+
+Verified: 12/12 endpoint checks pass; SSL valid; Server-Sent Events stream
+through the proxy (8 events over 11.9s, first at 1.4s — a buffering proxy would
+have delivered them in one lump at disconnect); service worker registers and is
+active; manifest serves with all 3 icons; the deployed bundle contains the SEO
+view, the lead funnel and the legal-separation copy.
+
+Worker source: `deploy/cloudflare-worker.js`, config `wrangler.toml`.
+Deploys automatically on push to main via the connected repo.
+
+**Outstanding:** `www.titanomega-ai.com` has no DNS record. A Worker *Route*
+(`*.titanomega-ai.com/*`) does not create DNS — routes only match traffic that
+already arrives. Needs a proxied CNAME `www -> titanomega-ai.com` added by hand
+in the Cloudflare DNS tab; the Worker already handles the www->apex redirect.
