@@ -43,7 +43,17 @@ Ideas only — there is nothing to licence-check or integrate.
 | P4C | 24/7 monitoring with regression diffing | baseline + no-change paths verified |
 | P6 | Measured model routing + per-provider profiling | live `/api/routing`; real 401 recorded, 4 ModelFailed events |
 | P2 | Planning engine — plan before execute | live `/api/plan`; blocked steps named, review precedes send |
-| P3 | 3D command centre, 12 views | running |
+| P2 | Typed event bus + bounded trace | `/api/events`; failing-subscriber isolation test |
+| P2 | Planning engine — plan before execute | `/api/plan`; blocked steps named |
+| P2 | Self-reflection with estimate calibration | loop closed live: 3.5s -> 10.5s estimate |
+| P4C | BI period reports + forecasting | `/api/bi/{period}`; refuses to project on thin data |
+| P4C/P6 | Executive dashboard view | 13th tab, live |
+| P5B | Signup + Free/Student/Individual/Enterprise | `/pricing` live; quota refusals explain themselves |
+| P6 | Measured model routing + profiling | live: groq 5 calls, 100% success recorded |
+| P3 | PWA — installable on Android/iOS/Windows | service worker active, manifest valid |
+| P3 | HTTPS enforced + full security headers | http 301s; HSTS/CSP/nosniff verified live |
+| P8 | Tool layer + adapters + licence gate | `/api/tools`; AGPL wrap-only enforced by test |
+| P3 | 3D command centre, 13 views | running |
 
 ## Blocked on Abdullah — not on engineering
 
