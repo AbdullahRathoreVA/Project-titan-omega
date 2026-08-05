@@ -474,6 +474,152 @@ def test_german_com_domain_still_gets_impressum_finding():
     assert any(f["id"] == "imprint" for f in r["findings"])
 
 
+# ── event bus (spec Part 2 / Part 7) ───────────────────────────────────────
+
+def test_event_bus_delivers_and_traces():
+    from app.core import events
+    events.reset()
+    seen = []
+    off = events.subscribe(events.TASK_CREATED, lambda r: seen.append(r))
+    events.emit(events.TASK_CREATED, {"goal": "audit a site"}, actor="planner")
+    assert len(seen) == 1 and seen[0]["payload"]["goal"] == "audit a site"
+    off()
+    events.emit(events.TASK_CREATED, {"goal": "second"})
+    assert len(seen) == 1, "unsubscribe did not take effect"
+    assert events.stats()["total"] == 2
+    assert events.trace(limit=1)[0]["payload"]["goal"] == "second"
+    events.reset()
+
+
+def test_a_broken_subscriber_cannot_break_the_emitter():
+    """A listener that throws must degrade observability, never the business
+    action that fired the event."""
+    from app.core import events
+    events.reset()
+    good = []
+    events.subscribe(events.AGENT_FAILED, lambda r: (_ for _ in ()).throw(RuntimeError("boom")))
+    events.subscribe(events.AGENT_FAILED, lambda r: good.append(r))
+    rec = events.emit(events.AGENT_FAILED, {"agent": "scout"})
+    assert good, "a failing handler stopped later handlers"
+    assert rec["errors"] and "RuntimeError" in rec["errors"][0]
+    assert events.stats()["subscriber_failures"] == 1
+    events.reset()
+
+
+def test_event_trace_is_bounded():
+    from app.core import events
+    events.reset()
+    for i in range(events.MAX_TRACE + 40):
+        events.emit(events.TOOL_INVOKED, {"i": i})
+    assert len(events.trace(limit=10_000)) == events.MAX_TRACE
+    assert events.stats()["total"] == events.MAX_TRACE + 40
+    events.reset()
+
+
+# ── tool layer + licence gate (spec Part 2 Layer 4 / Part 8) ───────────────
+
+def test_agpl_tool_is_wrap_only_and_never_embedded():
+    """Firecrawl is AGPL-3.0 and Titan is sold. If its integration mode is ever
+    flipped to 'embed', Titan would owe its own source to every user of the
+    hosted Space. This test is the tripwire."""
+    from app.core import tools
+    p = tools.PROVENANCE["firecrawl"]
+    assert p.licence == "AGPL-3.0"
+    assert p.mode == tools.WRAP, "AGPL dependency must never be embedded"
+
+
+def test_unlicensed_upstream_is_blocked_in_code_not_just_in_a_comment():
+    from app.core import tools
+    from app.engines import adapters
+    adapters.register_all()
+    t = tools.get("memory.external")
+    assert t.status() == "licence_blocked"
+    res = t.invoke()
+    assert res.ok is False
+    assert "licence" in (res.error + res.needs).lower()
+
+
+def test_unconfigured_tool_says_exactly_what_is_missing():
+    from app.core import tools
+    from app.engines import adapters
+    adapters.register_all()
+    res = tools.get("web.crawl").invoke(url="https://example.com")
+    assert res.ok is False
+    assert "FIRECRAWL_BASE_URL" in res.needs
+
+
+def test_outbound_tool_refuses_without_explicit_approval(monkeypatch):
+    """Spec Part 6: never send on the user's behalf without approval."""
+    from app.core import tools
+    from app.engines import adapters
+    monkeypatch.setenv("OPENWA_BASE_URL", "http://localhost:9999")
+    adapters.register_all()
+    t = tools.get("messaging.whatsapp")
+    assert t.status() == "ready"
+    res = t.invoke(to="123", message="hello")
+    assert res.ok is False and "approved" in res.needs.lower()
+
+
+def test_tool_failure_is_returned_not_raised():
+    from app.core import tools
+    from app.engines import adapters
+    adapters.register_all()
+    res = tools.get("web.fetch").invoke()          # no url -> ValueError inside
+    assert res.ok is False and "ValueError" in res.error
+
+
+def test_ready_means_it_actually_runs_not_just_that_env_is_set():
+    """A tool whose python package is absent reported 'ready' and then failed on
+    invoke, moving the failure from the status screen to the caller."""
+    from app.core import tools
+    from app.engines import adapters
+    adapters.register_all()
+    t = tools.get("agents.plan")
+    assert t.missing_packages() == ["praisonaiagents"]
+    assert t.status() == "not_configured"
+    res = t.invoke(goal="x")
+    assert res.ok is False and "pip install praisonaiagents" in res.needs
+
+
+def test_every_registered_tool_declares_a_resolvable_status():
+    from app.core import tools
+    from app.engines import adapters
+    adapters.register_all()
+    report = tools.registry_report()
+    assert report["tools"], "no tools registered"
+    for t in report["tools"]:
+        assert t["status"] in ("ready", "not_configured", "licence_blocked")
+        assert t["capability"], f"{t['name']} has no capability description"
+
+
+def test_api_tools_registry_is_honest_about_readiness(client):
+    r = client.get("/api/tools")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tools"], "boot did not register the adapters"
+    names = {t["name"] for t in body["tools"]}
+    assert {"web.fetch", "web.crawl", "messaging.whatsapp"} <= names
+    fc = next(t for t in body["tools"] if t["name"] == "web.crawl")
+    assert fc["licence"] == "AGPL-3.0" and fc["integration_mode"] == "wrap"
+    # web.fetch needs nothing, so it must be the one capability always usable.
+    assert next(t for t in body["tools"] if t["name"] == "web.fetch")["status"] == "ready"
+
+
+def test_api_tool_invoke_returns_a_reason_instead_of_a_stack_trace(client):
+    r = client.post("/api/tools/web.crawl/invoke", json={"url": "https://example.com"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False and "FIRECRAWL_BASE_URL" in body["needs"]
+    assert client.post("/api/tools/nope/invoke", json={}).status_code == 404
+
+
+def test_api_events_exposes_the_structured_trace(client):
+    client.post("/api/tools/web.crawl/invoke", json={"url": "https://example.com"})
+    body = client.get("/api/events").json()
+    assert body["total"] >= 1
+    assert any(e["event"] in ("ToolInvoked", "ToolFailed") for e in body["events"])
+
+
 # ── lead funnel ────────────────────────────────────────────────────────────
 
 @pytest.fixture

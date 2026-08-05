@@ -836,6 +836,37 @@ def intelligence_status() -> dict:
 
 # --- self-evolution -------------------------------------------------------
 
+@router.get("/tools", tags=["system"])
+def tools_registry() -> dict:
+    """Every external capability, its licence, and whether it can actually run.
+
+    Spec Part 2 Layer 4 + Part 8. The point of this endpoint is that the answer
+    to "can Titan crawl / call / message yet?" is a fact on a screen rather than
+    a guess: `not_configured` names the missing variable, `licence_blocked`
+    cannot be fixed by writing code.
+    """
+    from ..core import tools as tool_layer
+    return tool_layer.registry_report()
+
+
+@router.post("/tools/{name}/invoke", tags=["system"])
+def tools_invoke(name: str, payload: dict | None = None) -> dict:
+    """Run one tool through the common interface. Never raises."""
+    from ..core import tools as tool_layer
+    tool = tool_layer.get(name)
+    if tool is None:
+        raise HTTPException(status_code=404, detail=f"No such tool: {name}")
+    return tool.invoke(**(payload or {})).as_dict()
+
+
+@router.get("/events", tags=["system"])
+def event_trace(limit: int = Query(default=50, ge=1, le=500),
+                event: str = Query(default="")) -> dict:
+    """Structured event trace — the machine-readable twin of /api/feed."""
+    from ..core import events as bus
+    return {"events": bus.trace(limit=limit, event=event), **bus.stats()}
+
+
 @router.get("/evolution", tags=["system"])
 def evolution_status() -> dict:
     w = evolution.weights(STORE)

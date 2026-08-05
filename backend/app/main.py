@@ -80,6 +80,11 @@ async def lifespan(app: FastAPI):
     persistence.load(STORE)
     opportunity.discover(STORE)
     ensure_weights(STORE)
+    # Register the external-capability adapters. Idempotent, no network, no
+    # imports of optional packages — a tool that is not configured simply
+    # reports what it needs.
+    from .engines import adapters
+    adapters.register_all()
 
     async def _initial_sync() -> None:
         with contextlib.suppress(Exception):
