@@ -16,7 +16,7 @@ import json
 import os
 import tempfile
 
-from .core import clients, learning
+from .core import clients, learning, routing
 from .store import STORE, Store
 
 
@@ -43,6 +43,10 @@ def save(store: Store = STORE) -> None:
             # judgement every rebuild and re-enters its cold start forever.
             "learning": learning.export_state(),
             "clients": clients.export_state(),
+            # Model measurements must survive restarts: HF recycles Spaces
+            # often, and profiling that resets never gathers enough evidence
+            # to route on.
+            "routing": routing.export_state(),
         }
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -82,5 +86,8 @@ def load(store: Store = STORE) -> None:
         client_rows = data.get("clients")
         if isinstance(client_rows, dict):
             clients.import_state(client_rows)
+        routes = data.get("routing")
+        if isinstance(routes, dict):
+            routing.import_state(routes)
     except Exception:
         pass

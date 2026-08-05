@@ -859,6 +859,21 @@ def tools_invoke(name: str, payload: dict | None = None) -> dict:
     return tool.invoke(**(payload or {})).as_dict()
 
 
+@router.get("/routing", tags=["system"])
+def routing_report() -> dict:
+    """Measured per-provider performance and the order it produces.
+
+    Spec Part 6. The order shown is the one the next completion will actually
+    use, so a provider sitting last is visibly last rather than quietly slow.
+    """
+    from ..core import llm as llm_mod
+    from ..core import routing as routing_mod
+    chain = llm_mod.providers_configured()
+    return {**routing_mod.report(),
+            "configured_chain": chain,
+            "effective_order": routing_mod.order(chain)}
+
+
 @router.get("/events", tags=["system"])
 def event_trace(limit: int = Query(default=50, ge=1, le=500),
                 event: str = Query(default="")) -> dict:

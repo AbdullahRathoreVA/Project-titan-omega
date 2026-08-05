@@ -342,19 +342,39 @@ def complete(system: str, prompt: str, max_tokens: int = 1500) -> Optional[str]:
         _LAST_ERROR = "no LLM provider configured"
         return None
 
+    # Spec Part 6: route on measured performance, not on an assumption about
+    # free-tier quotas. Providers with too little evidence keep their configured
+    # position, and none is ever dropped — see routing.order().
+    import time as _time
+
+    from . import routing
+
+    chain = routing.order(chain)
+
     errors = []
     for prov in chain:
         fn = _DISPATCH.get(prov)
         if fn is None:
             continue
+        started = _time.monotonic()
         try:
             text = fn(system, prompt, max_tokens)
+            elapsed = int((_time.monotonic() - started) * 1000)
             if text:
+                routing.record(prov, ok=True, latency_ms=elapsed)
                 _LAST_ERROR = None
                 return text
+            # An empty response is a failure of this provider, not a success:
+            # counting it as OK would keep a silently-broken provider ranked
+            # first forever.
+            routing.record(prov, ok=False, latency_ms=elapsed,
+                           error="empty response")
             errors.append(f"{prov}: empty response")
         except Exception as exc:
-            errors.append(f"{prov}: {type(exc).__name__}: {str(exc)[:200]}")
+            elapsed = int((_time.monotonic() - started) * 1000)
+            reason = f"{type(exc).__name__}: {str(exc)[:200]}"
+            routing.record(prov, ok=False, latency_ms=elapsed, error=reason)
+            errors.append(f"{prov}: {reason}")
 
     _LAST_ERROR = " | ".join(errors) if errors else "all providers returned empty"
     return None

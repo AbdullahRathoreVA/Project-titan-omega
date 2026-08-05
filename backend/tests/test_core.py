@@ -474,6 +474,127 @@ def test_german_com_domain_still_gets_impressum_finding():
     assert any(f["id"] == "imprint" for f in r["findings"])
 
 
+# ── model routing (spec Part 6) ────────────────────────────────────────────
+
+def test_unmeasured_providers_keep_their_configured_order():
+    """One unlucky timeout on a first call must not reorder anything."""
+    from app.core import routing
+    routing.reset()
+    chain = ["claude", "groq", "gemini"]
+    assert routing.order(chain) == chain
+    routing.record("groq", ok=False, latency_ms=50, error="timeout")
+    assert routing.order(chain) == chain, "ranked on a single sample"
+    routing.reset()
+
+
+def test_a_measured_reliable_provider_outranks_a_failing_one():
+    from app.core import routing
+    routing.reset()
+    for _ in range(5):
+        routing.record("groq", ok=False, latency_ms=9000, error="429")
+        routing.record("gemini", ok=True, latency_ms=800)
+    assert routing.order(["groq", "gemini"])[0] == "gemini"
+    routing.reset()
+
+
+def test_reliability_beats_latency():
+    """A fast provider that fails half the time is worse than a slower one that
+    always works — every failure costs the caller a full retry."""
+    from app.core import routing
+    routing.reset()
+    for i in range(10):
+        routing.record("fast", ok=(i % 2 == 0), latency_ms=100, error="flaky")
+        routing.record("slow", ok=True, latency_ms=2500)
+    assert routing.order(["fast", "slow"])[0] == "slow"
+    routing.reset()
+
+
+def test_a_failing_provider_is_demoted_never_dropped():
+    """Removing a provider during a transient outage would silence every agent."""
+    from app.core import routing
+    routing.reset()
+    for _ in range(routing.TRIP_AFTER + 2):
+        routing.record("groq", ok=False, latency_ms=20, error="dead key")
+    ordered = routing.order(["groq", "gemini"])
+    assert set(ordered) == {"groq", "gemini"}, "a provider was dropped"
+    assert ordered[-1] == "groq"
+    assert routing.report()["providers"][0]["tripped"] is True
+    routing.reset()
+
+
+def test_a_tripped_provider_recovers_after_cooldown(monkeypatch):
+    from app.core import routing
+    routing.reset()
+    for _ in range(routing.TRIP_AFTER):
+        routing.record("groq", ok=False, latency_ms=20, error="429")
+    assert routing.order(["groq", "gemini"])[-1] == "groq"
+
+    real_time = routing.time.time
+    monkeypatch.setattr(routing.time, "time",
+                        lambda: real_time() + routing.COOLDOWN_SECONDS + 1)
+    assert routing.order(["groq", "gemini"])[-1] != "groq", "never recovered"
+    routing.reset()
+
+
+def test_an_empty_response_counts_as_a_failure():
+    """Counting empty responses as success keeps a silently-broken provider
+    ranked first forever."""
+    from app.core import llm, routing
+    routing.reset()
+    monkey = {"calls": 0}
+
+    def _empty(system, prompt, max_tokens):
+        monkey["calls"] += 1
+        return None
+
+    original = dict(llm._DISPATCH)
+    llm._DISPATCH["groq"] = _empty
+    try:
+        os.environ["GROQ_API_KEY"] = "test-key"
+        assert llm.complete("s", "p") is None
+        row = routing.report()["providers"][0]
+        assert row["provider"] == "groq" and row["failures"] == 1
+        assert row["successes"] == 0
+    finally:
+        llm._DISPATCH.clear()
+        llm._DISPATCH.update(original)
+        os.environ.pop("GROQ_API_KEY", None)
+        routing.reset()
+
+
+def test_routing_state_survives_a_restart():
+    from app.core import routing
+    routing.reset()
+    for _ in range(4):
+        routing.record("gemini", ok=True, latency_ms=700)
+    saved = routing.export_state()
+    routing.reset()
+    assert routing.report()["providers"] == []
+    routing.import_state(saved)
+    row = routing.report()["providers"][0]
+    assert row["provider"] == "gemini" and row["calls"] == 4 and row["routable"]
+    routing.reset()
+
+
+def test_import_state_survives_a_corrupt_state_file():
+    from app.core import routing
+    routing.reset()
+    routing.import_state({"profiles": {"groq": {"calls": "nonsense",
+                                                "latencies_ms": "not-a-list",
+                                                "last_error": 12345}}})
+    row = routing.report()["providers"][0]
+    assert row["p50_latency_ms"] == 0 and row["calls"] == 0
+    assert row["success_rate"] == 0.0
+
+    # A file claiming more successes than calls must not yield >100%.
+    routing.import_state({"profiles": {"groq": {"calls": 2, "successes": 99}}})
+    assert routing.report()["providers"][0]["success_rate"] <= 100.0
+
+    routing.import_state("not a dict")          # must not raise
+    routing.import_state({"profiles": {"bad": "not a dict either"}})
+    routing.reset()
+
+
 # ── event bus (spec Part 2 / Part 7) ───────────────────────────────────────
 
 def test_event_bus_delivers_and_traces():
