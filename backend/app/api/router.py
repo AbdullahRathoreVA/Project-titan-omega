@@ -859,6 +859,22 @@ def tools_invoke(name: str, payload: dict | None = None) -> dict:
     return tool.invoke(**(payload or {})).as_dict()
 
 
+class PlanRequest(BaseModel):
+    goal: str = Field(..., min_length=1)
+
+
+@router.post("/plan", tags=["executive"])
+def make_plan(req: PlanRequest) -> dict:
+    """State what would be done, and what it would cost, before doing it.
+
+    Spec Part 2. This deliberately does NOT execute — /api/agent/act does that.
+    Separating them is the point: a plan can be read, priced and refused first,
+    and a plan with a blocked step says so instead of failing halfway through.
+    """
+    from ..core import planner
+    return planner.plan(req.goal).as_dict()
+
+
 @router.get("/routing", tags=["system"])
 def routing_report() -> dict:
     """Measured per-provider performance and the order it produces.

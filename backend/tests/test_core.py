@@ -474,6 +474,75 @@ def test_german_com_domain_still_gets_impressum_finding():
     assert any(f["id"] == "imprint" for f in r["findings"])
 
 
+# ── planning engine (spec Part 2) ──────────────────────────────────────────
+
+def test_plan_is_produced_before_anything_runs():
+    """The planner must describe the work without doing it."""
+    from app.core import planner
+    from app.engines import adapters
+    adapters.register_all()
+    p = planner.plan("audit the restaurant website for SEO and compliance")
+    d = p.as_dict()
+    assert d["step_count"] >= 3
+    assert d["graph"]["s2"] == ["s1"], "dependencies were not expressed"
+    assert 0.0 < d["confidence"] <= 0.95
+
+
+def test_runtime_is_the_critical_path_not_the_sum():
+    """Independent steps run together; summing them overstates the estimate."""
+    from app.core import planner
+    steps = [
+        planner.Step("a", "x", "agent", est_seconds=5),
+        planner.Step("b", "y", "agent", est_seconds=5),
+        planner.Step("c", "z", "agent", depends_on=("a", "b"), est_seconds=1),
+    ]
+    p = planner.Plan(goal="g", steps=steps)
+    assert p.est_seconds == 6.0, "expected critical path a->c (5+1), not 11"
+
+
+def test_a_dependency_cycle_cannot_hang_the_planner():
+    from app.core import planner
+    steps = [
+        planner.Step("a", "x", "agent", depends_on=("b",), est_seconds=1),
+        planner.Step("b", "y", "agent", depends_on=("a",), est_seconds=1),
+    ]
+    assert planner.Plan(goal="g", steps=steps).est_seconds > 0
+
+
+def test_confidence_drops_when_a_step_needs_a_tool_nobody_configured():
+    """A plan whose step needs an unset key is not a high-confidence plan."""
+    from app.core import planner
+    from app.engines import adapters
+    adapters.register_all()
+    research = planner.plan("research competitor restaurants")   # uses web.crawl
+    audit = planner.plan("audit the site")                       # uses web.fetch
+    assert research.blocked_steps, "web.crawl should be unconfigured here"
+    assert not audit.blocked_steps, "web.fetch needs no configuration"
+    assert research.confidence < audit.confidence
+    assert research.as_dict()["executable"] is False
+    assert "FIRECRAWL_BASE_URL" in research.blocked_steps[0].blocked_reason
+
+
+def test_outreach_plan_always_routes_through_human_review():
+    """Spec Part 6: nothing is sent on the user's behalf without approval, and
+    the plan must show that as a step rather than leave it implicit."""
+    from app.core import planner
+    from app.engines import adapters
+    adapters.register_all()
+    p = planner.plan("send a whatsapp message to the client")
+    actions = [s.action.lower() for s in p.steps]
+    assert any("review" in a for a in actions)
+    send = [s for s in p.steps if s.tool == "messaging.whatsapp"][0]
+    assert "s2" in send.depends_on, "send does not depend on the review step"
+
+
+def test_unrecognised_goals_admit_low_confidence():
+    from app.core import planner
+    vague = planner.plan("do the thing with the stuff")
+    specific = planner.plan("audit the website")
+    assert vague.confidence < specific.confidence
+
+
 # ── model routing (spec Part 6) ────────────────────────────────────────────
 
 def test_unmeasured_providers_keep_their_configured_order():

@@ -41,6 +41,8 @@ Ideas only — there is nothing to licence-check or integrate.
 | P4B | SEO engine: technical + local + legal, per client | live audit of a real site, 72/C |
 | P4B | Compliance: 9 jurisdictions, Impressum/§5 DDG | jurisdiction bug fixed + regression tests |
 | P4C | 24/7 monitoring with regression diffing | baseline + no-change paths verified |
+| P6 | Measured model routing + per-provider profiling | live `/api/routing`; real 401 recorded, 4 ModelFailed events |
+| P2 | Planning engine — plan before execute | live `/api/plan`; blocked steps named, review precedes send |
 | P3 | 3D command centre, 12 views | running |
 
 ## Blocked on Abdullah — not on engineering
@@ -56,8 +58,8 @@ Ideas only — there is nothing to licence-check or integrate.
 ## Not started
 
 Marketplace, plugin SDK, mobile/desktop clients, SSO, forecasting, prompt
-library, model profiling. Each is real work; none of it earns money before the
-German restaurant client is onboarded.
+library, self-reflection loop. Each is real work; none of it earns money before
+the German restaurant client is onboarded.
 
 ---
 
