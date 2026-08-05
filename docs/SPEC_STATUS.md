@@ -41,10 +41,7 @@ Ideas only — there is nothing to licence-check or integrate.
 | P4B | SEO engine: technical + local + legal, per client | live audit of a real site, 72/C |
 | P4B | Compliance: 9 jurisdictions, Impressum/§5 DDG | jurisdiction bug fixed + regression tests |
 | P4C | 24/7 monitoring with regression diffing | baseline + no-change paths verified |
-| P6 | Measured model routing + per-provider profiling | live `/api/routing`; real 401 recorded, 4 ModelFailed events |
 | P2 | Planning engine — plan before execute | live `/api/plan`; blocked steps named, review precedes send |
-| P2 | Typed event bus + bounded trace | `/api/events`; failing-subscriber isolation test |
-| P2 | Planning engine — plan before execute | `/api/plan`; blocked steps named |
 | P2 | Self-reflection with estimate calibration | loop closed live: 3.5s -> 10.5s estimate |
 | P4C | BI period reports + forecasting | `/api/bi/{period}`; refuses to project on thin data |
 | P4C/P6 | Executive dashboard view | 13th tab, live |
@@ -67,9 +64,9 @@ Ideas only — there is nothing to licence-check or integrate.
 
 ## Not started
 
-Marketplace, plugin SDK, mobile/desktop clients, SSO, forecasting, prompt
-library, self-reflection loop. Each is real work; none of it earns money before
-the German restaurant client is onboarded.
+Marketplace, plugin SDK, native mobile/desktop clients, SSO, prompt library.
+Each is real work; none of it earns money before the German restaurant client
+is onboarded.
 
 ---
 
