@@ -2,6 +2,7 @@
 
 import ClientCommand from "./ClientCommand";
 import SeoCommand from "./SeoCommand";
+import ExecutiveCommand from "./ExecutiveCommand";
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
@@ -84,7 +85,7 @@ export function CommandCenter() {
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
   const [view, setView] = useState<
-    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm" | "clients" | "seo"
+    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm" | "clients" | "seo" | "executive"
   >("universe");
   const [executions, setExecutions] = useState<ExecutionItem[]>([]);
   const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
@@ -325,6 +326,7 @@ export function CommandCenter() {
               ["mission", "Mission"],
               ["clients", "Clients"],
               ["seo", "SEO"],
+              ["executive", "Executive"],
               ["graph", "Graph"],
               ["city", "AI City"],
               ["warroom", "War Room"],
@@ -395,6 +397,8 @@ export function CommandCenter() {
           {view === "clients" && <ClientCommand />}
 
           {view === "seo" && <SeoCommand />}
+
+          {view === "executive" && <ExecutiveCommand />}
 
           {view === "telegram" && <TelegramCenter />}
 
