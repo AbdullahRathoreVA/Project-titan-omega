@@ -42,9 +42,79 @@
 
 const UPSTREAM = "careermind2026-project-titan-omega.hf.space";
 
+/**
+ * Security headers.
+ *
+ * Titan is sold on legal compliance. A padlock-less address bar on the product
+ * that tells other businesses to fix their security is not survivable, and
+ * before this the site served real content over plain HTTP with none of these
+ * headers set.
+ *
+ * The CSP is only this strict because the app was measured to be entirely
+ * same-origin: no CDN, no external script, no eval, no WebAssembly.
+ *
+ * Two allowances are deliberate, not laziness:
+ *
+ *  - 'unsafe-inline' for script/style. Next.js static export inlines its
+ *    hydration payload, and Tailwind injects styles at runtime. Nonces would be
+ *    the correct fix, but issuing one requires rewriting the HTML body in this
+ *    Worker — and rewriting the body breaks the streaming pass-through that
+ *    keeps Server-Sent Events working. Blocking EXTERNAL script injection is
+ *    the majority of the value and costs nothing.
+ *
+ *  - frame-ancestors permits huggingface.co. The Space is legitimately viewed
+ *    inside HF's iframe; 'none' would have broken the existing deployment while
+ *    looking like a security win.
+ *
+ * img-src allows any https origin because client logos are supplied by the
+ * clients themselves and live on their own domains.
+ */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "worker-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'self' https://huggingface.co https://*.hf.space",
+  "upgrade-insecure-requests",
+].join("; ");
+
+const SECURITY_HEADERS = {
+  // One year. No `preload` on purpose: preloading is a one-way door that
+  // requires a browser-vendor submission to undo, and this domain is days old.
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  // Microphone stays enabled for same-origin: the Urdu voice assistant needs
+  // it. Everything else is switched off.
+  "Permissions-Policy":
+    "camera=(), geolocation=(), payment=(), usb=(), microphone=(self)",
+  "Content-Security-Policy": CSP,
+};
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
+
+    // Serving real content over plain HTTP is exactly why browsers showed
+    // "Not secure". Cloudflare terminates TLS, so the client's original scheme
+    // arrives in cf-visitor rather than in request.url; check both.
+    let scheme = url.protocol.replace(":", "");
+    try {
+      const visitor = request.headers.get("cf-visitor");
+      if (visitor) scheme = JSON.parse(visitor).scheme || scheme;
+    } catch {
+      /* header absent or malformed — fall back to the URL scheme */
+    }
+    if (scheme === "http") {
+      url.protocol = "https:";
+      return Response.redirect(url.toString(), 301);
+    }
 
     // Send www to the apex once, permanently, so the two do not compete as
     // separate origins in search results.
@@ -93,10 +163,16 @@ export default {
       statusText: response.statusText,
       headers: new Headers(response.headers),
     });
+
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) out.headers.set(k, v);
+
     // Never let an intermediary buffer the live feed.
     if ((response.headers.get("content-type") || "").includes("event-stream")) {
       out.headers.set("Cache-Control", "no-cache, no-transform");
       out.headers.set("X-Accel-Buffering", "no");
+      // A CSP on an event stream buys nothing and some proxies choke on large
+      // header sets for long-lived connections.
+      out.headers.delete("Content-Security-Policy");
     }
     return out;
   },
