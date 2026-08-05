@@ -318,23 +318,29 @@ export function CommandCenter() {
             />
           </div>
 
-          {/* View switcher */}
+          {/* View switcher.
+              Founder-only views are removed for guests rather than disabled.
+              The backend refuses them either way, but a visible tab that
+              answers 403 looks like a broken product to a prospect — and these
+              tabs hold real client data and real revenue, so they are not a
+              demo asset in the first place. */}
           <div className="flex gap-2">
-            {([
-              ["universe", "Universe"],
-              ["dashboard", "Dashboard"],
-              ["mission", "Mission"],
-              ["clients", "Clients"],
-              ["seo", "SEO"],
-              ["executive", "Executive"],
-              ["graph", "Graph"],
-              ["city", "AI City"],
-              ["warroom", "War Room"],
-              ["telegram", "Telegram"],
-              ["jobs", "Job Radar"],
-              ["finance", "Finance"],
-              ["crm", "CRM"],
-            ] as const).map(([v, label]) => (
+            {(([
+              ["universe", "Universe", false],
+              ["dashboard", "Dashboard", false],
+              ["mission", "Mission", false],
+              ["clients", "Clients", true],
+              ["seo", "SEO", true],
+              ["executive", "Executive", true],
+              ["graph", "Graph", false],
+              ["city", "AI City", false],
+              ["warroom", "War Room", false],
+              ["telegram", "Telegram", true],
+              ["jobs", "Job Radar", true],
+              ["finance", "Finance", true],
+              ["crm", "CRM", true],
+            ] as const).filter(([, , founderOnly]) => !(founderOnly && isGuest()))
+            ).map(([v, label]) => (
               <button
                 key={v}
                 onClick={() => {

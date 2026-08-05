@@ -23,6 +23,16 @@ from typing import Any, Optional
 from ..store import STORE, now
 
 # Paths whose real content is private. Anything not listed passes through live.
+#
+# THIS LIST IS THE WHOLE GUARD, and it fails OPEN: an endpoint added later and
+# not registered here silently serves the founder's real data to every visitor
+# who clicks "View the live demo". That is exactly what happened — /api/bi,
+# /api/routing, /api/reflection and /api/events all shipped leaking, because
+# the list was written before those endpoints existed.
+#
+# There is a test (test_every_founder_endpoint_is_hidden_from_guests) that
+# enumerates the live route table and fails when a new private-looking endpoint
+# is not covered, so the next one cannot leak silently.
 _SENSITIVE_PREFIXES = (
     "/api/finance",
     "/api/leads",
@@ -30,6 +40,24 @@ _SENSITIVE_PREFIXES = (
     "/api/telegram",
     "/api/jobs",
     "/api/deliverables",
+    # Executive intelligence. Real revenue, real provider error messages, the
+    # internal event trace and what the platform has learned about itself —
+    # none of it is a demo asset.
+    "/api/bi",
+    "/api/reflection",
+    "/api/routing",
+    "/api/tools",
+    "/api/events",
+    "/api/plan",
+    "/api/learning",
+    "/api/evolution",
+    "/api/decisions",
+    # Client management. This one is the worst of the set: it is not Abdullah's
+    # data, it is his CLIENTS' — business names, websites, contact details and
+    # their audit findings. Leaking a paying client's information to a public
+    # demo is a breach of their trust and, for an EU client, a GDPR problem for
+    # the operator. Found by the route-table audit test, not by inspection.
+    "/api/admin",
 )
 
 _LEAD_STATUSES = ["new", "contacted", "replied", "won", "lost"]

@@ -610,6 +610,73 @@ def test_missing_or_broken_env_file_never_stops_boot(tmp_path):
     assert envfile.load(tmp_path) == []          # a directory, not a file
 
 
+# ── demo isolation: the guard that fails open ──────────────────────────────
+
+def test_executive_endpoints_are_hidden_from_the_public_demo(monkeypatch):
+    """These shipped leaking. /api/bi returned the founder's real revenue,
+    /api/routing his provider error messages and /api/events the internal
+    trace, to anyone who clicked 'View the live demo'."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    c = TestClient(app)
+    tok = c.post("/api/demo/enter").json()["token"]
+    h = {"Authorization": f"Bearer {tok}"}
+    for path in ("/api/bi/monthly", "/api/reflection", "/api/routing",
+                 "/api/tools", "/api/events"):
+        r = c.get(path, headers=h)
+        assert r.status_code == 403, f"{path} leaked to a guest ({r.status_code})"
+        assert r.json().get("guest") is True
+
+
+def test_every_founder_endpoint_is_hidden_from_guests(monkeypatch):
+    """The sensitive-path list fails OPEN — an endpoint added later and not
+    registered simply serves real data. This walks the REAL route table so a
+    new private endpoint cannot slip through unnoticed."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    from app.core import demo_data
+
+    # Endpoints that are public BY DESIGN, each with the reason it is safe.
+    public_by_design = {
+        "/api/auth", "/api/session", "/api/demo/enter", "/api/login",
+        "/api/intelligence", "/api/llm/health", "/api/tts/health",
+        "/api/doctor", "/api/voice-report", "/api/assistant",
+        "/api/content/daily", "/api/intel/news", "/api/inbox/auto-reply",
+        "/api/plans",            # pricing must be readable to sell anything
+        "/api/signup", "/api/account/login", "/api/account",
+        # Demo-safe by substitution or by containing no private data.
+        "/api/status", "/api/divisions", "/api/agents", "/api/opportunities",
+        "/api/feed", "/api/executions", "/api/connectors", "/api/posts",
+        "/api/channels", "/api/next-post", "/api/progress", "/api/performance",
+        "/api/stream", "/api/metrics", "/api/growth/intel", "/api/health",
+    }
+
+    c = TestClient(app)
+    tok = c.post("/api/demo/enter").json()["token"]
+    h = {"Authorization": f"Bearer {tok}"}
+
+    leaked = []
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        methods = getattr(route, "methods", set()) or set()
+        if "GET" not in methods or not path.startswith("/api/"):
+            continue
+        if "{" in path:                      # needs an id we do not have
+            continue
+        if path in public_by_design:
+            continue
+        if any(path.startswith(p) for p in demo_data._SENSITIVE_PREFIXES):
+            continue
+        r = c.get(path, headers=h)
+        if r.status_code == 200:
+            leaked.append(path)
+
+    assert not leaked, (
+        "These GET endpoints serve real founder data to a public demo visitor "
+        "and are neither registered sensitive nor listed public-by-design: "
+        + ", ".join(sorted(leaked)))
+
+
 # ── subscriptions and signup (spec Part 5B) ────────────────────────────────
 
 @pytest.fixture
