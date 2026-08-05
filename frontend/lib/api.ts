@@ -233,7 +233,11 @@ export const api = {
   deleteExpense: (id: string) => del<{ deleted: string }>(`/finance/expense/${id}`),
 
   // crm-lite
-  leads: () => get<LeadsState>("/leads", { items: [], counts: {}, statuses: [] }),
+  leads: () =>
+    get<LeadsState>("/leads", {
+      items: [], counts: {}, statuses: [], stages: [],
+      funnel: [], lost: 0, conversion_pct: 0,
+    }),
   createLead: (name: string, source: string, contact: string, note: string) =>
     post<Lead>("/leads", { name, source, contact, note }),
   setLeadStatus: (id: string, status: string) => post<Lead>(`/leads/${id}/status`, { status }),

@@ -69,13 +69,25 @@ def _sample_revenue_entries() -> list:
 
 def _sample_leads() -> list:
     return [
+        # stage_reached mirrors the real leads: it is the furthest stage the
+        # lead ever got to, which is what the funnel counts. The lost sample
+        # deliberately died at 'contacted' so the demo funnel shows a real leak
+        # rather than a clean staircase.
         {"id": "lead-demo-1", "name": "[SAMPLE] Horizon Digital Agency", "source": "linkedin", "contact": "[SAMPLE]",
-         "note": "[SAMPLE] Wants white-label AI dashboard", "status": "negotiating" if "negotiating" in _LEAD_STATUSES else "replied",
+         "note": "[SAMPLE] Wants white-label AI dashboard", "status": "replied", "stage_reached": 2,
          "created_at": _iso(5), "updated_at": _iso(1)},
         {"id": "lead-demo-2", "name": "[SAMPLE] K. Marketing Studio", "source": "fiverr", "contact": "[SAMPLE]",
-         "note": "[SAMPLE] Asked for automation audit", "status": "contacted", "created_at": _iso(7), "updated_at": _iso(2)},
+         "note": "[SAMPLE] Asked for automation audit", "status": "contacted", "stage_reached": 1,
+         "created_at": _iso(7), "updated_at": _iso(2)},
         {"id": "lead-demo-3", "name": "[SAMPLE] SaaS founder (beta list)", "source": "referral", "contact": "[SAMPLE]",
-         "note": "[SAMPLE] Interested in enterprise tier", "status": "new", "created_at": _iso(3), "updated_at": _iso(3)},
+         "note": "[SAMPLE] Interested in enterprise tier", "status": "new", "stage_reached": 0,
+         "created_at": _iso(3), "updated_at": _iso(3)},
+        {"id": "lead-demo-4", "name": "[SAMPLE] Local retailer", "source": "instagram", "contact": "[SAMPLE]",
+         "note": "[SAMPLE] Went quiet after the quote", "status": "lost", "stage_reached": 1,
+         "created_at": _iso(11), "updated_at": _iso(6)},
+        {"id": "lead-demo-5", "name": "[SAMPLE] Boutique hotel", "source": "referral", "contact": "[SAMPLE]",
+         "note": "[SAMPLE] Signed the retainer", "status": "won", "stage_reached": 3,
+         "created_at": _iso(18), "updated_at": _iso(4)},
     ]
 
 
@@ -108,11 +120,18 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
             "expenses": _sample_expenses(),
         }
     if path == "/api/leads":
+        # Built with the REAL funnel helper, not a copy of it. When the live
+        # endpoint grows a field, the demo grows it too — otherwise the guest
+        # view (the one prospects are shown) renders undefined for the new key.
+        from ..api.finance import LEAD_STAGES, _funnel
+
         items = _sample_leads()
         return {
             "items": items,
             "counts": {s: sum(1 for l in items if l.get("status") == s) for s in _LEAD_STATUSES},
             "statuses": _LEAD_STATUSES,
+            "stages": LEAD_STAGES,
+            **_funnel(items),
         }
     if path == "/api/revenue":
         return {

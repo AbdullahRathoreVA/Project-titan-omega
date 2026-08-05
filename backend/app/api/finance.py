@@ -22,6 +22,52 @@ router = APIRouter(prefix="/api")
 
 LEAD_STATUSES = ["new", "contacted", "replied", "won", "lost"]
 
+# The ordered progress path. "lost" is a terminal outcome, not a stage — a lead
+# can be lost from anywhere, so it never appears here.
+LEAD_STAGES = ["new", "contacted", "replied", "won"]
+
+
+def _stage_reached(lead: dict) -> int:
+    """Furthest stage index this lead ever reached.
+
+    Stored on the lead from now on. Derived for leads created before the field
+    existed: their current status is the best evidence available. A legacy lead
+    already marked 'lost' genuinely cannot be placed — nothing recorded how far
+    it got — so it counts only at 'new' rather than inventing a stage for it.
+    """
+    stored = lead.get("stage_reached")
+    if isinstance(stored, int):
+        return max(0, min(stored, len(LEAD_STAGES) - 1))
+    status = lead.get("status", "new")
+    return LEAD_STAGES.index(status) if status in LEAD_STAGES else 0
+
+
+def _funnel(items: list) -> dict:
+    """How many leads ever reached each stage, newest stage last.
+
+    Deliberately NOT built from `counts`: counts say where leads are sitting
+    right now, so a lead that reached 'won' has already left 'contacted' and a
+    counts-based chart shows conversion increasing down the funnel.
+    """
+    top = len(items)
+    rows = []
+    for i, stage in enumerate(LEAD_STAGES):
+        reached = sum(1 for l in items if _stage_reached(l) >= i)
+        rows.append({
+            "stage": stage,
+            "reached": reached,
+            "pct": round(100.0 * reached / top, 1) if top else 0.0,
+        })
+    # Drop-off is only meaningful between adjacent stages.
+    for i, row in enumerate(rows):
+        row["dropped"] = (rows[i - 1]["reached"] - row["reached"]) if i else 0
+    won = rows[-1]["reached"] if rows else 0
+    return {
+        "funnel": rows,
+        "lost": sum(1 for l in items if l.get("status") == "lost"),
+        "conversion_pct": round(100.0 * won / top, 1) if top else 0.0,
+    }
+
 
 # --- Financial Center --------------------------------------------------------
 
@@ -96,7 +142,8 @@ def delete_expense(expense_id: str) -> dict:
 def list_leads() -> dict:
     items = sorted(STORE.leads.values(), key=lambda l: l.get("updated_at", ""), reverse=True)
     counts = {s: sum(1 for l in items if l.get("status") == s) for s in LEAD_STATUSES}
-    return {"items": items, "counts": counts, "statuses": LEAD_STATUSES}
+    return {"items": items, "counts": counts, "statuses": LEAD_STATUSES,
+            "stages": LEAD_STAGES, **_funnel(items)}
 
 
 class LeadCreate(BaseModel):
@@ -115,6 +162,7 @@ def create_lead(req: LeadCreate) -> dict:
         "contact": req.contact.strip()[:200],
         "note": req.note.strip()[:300],
         "status": "new",
+        "stage_reached": 0,
         "created_at": now().isoformat(),
         "updated_at": now().isoformat(),
     }
@@ -136,6 +184,13 @@ def set_lead_status(lead_id: str, req: LeadStatus) -> dict:
     status = req.status.lower()
     if status not in LEAD_STATUSES:
         raise HTTPException(status_code=400, detail=f"Status must be one of {LEAD_STATUSES}")
+    # Record the high-water mark BEFORE overwriting status, and never lower it:
+    # marking a lead lost must not erase how far it got, and correcting a
+    # mis-click (won → contacted) must not un-count stages it genuinely reached.
+    if status in LEAD_STAGES:
+        lead["stage_reached"] = max(_stage_reached(lead), LEAD_STAGES.index(status))
+    else:
+        lead["stage_reached"] = _stage_reached(lead)
     lead["status"] = status
     lead["updated_at"] = now().isoformat()
     if status == "won":

@@ -302,10 +302,23 @@ export interface Lead {
   updated_at: string;
 }
 
+/** One rung of the lead funnel: how many leads EVER reached this stage.
+ *  Not the same as `counts`, which is where leads are sitting right now. */
+export interface FunnelStage {
+  stage: string;
+  reached: number;
+  pct: number;
+  dropped: number;
+}
+
 export interface LeadsState {
   items: Lead[];
   counts: Record<string, number>;
   statuses: string[];
+  stages: string[];
+  funnel: FunnelStage[];
+  lost: number;
+  conversion_pct: number;
 }
 
 // Result of opening an auto-PR (POST /api/devops/pr).

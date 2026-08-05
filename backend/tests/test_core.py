@@ -474,6 +474,114 @@ def test_german_com_domain_still_gets_impressum_finding():
     assert any(f["id"] == "imprint" for f in r["findings"])
 
 
+# ── lead funnel ────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def isolated_leads(monkeypatch, tmp_path):
+    """STORE.leads is not cleared by fresh_store and every write is persisted,
+    so a test that creates leads otherwise pollutes the real state file — the
+    same trap the client registry had."""
+    from app import persistence
+    monkeypatch.setattr(persistence, "STATE_FILE",
+                        str(tmp_path / "titan_state.json"))
+    before = dict(STORE.leads)
+    STORE.leads.clear()
+    yield
+    STORE.leads.clear()
+    STORE.leads.update(before)
+
+
+def test_funnel_counts_leads_that_passed_through_not_leads_sitting_there(
+        client, isolated_leads):
+    """`counts` is a snapshot of where leads are NOW. A lead that reached 'won'
+    is no longer counted in 'contacted', so drawing a funnel from counts shows
+    conversion going UP the stages. The funnel must count how many leads ever
+    reached each stage."""
+    ids = []
+    for n in ("A", "B", "C", "D"):
+        r = client.post("/api/leads", json={"name": f"Lead {n}", "source": "manual"})
+        assert r.status_code == 200, r.text
+        ids.append(r.json()["id"])
+
+    # A → won (so it passed through contacted and replied on the way)
+    for s in ("contacted", "replied", "won"):
+        assert client.post(f"/api/leads/{ids[0]}/status", json={"status": s}).status_code == 200
+    # B → replied
+    for s in ("contacted", "replied"):
+        assert client.post(f"/api/leads/{ids[1]}/status", json={"status": s}).status_code == 200
+    # C → contacted, then lost: it still reached 'contacted'
+    assert client.post(f"/api/leads/{ids[2]}/status", json={"status": "contacted"}).status_code == 200
+    assert client.post(f"/api/leads/{ids[2]}/status", json={"status": "lost"}).status_code == 200
+    # D stays new
+
+    body = client.get("/api/leads").json()
+    funnel = {row["stage"]: row for row in body["funnel"]}
+
+    assert funnel["new"]["reached"] == 4          # everyone starts here
+    assert funnel["contacted"]["reached"] == 3    # A, B, C — C counts despite being lost
+    assert funnel["replied"]["reached"] == 2      # A, B
+    assert funnel["won"]["reached"] == 1          # A
+
+    # Monotonically non-increasing — that is what makes it a funnel.
+    reached = [row["reached"] for row in body["funnel"]]
+    assert reached == sorted(reached, reverse=True)
+
+    assert funnel["new"]["pct"] == 100.0
+    assert funnel["won"]["pct"] == 25.0
+    assert body["lost"] == 1
+    assert body["conversion_pct"] == 25.0
+
+
+def test_funnel_records_where_a_lost_lead_died(client, isolated_leads):
+    """Losing a lead must not erase how far it got, otherwise the funnel cannot
+    show which stage is actually leaking."""
+    r = client.post("/api/leads", json={"name": "Doomed", "source": "manual"})
+    lid = r.json()["id"]
+    for s in ("contacted", "replied", "lost"):
+        client.post(f"/api/leads/{lid}/status", json={"status": s})
+
+    funnel = {row["stage"]: row for row in client.get("/api/leads").json()["funnel"]}
+    assert funnel["replied"]["reached"] == 1
+    assert funnel["won"]["reached"] == 0
+
+
+def test_funnel_does_not_regress_when_a_lead_moves_backwards(client, isolated_leads):
+    """Correcting a mis-click (won → contacted) must not un-count the stages the
+    lead genuinely reached."""
+    lid = client.post("/api/leads", json={"name": "Bounced", "source": "manual"}).json()["id"]
+    for s in ("contacted", "replied", "won", "contacted"):
+        client.post(f"/api/leads/{lid}/status", json={"status": s})
+
+    funnel = {row["stage"]: row for row in client.get("/api/leads").json()["funnel"]}
+    assert funnel["won"]["reached"] == 1
+    assert client.get("/api/leads").json()["counts"]["contacted"] == 1
+
+
+def test_guest_leads_payload_has_the_same_shape_as_the_real_one(monkeypatch):
+    """The demo substitutes its own /api/leads body. When the real endpoint grows
+    a field the substitute does not, the dashboard renders undefined for guests —
+    and the guest view is what prospects are shown."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    c = TestClient(app)
+    tok = c.post("/api/demo/enter").json()["token"]
+    body = c.get("/api/leads", headers={"Authorization": f"Bearer {tok}"}).json()
+
+    for key in ("items", "counts", "statuses", "stages", "funnel", "lost",
+                "conversion_pct"):
+        assert key in body, f"guest /api/leads is missing {key!r}"
+    reached = [row["reached"] for row in body["funnel"]]
+    assert reached == sorted(reached, reverse=True)
+    assert {"stage", "reached", "pct", "dropped"} <= set(body["funnel"][0])
+
+
+def test_funnel_is_empty_not_broken_with_no_leads(client, isolated_leads):
+    body = client.get("/api/leads").json()
+    assert [row["reached"] for row in body["funnel"]] == [0, 0, 0, 0]
+    assert body["conversion_pct"] == 0.0
+    assert all(row["pct"] == 0.0 for row in body["funnel"])
+
+
 @pytest.fixture
 def isolated_clients(monkeypatch, tmp_path):
     """The client registry is module-level and persisted to disk, and the

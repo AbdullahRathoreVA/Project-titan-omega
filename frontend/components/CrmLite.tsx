@@ -1,9 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, Plus, Trash2, Users } from "lucide-react";
+import { ChevronRight, Filter, Plus, Trash2, Users } from "lucide-react";
 import { api } from "@/lib/api";
 import type { LeadsState } from "@/lib/types";
+
+const STAGE_BAR: Record<string, string> = {
+  new: "bg-hud-cyan",
+  contacted: "bg-hud-amber",
+  replied: "bg-hud-violet",
+  won: "bg-hud-emerald",
+};
+
+const STAGE_LABEL: Record<string, string> = {
+  new: "Leads added",
+  contacted: "Contacted",
+  replied: "Replied",
+  won: "Won",
+};
 
 const STATUS_COLOR: Record<string, string> = {
   new: "text-hud-cyan border-hud-cyan/30",
@@ -79,6 +93,59 @@ export function CrmLite() {
           </div>
         ))}
       </div>
+
+      {/* Conversion funnel. Built from how far each lead EVER got, not from the
+          status counts above — a lead that reached WON has already left
+          CONTACTED, so a counts-based chart would show conversion rising. */}
+      <section className="panel">
+        <header className="panel-header">
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-hud-cyan" strokeWidth={1.6} />
+            <h2 className="text-sm font-medium text-slate-200">Lead → Won Funnel</h2>
+          </div>
+          <span className="hud-label">
+            {(state?.conversion_pct ?? 0).toFixed(1)}% end-to-end
+          </span>
+        </header>
+        <div className="space-y-3 p-3">
+          {!state?.funnel?.length || state.items.length === 0 ? (
+            <div className="py-5 text-center text-[11px] text-slate-600">
+              No leads yet — the funnel fills in as you add and advance them.
+            </div>
+          ) : (
+            <>
+              {state.funnel.map((row) => (
+                <div key={row.stage}>
+                  <div className="mb-1 flex items-baseline justify-between">
+                    <span className="text-[11px] text-slate-300">
+                      {STAGE_LABEL[row.stage] ?? row.stage}
+                      {row.dropped > 0 && (
+                        <span className="ml-2 text-[10px] text-hud-rose">
+                          −{row.dropped} dropped here
+                        </span>
+                      )}
+                    </span>
+                    <span className="font-mono text-[10px] text-slate-500">
+                      {row.reached} · {row.pct.toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-black/50">
+                    <div
+                      className={`h-full rounded-full ${STAGE_BAR[row.stage] ?? "bg-slate-500"}`}
+                      style={{ width: `${Math.max(row.pct, row.reached > 0 ? 2 : 0)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+              <div className="pt-1 text-[10px] text-slate-600">
+                {state.lost > 0
+                  ? `${state.lost} lead(s) marked lost — each still counts at the furthest stage it reached, so you can see where they leak.`
+                  : "No leads marked lost."}
+              </div>
+            </>
+          )}
+        </div>
+      </section>
 
       <section className="panel">
         <header className="panel-header">
