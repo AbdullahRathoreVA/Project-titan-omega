@@ -129,7 +129,8 @@ def scan_client_gaps(audit_cache: Optional[dict] = None,
                 continue
             audits[c["id"]] = client_seo.audit(
                 site, business_name=c.get("business_name", ""),
-                city=c.get("city", ""), country=c.get("country", ""))
+                city=c.get("city", ""), country=c.get("country", ""),
+                industry=c.get("industry", ""))
 
     counts: Counter = Counter()
     who: dict[str, list[str]] = {}

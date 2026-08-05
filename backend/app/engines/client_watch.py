@@ -165,7 +165,8 @@ def check_client(cid: str) -> dict:
     audit = client_seo.audit(site,
                              business_name=rec.get("business_name", ""),
                              city=rec.get("city", ""),
-                             country=rec.get("country", ""))
+                             country=rec.get("country", ""),
+                              industry=rec.get("industry", ""))
     current = _fingerprint(audit)
     history = rec.get("watch_history") or []
     previous = history[-1]["fingerprint"] if history else None

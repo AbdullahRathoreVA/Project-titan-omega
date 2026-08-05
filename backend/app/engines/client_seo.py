@@ -28,7 +28,7 @@ import urllib.parse
 import urllib.request
 from typing import Optional
 
-from . import compliance, local_seo
+from . import compliance, local_seo, verticals
 
 TIMEOUT = 15
 
@@ -71,7 +71,7 @@ def _text(pattern: str, html: str, group: int = 1) -> str:
 
 
 def audit(url: str, *, business_name: str = "", city: str = "",
-          country: str = "") -> dict:
+          country: str = "", industry: str = "") -> dict:
     """Full audit of one page. Never raises."""
     if not url:
         return {"ok": False, "error": "no website configured"}
@@ -94,6 +94,11 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     parsed = urllib.parse.urlparse(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
 
+    # Every client-facing string below is a function of the trade. Telling a
+    # law firm that "the food photography is the product" is not a credible
+    # deliverable, and this audit is what the client actually pays for.
+    vert = verticals.profile(verticals.detect(html, industry))
+
     def add(fid, severity, title, detail, fix, key=None, ok=False):
         if key:
             earned[key] = ok
@@ -107,7 +112,7 @@ def audit(url: str, *, business_name: str = "", city: str = "",
         f"Found: {title[:80]!r} ({len(title)} chars). Google truncates around "
         f"60 and an empty title is a hard ranking loss.",
         f"Write a 50-60 character title, e.g. "
-        f"'{business_name or 'Your Business'} — Restaurant in "
+        f"'{business_name or 'Your Business'} — {vert.title_example} in "
         f"{city or 'your city'}'",
         key="title", ok=bool(title) and 15 <= len(title) <= 65)
 
@@ -148,18 +153,21 @@ def audit(url: str, *, business_name: str = "", city: str = "",
         "Only ~17% of sites implement schema, and it is how AI Overviews, "
         "ChatGPT Search and Perplexity decide what to quote. Without it you "
         "are close to invisible to AI search.",
-        "Add JSON-LD schema. For a restaurant, start with LocalBusiness.",
+        f"Add JSON-LD schema. For a {vert.label.lower()}, start with "
+        f"{vert.schema_type}.",
         key="schema", ok=bool(types))
 
     local_types = {"LocalBusiness", "Restaurant", "FoodEstablishment",
                    "CafeOrCoffeeShop", "BarOrPub", "Store", "Organization"}
     has_local = bool(local_types & set(types))
-    add("local_business", "critical", "No LocalBusiness / Restaurant schema",
+    add("local_business", "critical",
+        f"No LocalBusiness / {vert.schema_type} schema",
         "For a local business this is the single highest-leverage markup. "
         "Local ranking is driven by proximity (~55%), Google Business Profile "
         "(~32%) and reviews (16-20%) — this schema feeds all three surfaces.",
-        "Add Restaurant schema with name, address, geo, telephone, "
-        "openingHoursSpecification, servesCuisine, priceRange and menu URL.",
+        f"Add {vert.schema_type} schema with name, address, geo, telephone, "
+        f"openingHoursSpecification, priceRange"
+        + (f", plus {vert.extra_schema}." if vert.extra_schema else "."),
         key="local_business", ok=has_local)
 
     # ------------------------------------------------------------- NAP ----
@@ -180,14 +188,14 @@ def audit(url: str, *, business_name: str = "", city: str = "",
               if not re.search(r'\balt\s*=\s*["\'][^"\']+["\']', i, re.I)]
     add("images_alt", "medium", "Images missing alt text",
         f"{len(no_alt)} of {len(imgs)} images have no alt text. For a "
-        f"restaurant the food photography is the product — unlabelled images "
-        f"cannot rank in image search.",
-        "Describe each dish in the alt text, e.g. 'wood-fired chicken karahi'.",
+        f"{vert.label.lower()} {vert.asset_noun} is the product — unlabelled "
+        f"images cannot rank in image search.",
+        f"Describe each image in the alt text, e.g. '{vert.alt_example}'.",
         key="images_alt", ok=bool(imgs) and len(no_alt) <= max(1, len(imgs) // 5))
 
     # ------------------------------------------------------- technical ----
     add("viewport", "high", "No mobile viewport tag",
-        "Most restaurant searches are on a phone. Without this the layout "
+        "Most local searches are on a phone. Without this the layout "
         "will not adapt and mobile ranking suffers.",
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         key="viewport", ok=bool(re.search(r'name=["\']viewport["\']', html, re.I)))
@@ -206,9 +214,10 @@ def audit(url: str, *, business_name: str = "", city: str = "",
 
     og = len(re.findall(r'property=["\']og:', html, re.I))
     add("og", "medium", "No Open Graph tags",
-        "Links shared to WhatsApp, Instagram or Facebook will show no image "
-        "or title — for a restaurant that is most of your sharing.",
-        "Add og:title, og:description and og:image (a strong food photo).",
+        f"Links shared to WhatsApp, Instagram or Facebook will show no image "
+        f"or title — for a {vert.label.lower()} that is {vert.share_context}.",
+        f"Add og:title, og:description and og:image (a strong image of "
+        f"{vert.asset_noun.replace('the ', '')}).",
         key="og", ok=og >= 3)
 
     # ------------------------------------------------- site-level checks ----
@@ -242,7 +251,7 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     # from the technical score: a restaurant can have perfect meta tags and
     # still be invisible locally, and averaging the two would hide that.
     local = local_seo.analyse(html, business=business_name, city=city,
-                              industry="", url=url)
+                              industry=industry, url=url)
     findings.extend([
         {"id": f"local:{f['dimension']}", "severity": f["severity"],
          "title": f["title"], "detail": f["detail"] + f"  [{f['source']}]",
@@ -290,15 +299,21 @@ def audit(url: str, *, business_name: str = "", city: str = "",
 
 
 def suggested_schema(business_name: str, city: str, website: str,
-                     cuisine: str = "", phone: str = "",
+                     industry: str = "", phone: str = "",
                      country_code: str = "DE") -> str:
-    """A ready-to-paste JSON-LD block — the highest-value single fix."""
+    """A ready-to-paste JSON-LD block — the highest-value single fix.
+
+    Emits the correct Schema.org SUBTYPE for the trade. This previously always
+    emitted Restaurant with servesCuisine and acceptsReservations, so pasting it
+    onto a law firm's site declared the firm a restaurant — worse than having no
+    schema at all, because search engines believe it.
+    """
+    vert = verticals.profile(verticals.detect("", industry))
     node = {
         "@context": "https://schema.org",
-        "@type": "Restaurant",
-        "name": business_name or "Your Restaurant",
+        "@type": vert.schema_type,
+        "name": business_name or "Your Business",
         "url": website or "",
-        "servesCuisine": cuisine or "European",
         "priceRange": "$$",
         "address": {
             "@type": "PostalAddress",
@@ -306,13 +321,22 @@ def suggested_schema(business_name: str, city: str, website: str,
             "addressLocality": city or "<city>",
             "addressCountry": country_code or "DE",
         },
-        "telephone": phone or "<+49 …>",
+        "telephone": phone or "<phone number>",
         "openingHoursSpecification": [{
             "@type": "OpeningHoursSpecification",
             "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday",
                           "Friday", "Saturday", "Sunday"],
-            "opens": "12:00", "closes": "23:00",
+            "opens": "09:00", "closes": "18:00",
         }],
-        "acceptsReservations": "True",
     }
-    return json.dumps(node, indent=2)
+    # Subtype-specific properties, only where they are actually meaningful.
+    if vert.key in ("restaurant", "cafe", "bar", "bakery"):
+        node["servesCuisine"] = "<cuisine>"
+        node["openingHoursSpecification"][0].update(opens="12:00", closes="23:00")
+    if vert.key in ("restaurant", "hotel"):
+        node["acceptsReservations"] = "True"
+    if vert.key in ("healthcare", "dentist"):
+        node["medicalSpecialty"] = "<specialty>"
+    if vert.key in ("legal", "tradesperson", "auto"):
+        node["areaServed"] = city or "<service area>"
+    return json.dumps(node, indent=2, ensure_ascii=False)

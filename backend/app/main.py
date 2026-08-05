@@ -22,6 +22,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import persistence
+from .core import envfile
+
+# Before anything reads configuration. A value already in the environment (on
+# Hugging Face, the Space secrets) always wins over the file.
+_ENV_LOADED = envfile.autoload()
 from .api.actions import router as actions_router
 from .api.comms import router as comms_router
 from .api.finance import router as finance_router

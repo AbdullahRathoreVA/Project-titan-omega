@@ -8,6 +8,7 @@ evolution layers degrade and operate correctly.
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -19,6 +20,24 @@ from app.domain.network import AGENT_NETWORK
 from app.core import llm
 from app.engines import evolution, execution, opportunity
 from app.connectors import careermind
+
+
+@pytest.fixture
+def no_ambient_config(monkeypatch):
+    """Clear tool configuration that a developer's local .env may have set.
+
+    app.main autoloads .env, so once Abdullah configured a real Firecrawl key
+    every test asserting "this tool is unconfigured" started failing on his
+    machine and passing on CI. A suite whose result depends on whether an
+    untracked file exists is worse than no suite: it trains you to ignore red.
+    Tests that assert on configuration state must therefore state it.
+    """
+    for var in ("FIRECRAWL_BASE_URL", "FIRECRAWL_API_KEY",
+                "OPENWA_BASE_URL", "OPENWA_API_KEY",
+                "COMPAI_CRM_URL", "COMPAI_CRM_KEY",
+                "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"):
+        monkeypatch.delenv(var, raising=False)
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -474,6 +493,123 @@ def test_german_com_domain_still_gets_impressum_finding():
     assert any(f["id"] == "imprint" for f in r["findings"])
 
 
+# ── verticals: Titan must sell to any business, not just restaurants ───────
+
+def test_every_vertical_can_actually_be_detected():
+    """VERTICAL_SCHEMA listed dentist, auto and store while VERTICAL_SIGNALS did
+    not, so those trades could never be detected and silently got generic
+    advice. Every declared vertical must be reachable."""
+    from app.engines import verticals
+    for key, v in verticals.VERTICALS.items():
+        assert v.signals, f"{key} has no detection signals"
+        assert verticals.detect("", key) == key, f"{key} unreachable by name"
+        assert verticals.detect("", v.label) == key, f"{v.label} unreachable"
+
+
+def test_declared_industry_beats_stray_page_words():
+    """An owner declaring their trade at onboarding is better evidence than a
+    word in a footer — a dentist who mentions 'coffee' is not a café."""
+    from app.engines import verticals
+    html = "<p>free coffee and espresso in the waiting room, barista made</p>"
+    assert verticals.detect(html, "Zahnarztpraxis") == "dentist"
+    assert verticals.detect(html, "") == "cafe"
+
+
+def test_audit_copy_is_not_restaurant_specific_for_a_law_firm():
+    """The audit is what the client pays for. Telling a law firm its food
+    photography is the product is not a credible deliverable."""
+    from app.engines import client_seo
+    html = """<html lang="de"><head><title>Kanzlei</title></head><body>
+      <img src="a.jpg"><img src="b.jpg"><p>Rechtsanwalt und Anwalt, Mandant</p>
+      </body></html>"""
+    import unittest.mock as mock
+    with mock.patch.object(client_seo, "_fetch",
+                           return_value=(html, None, 200)):
+        r = client_seo.audit("https://kanzlei.example", business_name="Kanzlei X",
+                             city="Berlin", country="Germany", industry="legal")
+    blob = json.dumps(r["findings"]).lower()
+    assert "food photography" not in blob
+    assert "karahi" not in blob
+    assert "restaurant in" not in blob
+    assert "legalservice" in blob or "law firm" in blob
+
+
+def test_schema_generator_emits_the_right_subtype_per_trade():
+    """It always emitted Restaurant with servesCuisine and acceptsReservations.
+    Pasting that onto a law firm declares the firm a restaurant — worse than no
+    schema, because search engines believe it."""
+    from app.engines import client_seo
+    law = json.loads(client_seo.suggested_schema(
+        "Kanzlei X", "Berlin", "https://k.example", "legal"))
+    assert law["@type"] == "LegalService"
+    assert "servesCuisine" not in law and "acceptsReservations" not in law
+    assert law["areaServed"] == "Berlin"
+
+    dentist = json.loads(client_seo.suggested_schema(
+        "Praxis Y", "München", "https://d.example", "dentist"))
+    assert dentist["@type"] == "Dentist" and "medicalSpecialty" in dentist
+
+    rest = json.loads(client_seo.suggested_schema(
+        "Trattoria", "Bochum", "https://r.example", "restaurant"))
+    assert rest["@type"] == "Restaurant" and rest["acceptsReservations"] == "True"
+    assert rest["openingHoursSpecification"][0]["closes"] == "23:00"
+
+
+def test_unknown_trade_gets_sane_generic_advice_not_food_advice():
+    from app.engines import client_seo, verticals
+    v = verticals.profile("something-nobody-listed")
+    assert v.schema_type == "LocalBusiness"
+    assert "food" not in v.asset_noun
+    node = json.loads(client_seo.suggested_schema(
+        "Acme", "Lahore", "https://a.example", "quantum widget consultancy"))
+    assert node["@type"] == "LocalBusiness"
+
+
+# ── .env loading ───────────────────────────────────────────────────────────
+
+def test_real_environment_beats_the_env_file(tmp_path, monkeypatch):
+    """A stale .env shipped inside an image must never shadow the real Space
+    secret with a dead key."""
+    from app.core import envfile
+    f = tmp_path / ".env"
+    f.write_text("FIRECRAWL_API_KEY=from-file\nNEW_ONLY=set-me\n", encoding="utf-8")
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "from-real-environment")
+    applied = envfile.load(f)
+    assert os.environ["FIRECRAWL_API_KEY"] == "from-real-environment"
+    assert os.environ["NEW_ONLY"] == "set-me"
+    assert "FIRECRAWL_API_KEY" not in applied and "NEW_ONLY" in applied
+    os.environ.pop("NEW_ONLY", None)
+
+
+def test_env_parser_handles_what_people_actually_paste(tmp_path):
+    from app.core import envfile
+    f = tmp_path / ".env"
+    f.write_text(
+        "# a comment\n"
+        "\n"
+        "export EXPORTED=yes\n"
+        'QUOTED="has spaces"\n'
+        "SINGLE='single'\n"
+        "TRAILING=value # trailing comment\n"
+        "HASHVALUE=abc#notacomment\n"
+        "NO_EQUALS_SIGN\n",
+        encoding="utf-8")
+    envfile.load(f, override=True)
+    assert os.environ["EXPORTED"] == "yes"
+    assert os.environ["QUOTED"] == "has spaces"
+    assert os.environ["SINGLE"] == "single"
+    assert os.environ["TRAILING"] == "value"
+    assert os.environ["HASHVALUE"] == "abc#notacomment"
+    for k in ("EXPORTED", "QUOTED", "SINGLE", "TRAILING", "HASHVALUE"):
+        os.environ.pop(k, None)
+
+
+def test_missing_or_broken_env_file_never_stops_boot(tmp_path):
+    from app.core import envfile
+    assert envfile.load(tmp_path / "does-not-exist") == []
+    assert envfile.load(tmp_path) == []          # a directory, not a file
+
+
 # ── planning engine (spec Part 2) ──────────────────────────────────────────
 
 def test_plan_is_produced_before_anything_runs():
@@ -509,7 +645,8 @@ def test_a_dependency_cycle_cannot_hang_the_planner():
     assert planner.Plan(goal="g", steps=steps).est_seconds > 0
 
 
-def test_confidence_drops_when_a_step_needs_a_tool_nobody_configured():
+def test_confidence_drops_when_a_step_needs_a_tool_nobody_configured(
+        no_ambient_config):
     """A plan whose step needs an unset key is not a high-confidence plan."""
     from app.core import planner
     from app.engines import adapters
@@ -729,7 +866,7 @@ def test_unlicensed_upstream_is_blocked_in_code_not_just_in_a_comment():
     assert "licence" in (res.error + res.needs).lower()
 
 
-def test_unconfigured_tool_says_exactly_what_is_missing():
+def test_unconfigured_tool_says_exactly_what_is_missing(no_ambient_config):
     from app.core import tools
     from app.engines import adapters
     adapters.register_all()
@@ -795,7 +932,8 @@ def test_api_tools_registry_is_honest_about_readiness(client):
     assert next(t for t in body["tools"] if t["name"] == "web.fetch")["status"] == "ready"
 
 
-def test_api_tool_invoke_returns_a_reason_instead_of_a_stack_trace(client):
+def test_api_tool_invoke_returns_a_reason_instead_of_a_stack_trace(
+        client, no_ambient_config):
     r = client.post("/api/tools/web.crawl/invoke", json={"url": "https://example.com"})
     assert r.status_code == 200
     body = r.json()

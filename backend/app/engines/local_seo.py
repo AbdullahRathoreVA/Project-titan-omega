@@ -40,45 +40,15 @@ DIMENSIONS = {
     "authority": {"weight": 10, "label": "Local authority signals"},
 }
 
-# Correct Schema.org subtype per vertical. Using generic LocalBusiness where a
-# specific subtype exists is a real, checkable defect.
-VERTICAL_SCHEMA = {
-    "restaurant": "Restaurant",
-    "cafe": "CafeOrCoffeeShop",
-    "bar": "BarOrPub",
-    "bakery": "Bakery",
-    "hotel": "Hotel",
-    "healthcare": "MedicalClinic",
-    "dentist": "Dentist",
-    "legal": "LegalService",
-    "salon": "HairSalon",
-    "gym": "ExerciseGym",
-    "auto": "AutoDealer",
-    "store": "Store",
-}
+# Vertical knowledge now lives in one place. It used to be split across two
+# dicts here whose key sets had drifted apart: VERTICAL_SCHEMA listed dentist,
+# auto and store, VERTICAL_SIGNALS did not, so those three could never be
+# detected and every dental practice silently received generic advice.
+from . import verticals as _verticals   # noqa: E402
 
-VERTICAL_SIGNALS = {
-    "restaurant": ["menu", "speisekarte", "reservier", "reservation", "dine",
-                   "takeaway", "lieferung", "cuisine", "küche", "tisch"],
-    "cafe": ["coffee", "kaffee", "espresso", "barista", "café"],
-    "bar": ["cocktail", "bier", "beer", "wine bar", "happy hour"],
-    "bakery": ["bakery", "bäckerei", "brot", "pastry"],
-    "hotel": ["rooms", "zimmer", "booking", "check-in", "suite"],
-    "healthcare": ["patient", "appointment", "termin", "praxis", "arzt"],
-    "legal": ["attorney", "anwalt", "kanzlei", "rechtsanwalt"],
-    "salon": ["haircut", "friseur", "salon", "styling"],
-    "gym": ["fitness", "gym", "training", "membership"],
-}
-
-
-def detect_vertical(html: str, industry_hint: str = "") -> str:
-    low = f"{industry_hint} {html}".lower()
-    best, score = "", 0
-    for vert, words in VERTICAL_SIGNALS.items():
-        n = sum(1 for w in words if w in low)
-        if n > score:
-            best, score = vert, n
-    return best if score >= 2 else ""
+VERTICAL_SCHEMA = _verticals.VERTICAL_SCHEMA
+VERTICAL_SIGNALS = _verticals.VERTICAL_SIGNALS
+detect_vertical = _verticals.detect
 
 
 def _schema_nodes(html: str) -> list[dict]:

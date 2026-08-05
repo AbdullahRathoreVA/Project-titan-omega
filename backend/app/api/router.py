@@ -1057,7 +1057,8 @@ def admin_run_client_seo(cid: str) -> dict:
     result = client_seo.audit(rec.get("website", ""),
                               business_name=rec.get("business_name", ""),
                               city=rec.get("city", ""),
-                              country=rec.get("country", ""))
+                              country=rec.get("country", ""),
+                              industry=rec.get("industry", ""))
     clients.bump(cid, "seo_audits")
     if result.get("ok"):
         clients.bump(cid, "issues_found", len(result.get("findings", [])))
@@ -1115,7 +1116,8 @@ def client_seo_report(x_client_token: Optional[str] = Header(None)) -> dict:
     return client_seo.audit(rec.get("website", ""),
                             business_name=rec.get("business_name", ""),
                             city=rec.get("city", ""),
-                            country=rec.get("country", ""))
+                            country=rec.get("country", ""),
+                              industry=rec.get("industry", ""))
 
 
 @router.get("/client/seo/schema", tags=["clients"])
@@ -1161,7 +1163,8 @@ def client_report_pdf(x_client_token: Optional[str] = Header(None)):
     seo = client_seo.audit(rec.get("website", ""),
                            business_name=rec.get("business_name", ""),
                            city=rec.get("city", ""),
-                           country=rec.get("country", ""))
+                           country=rec.get("country", ""),
+                              industry=rec.get("industry", ""))
     pdf = client_report.build(clients.public(cid), seo, social=_social_pack(rec))
     clients.log_activity(cid, "report", "Website & visibility report generated")
     persistence.save(STORE)
@@ -1179,7 +1182,8 @@ def admin_report_pdf(cid: str):
     seo = client_seo.audit(rec.get("website", ""),
                            business_name=rec.get("business_name", ""),
                            city=rec.get("city", ""),
-                           country=rec.get("country", ""))
+                           country=rec.get("country", ""),
+                              industry=rec.get("industry", ""))
     pdf = client_report.build(clients.public(cid), seo, social=_social_pack(rec))
     fname = (rec.get("business_name", "report").lower()
              .replace(" ", "-")[:40] + "-report.pdf")
