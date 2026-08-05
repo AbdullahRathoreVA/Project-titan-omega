@@ -610,6 +610,137 @@ def test_missing_or_broken_env_file_never_stops_boot(tmp_path):
     assert envfile.load(tmp_path) == []          # a directory, not a file
 
 
+# ── subscriptions and signup (spec Part 5B) ────────────────────────────────
+
+@pytest.fixture
+def isolated_billing(monkeypatch, tmp_path):
+    from app import persistence
+    from app.core import billing
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "s.json"))
+    billing.reset()
+    yield
+    billing.reset()
+
+
+def test_free_tier_keeps_the_thing_worth_paying_for(isolated_billing):
+    """Spec Part 5B forbids dark patterns and requires the free tier be
+    genuinely useful. Crippling the legal check — the one finding that proves
+    Titan's value — would be exactly the forbidden pattern, and would sell
+    nothing because nobody would see what they were buying."""
+    from app.core import billing
+    free = billing.PLANS["free"]
+    blob = " ".join(free.features).lower()
+    assert "legal" in blob and "audit" in blob
+    assert free.audits_per_month >= 5, "free tier is not usable on its own"
+    assert free.price_usd == 0.0
+
+
+def test_plans_increase_monotonically(isolated_billing):
+    """A higher price that buys less somewhere is a pricing bug users notice."""
+    from app.core import billing
+    prev = None
+    for key in billing.ORDER:
+        p = billing.PLANS[key]
+        if prev:
+            assert p.price_usd > prev.price_usd
+            for field in ("clients", "audits_per_month", "ai_calls_per_month"):
+                a, b = getattr(prev, field), getattr(p, field)
+                assert b == -1 or a == -1 or b >= a, f"{key}.{field} regressed"
+        prev = p
+
+
+def test_exceeding_a_quota_explains_itself_instead_of_just_failing(
+        isolated_billing):
+    from app.core import billing
+    billing.signup("a@b.com", "password123", "free")
+    limit = billing.PLANS["free"].audits_per_month
+    for _ in range(limit):
+        assert billing.consume("a@b.com", "audits")["allowed"] is True
+    v = billing.consume("a@b.com", "audits")
+    assert v["allowed"] is False
+    assert str(limit) in v["reason"]
+    assert v["upgrade_to"] == "student"
+    assert "$" in v["upgrade_gives"] and "resets_in_days" in v
+    # and the refusal must not have consumed anything
+    assert billing.public("a@b.com")["usage"]["audits"] == limit
+
+
+def test_unlimited_plan_is_actually_unlimited(isolated_billing):
+    from app.core import billing
+    billing.signup("e@b.com", "password123", "enterprise")
+    for _ in range(50):
+        assert billing.consume("e@b.com", "audits")["allowed"] is True
+
+
+def test_signup_rejects_bad_input_and_duplicates(isolated_billing):
+    from app.core import billing
+    with pytest.raises(ValueError):
+        billing.signup("notanemail", "password123")
+    with pytest.raises(ValueError):
+        billing.signup("x@y.com", "short")
+    billing.signup("x@y.com", "password123")
+    with pytest.raises(ValueError):
+        billing.signup("x@y.com", "password123")
+
+
+def test_password_is_never_stored_or_returned(isolated_billing):
+    from app.core import billing
+    billing.signup("p@q.com", "sup3rsecret!", "free")
+    pub = billing.public("p@q.com")
+    assert "sup3rsecret!" not in json.dumps(pub)
+    assert not any(k.startswith("_") for k in pub), "internal fields leaked"
+    state = json.dumps(billing.export_state())
+    assert "sup3rsecret!" not in state, "plaintext password persisted"
+
+
+def test_login_works_and_wrong_password_fails(isolated_billing):
+    from app.core import billing
+    billing.signup("l@m.com", "password123")
+    assert billing.authenticate("l@m.com", "wrong") is None
+    tok = billing.authenticate("l@m.com", "password123")
+    assert tok and billing.resolve(tok) == "l@m.com"
+
+
+def test_signup_and_pricing_are_reachable_without_the_founder_token(
+        isolated_billing, monkeypatch):
+    """If these sit behind the founder token nobody can ever become a customer,
+    which defeats the entire subscription feature."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    c = TestClient(app)
+    assert c.get("/api/plans").status_code == 200
+    r = c.post("/api/signup", json={"email": "new@user.com",
+                                    "password": "password123", "plan": "free"})
+    assert r.status_code == 200, r.text
+    login = c.post("/api/account/login", json={"email": "new@user.com",
+                                               "password": "password123"})
+    assert login.status_code == 200
+    tok = login.json()["token"]
+    # The account endpoint must still refuse an unknown token.
+    assert c.get("/api/account",
+                 headers={"X-Account-Token": "garbage"}).status_code == 401
+    me = c.get("/api/account", headers={"X-Account-Token": tok})
+    assert me.status_code == 200 and me.json()["plan"] == "free"
+    # A subscriber token must NOT unlock founder-only data.
+    assert c.get("/api/finance",
+                 headers={"X-Account-Token": tok}).status_code == 401
+
+
+def test_checkout_says_what_is_missing_rather_than_pretending(isolated_billing,
+                                                              monkeypatch):
+    """With no processor keys the paid flow must degrade honestly — and must
+    say the free tier still works, because it does."""
+    from app.core import billing
+    monkeypatch.delenv("PAYPAL_CLIENT_ID", raising=False)
+    monkeypatch.delenv("PAYPAL_CLIENT_SECRET", raising=False)
+    out = billing.checkout("a@b.com", "individual")
+    assert out["ready"] is False
+    assert "PAYPAL_CLIENT_ID" in out["needs"]
+    assert "free tier is fully" in out["note"]
+    with pytest.raises(ValueError):
+        billing.checkout("a@b.com", "free")
+
+
 # ── business intelligence + forecasting (spec Part 4C) ─────────────────────
 
 @pytest.fixture

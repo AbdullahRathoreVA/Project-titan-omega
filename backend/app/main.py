@@ -146,6 +146,12 @@ _OPEN_PATHS = {
     "/api/content/daily",
     "/api/intel/news",
     "/api/inbox/auto-reply",
+    # Public product surface. Pricing must be readable and signup reachable
+    # without a founder token, or nobody can ever become a customer — the
+    # whole point of Part 5B.
+    "/api/plans",
+    "/api/signup",
+    "/api/account/login",
     # NOTE: the client portal is handled by _OPEN_PREFIXES below, not here.
     # Listing each path individually meant every new client endpoint silently
     # 401'd until someone remembered to register it — /client/social and
@@ -165,7 +171,12 @@ _OPEN_PATHS = {
 # A prefix rather than a list of exact paths: listing them individually meant
 # every new client endpoint silently 401'd until someone remembered to register
 # it, which is exactly what happened to /client/social and /client/report.pdf.
-_OPEN_PREFIXES = ("/api/client/",)
+#
+# /api/account and /api/checkout/* carry their OWN credential (X-Account-Token)
+# and are scoped to one subscriber, exactly like the client portal above. They
+# bypass the FOUNDER guard without weakening it: an unknown account token
+# resolves to nothing and the endpoint 401s.
+_OPEN_PREFIXES = ("/api/client/", "/api/account", "/api/checkout/")
 
 
 def _static_page(name: str) -> FileResponse:

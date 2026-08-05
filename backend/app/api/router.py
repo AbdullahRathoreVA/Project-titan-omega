@@ -875,6 +875,68 @@ def make_plan(req: PlanRequest) -> dict:
     return planner.plan(req.goal).as_dict()
 
 
+# --- subscriptions and signup (spec Part 5B) --------------------------------
+
+class SignupIn(BaseModel):
+    email: str = Field(..., min_length=5)
+    password: str = Field(..., min_length=8)
+    plan: str = Field(default="free")
+
+
+@router.get("/plans", tags=["billing"])
+def list_plans() -> dict:
+    """Public pricing. Free is a usable product, not a demo."""
+    from ..core import billing
+    return billing.plans()
+
+
+@router.post("/signup", tags=["billing"])
+def signup(req: SignupIn) -> dict:
+    from ..core import billing
+    try:
+        account = billing.signup(req.email, req.password, req.plan)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    persistence.save(STORE)
+    return account
+
+
+@router.post("/account/login", tags=["billing"])
+def account_login(req: SignupIn) -> dict:
+    from ..core import billing
+    token = billing.authenticate(req.email, req.password)
+    if not token:
+        raise HTTPException(status_code=401, detail="Wrong email or password")
+    return {"token": token, "account": billing.public(req.email)}
+
+
+@router.get("/account", tags=["billing"])
+def account_me(x_account_token: Optional[str] = Header(None)) -> dict:
+    from ..core import billing
+    email = billing.resolve(x_account_token or "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    return billing.public(email)
+
+
+@router.post("/checkout/{plan_key}", tags=["billing"])
+def checkout(plan_key: str,
+             x_account_token: Optional[str] = Header(None)) -> dict:
+    """Where the CUSTOMER goes to approve a subscription.
+
+    Titan never handles a card number and never completes a payment on anyone's
+    behalf — this returns an approval target the customer opens themselves.
+    """
+    from ..core import billing
+    email = billing.resolve(x_account_token or "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in first")
+    try:
+        return billing.checkout(email, plan_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/reflection", tags=["executive"])
 def reflection_report(limit: int = Query(default=20, ge=1, le=100)) -> dict:
     """What Titan learned from finishing things, and what it changed as a result.

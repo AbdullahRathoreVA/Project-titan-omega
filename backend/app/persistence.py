@@ -16,7 +16,7 @@ import json
 import os
 import tempfile
 
-from .core import clients, learning, reflection, routing
+from .core import billing, clients, learning, reflection, routing
 from .store import STORE, Store
 
 
@@ -50,6 +50,7 @@ def save(store: Store = STORE) -> None:
             # Calibration is only useful once it has accumulated evidence;
             # losing it on every Space restart would keep it at 1.0 forever.
             "reflection": reflection.export_state(),
+            "billing": billing.export_state(),
         }
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -95,5 +96,8 @@ def load(store: Store = STORE) -> None:
         refl = data.get("reflection")
         if isinstance(refl, dict):
             reflection.import_state(refl)
+        bill = data.get("billing")
+        if isinstance(bill, dict):
+            billing.import_state(bill)
     except Exception:
         pass
