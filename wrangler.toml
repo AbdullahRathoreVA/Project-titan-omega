@@ -1,0 +1,24 @@
+# Cloudflare Worker config — makes `npx wrangler deploy` work from CI.
+#
+# Without this file wrangler cannot tell what kind of project this is. It falls
+# back to assuming a static-assets site, finds no html/css/js at the repo root,
+# and fails with:
+#   "Could not detect a directory containing static files for the project"
+# That error is misleading: nothing is wrong with the repo, wrangler just had no
+# entry point to build.
+#
+# `name` MUST match the Worker service already created in the dashboard
+# (project-titan-omega). A different name silently deploys a SECOND worker and
+# leaves the custom domain pointing at the original empty one.
+#
+# There are no [assets] here on purpose. This Worker serves no files of its own
+# — the dashboard is served by the Hugging Face Space and proxied through, so
+# there is exactly one copy of the frontend rather than two that can drift.
+
+name = "project-titan-omega"
+main = "deploy/cloudflare-worker.js"
+compatibility_date = "2026-08-01"
+
+# Keeps the *.workers.dev URL alive so the proxy can be tested before the custom
+# domain is attached, and as a fallback if the domain is ever misconfigured.
+workers_dev = true
