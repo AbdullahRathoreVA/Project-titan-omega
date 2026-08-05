@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing — Titan Omega</title>
+<link rel="canonical" href="https://titanomega-ai.com/pricing">
+<link rel="icon" href="/favicon.png">
+<meta name="theme-color" content="#05070d">
+<meta name="description" content="SEO, local ranking and legal compliance audits for any business, in any jurisdiction. Free tier includes the full legal check.">
+<!--
+  Served as static HTML rather than a Next route on purpose: this is the page a
+  stranger lands on before they have any reason to download a 175 kB dashboard
+  bundle, and it must render instantly on a slow connection.
+
+  Prices are FETCHED from /api/plans, never hardcoded here. A pricing page that
+  disagrees with what the server enforces is how customers end up billed for
+  something they were not shown.
+-->
+<style>
+  :root{--void:#05070d;--panel:#0a0e1a;--edge:#16203a;--cyan:#22d3ee;
+        --emerald:#34d399;--amber:#fbbf24;--mut:#64748b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--void);color:#e2e8f0;
+       font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:48px 20px 80px}
+  header{text-align:center;margin-bottom:44px}
+  .mark{font-size:13px;letter-spacing:.32em;color:var(--cyan);margin-bottom:14px}
+  h1{font-size:clamp(28px,5vw,42px);margin:0 0 12px;font-weight:600;letter-spacing:-.02em}
+  .sub{color:var(--mut);max-width:620px;margin:0 auto;font-size:15px}
+  .grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--edge);border-radius:14px;
+        padding:24px 20px;display:flex;flex-direction:column}
+  .card.featured{border-color:rgba(34,211,238,.45);box-shadow:0 0 34px -12px rgba(34,211,238,.4)}
+  .tag{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--cyan);margin-bottom:10px;min-height:14px}
+  .name{font-size:19px;font-weight:600;margin-bottom:4px}
+  .price{font-size:34px;font-weight:600;letter-spacing:-.02em}
+  .price span{font-size:13px;color:var(--mut);font-weight:400}
+  .note{font-size:11.5px;color:var(--mut);margin:10px 0 16px;min-height:32px}
+  ul{list-style:none;padding:0;margin:0 0 22px;flex:1}
+  li{font-size:13px;padding:5px 0 5px 20px;position:relative;color:#cbd5e1}
+  li::before{content:"";position:absolute;left:4px;top:12px;width:6px;height:6px;
+             border-radius:50%;background:var(--emerald)}
+  .limits{font-size:11px;color:var(--mut);border-top:1px solid var(--edge);
+          padding-top:12px;margin-bottom:16px}
+  button{width:100%;padding:11px;border-radius:9px;border:1px solid var(--edge);
+         background:transparent;color:#e2e8f0;font-size:13px;cursor:pointer;
+         font-family:inherit;transition:.15s}
+  button:hover{border-color:var(--cyan);color:var(--cyan)}
+  button.primary{background:rgba(34,211,238,.12);border-color:rgba(34,211,238,.5);color:var(--cyan)}
+  dialog{background:var(--panel);border:1px solid var(--edge);border-radius:14px;
+         color:#e2e8f0;padding:26px;max-width:380px;width:92%}
+  dialog::backdrop{background:rgba(0,0,0,.72)}
+  input{width:100%;padding:10px;margin:6px 0 14px;border-radius:8px;
+        border:1px solid var(--edge);background:#0d1322;color:#e2e8f0;font-family:inherit}
+  label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut)}
+  .msg{font-size:12.5px;margin-top:12px;min-height:20px}
+  .err{color:#fb7185}
+  .ok{color:var(--emerald)}
+  footer{text-align:center;margin-top:44px;font-size:12px;color:var(--mut)}
+  a{color:var(--cyan)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="mark">TITAN OMEGA</div>
+    <h1>Know what your website is costing you</h1>
+    <p class="sub">
+      Technical SEO, local ranking factors and <strong>legal compliance</strong>
+      for any business, in any jurisdiction &mdash; scored separately, never
+      averaged into one meaningless number.
+      <br><br>
+      The free plan includes the full legal check. That is the finding worth
+      paying for, so you see it before you decide.
+    </p>
+  </header>
+
+  <div class="grid" id="plans">
+    <div class="card"><div class="note">Loading plans&hellip;</div></div>
+  </div>
+
+  <footer>
+    Prices in USD. Cancel any time.
+    &middot; <a href="/">Command centre</a>
+    &middot; <a href="/portal">Client portal</a>
+  </footer>
+</div>
+
+<dialog id="dlg">
+  <div style="font-size:17px;font-weight:600;margin-bottom:4px" id="dlgTitle">Create your account</div>
+  <div style="font-size:12px;color:var(--mut);margin-bottom:16px" id="dlgSub"></div>
+  <label for="email">Email</label>
+  <input id="email" type="email" autocomplete="email" placeholder="you@business.com">
+  <label for="pw">Password</label>
+  <input id="pw" type="password" autocomplete="new-password" placeholder="at least 8 characters">
+  <button class="primary" id="go">Create account</button>
+  <div class="msg" id="msg"></div>
+  <button style="margin-top:10px;border:none;color:var(--mut)" id="close">Cancel</button>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let chosen = 'free';
+
+const lim = n => n === -1 ? 'unlimited' : n;
+
+async function load() {
+  let data;
+  try {
+    data = await (await fetch('/api/plans')).json();
+  } catch (e) {
+    $('#plans').innerHTML =
+      '<div class="card"><div class="note">Could not load pricing. ' +
+      'Refresh in a moment.</div></div>';
+    return;
+  }
+  // "individual" is highlighted because it is the first tier with monitoring
+  // and CRM — the point where this stops being an audit tool and starts being
+  // the thing an agency runs on.
+  $('#plans').innerHTML = data.plans.map(p => `
+    <div class="card${p.key === 'individual' ? ' featured' : ''}">
+      <div class="tag">${p.key === 'individual' ? 'Most complete' : ''}</div>
+      <div class="name">${esc(p.name)}</div>
+      <div class="price">$${p.price_usd.toFixed(0)}<span> / month</span></div>
+      <div class="note">${esc(p.note || '')}</div>
+      <ul>${p.features.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+      <div class="limits">
+        ${lim(p.limits.clients)} business(es) &middot;
+        ${lim(p.limits.audits_per_month)} audits/mo &middot;
+        ${lim(p.limits.ai_calls_per_month)} AI calls/mo
+      </div>
+      <button class="${p.key === 'individual' ? 'primary' : ''}" data-plan="${p.key}">
+        ${p.price_usd === 0 ? 'Start free' : 'Choose ' + esc(p.name)}
+      </button>
+    </div>`).join('');
+
+  document.querySelectorAll('button[data-plan]').forEach(b => {
+    b.onclick = () => {
+      chosen = b.dataset.plan;
+      const plan = data.plans.find(p => p.key === chosen);
+      $('#dlgSub').textContent = plan.price_usd === 0
+        ? 'Free plan — no card, no trial timer.'
+        : `${plan.name} — $${plan.price_usd}/month. You will confirm payment separately.`;
+      $('#msg').textContent = '';
+      $('#dlg').showModal();
+    };
+  });
+}
+
+$('#close').onclick = () => $('#dlg').close();
+
+$('#go').onclick = async () => {
+  const email = $('#email').value.trim(), password = $('#pw').value;
+  const msg = $('#msg');
+  msg.className = 'msg';
+  msg.textContent = 'Creating account…';
+  try {
+    const r = await fetch('/api/signup', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, password, plan: chosen }),
+    });
+    const body = await r.json();
+    if (!r.ok) {
+      msg.className = 'msg err';
+      // The server's message is specific ("already exists", "at least 8
+      // characters"); showing a generic failure would hide the fix.
+      msg.textContent = body.detail || 'Could not create the account.';
+      return;
+    }
+    msg.className = 'msg ok';
+    if (chosen === 'free') {
+      msg.textContent = 'Account created. Sign in at the command centre to start.';
+      return;
+    }
+    // Paid: sign in, then ask the server where to send the customer.
+    const login = await (await fetch('/api/account/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, password }),
+    })).json();
+    const out = await (await fetch('/api/checkout/' + chosen, {
+      method: 'POST', headers: {'X-Account-Token': login.token},
+    })).json();
+    if (out.ready) {
+      msg.textContent = 'Account created. Continue in PayPal to activate.';
+    } else {
+      // Honest degradation: the account is real and free works. Say that
+      // rather than leaving them staring at a dead button.
+      msg.className = 'msg';
+      msg.innerHTML = 'Account created, but paid plans are not accepting ' +
+        'payment yet. You are on the free plan and it works in full.';
+    }
+  } catch (e) {
+    msg.className = 'msg err';
+    msg.textContent = 'Network error — please try again.';
+  }
+};
+
+load();
+</script>
+</body>
+</html>

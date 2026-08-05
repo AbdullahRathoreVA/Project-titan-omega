@@ -701,6 +701,25 @@ def test_login_works_and_wrong_password_fails(isolated_billing):
     assert tok and billing.resolve(tok) == "l@m.com"
 
 
+def test_pricing_page_serves_and_hardcodes_no_prices(isolated_billing,
+                                                     monkeypatch):
+    """A pricing page with its own copy of the numbers will eventually disagree
+    with what the server enforces, and a customer gets billed for something they
+    were never shown."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    from app.core import billing
+    c = TestClient(app)
+    r = c.get("/pricing")
+    assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    html = r.text
+    assert "/api/plans" in html, "page does not fetch live pricing"
+    for plan in billing.PLANS.values():
+        if plan.price_usd:
+            assert f"${plan.price_usd:.0f}/month" not in html, (
+                f"{plan.key} price is hardcoded into the page")
+
+
 def test_signup_and_pricing_are_reachable_without_the_founder_token(
         isolated_billing, monkeypatch):
     """If these sit behind the founder token nobody can ever become a customer,

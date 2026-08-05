@@ -187,6 +187,19 @@ def _static_page(name: str) -> FileResponse:
     return FileResponse(page, media_type="text/html")
 
 
+@app.get("/pricing", include_in_schema=False)
+def pricing_page():
+    """Public pricing and signup. Static HTML, not a Next route: this is the
+    page a stranger sees before they have any reason to download a 175 kB
+    dashboard bundle, and it must render instantly on a slow connection.
+
+    It holds no prices of its own — it fetches /api/plans. A pricing page that
+    disagrees with what the server enforces is how customers end up billed for
+    something they were never shown.
+    """
+    return _static_page("pricing.html")
+
+
 @app.get("/portal", include_in_schema=False)
 def client_portal():
     """The screen a client logs into. Static, no build step."""
