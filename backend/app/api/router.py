@@ -875,6 +875,55 @@ def make_plan(req: PlanRequest) -> dict:
     return planner.plan(req.goal).as_dict()
 
 
+@router.get("/reflection", tags=["executive"])
+def reflection_report(limit: int = Query(default=20, ge=1, le=100)) -> dict:
+    """What Titan learned from finishing things, and what it changed as a result.
+
+    Spec Part 2. The calibration_factor is the load-bearing number: it is
+    applied to every subsequent plan's runtime estimate, which is what makes
+    this a feedback loop rather than a log.
+    """
+    from ..core import reflection
+    return reflection.report(limit=limit)
+
+
+class ReflectIn(BaseModel):
+    goal: str = Field(..., min_length=1)
+    achieved: bool
+    predicted_seconds: float = 0.0
+    actual_seconds: float = 0.0
+    confidence: float = 0.5
+    tool_failures: List[str] = Field(default_factory=list)
+    notes: str = ""
+
+
+@router.post("/reflection", tags=["executive"])
+def reflection_record(req: ReflectIn) -> dict:
+    from ..core import reflection
+    return reflection.record(
+        goal=req.goal, achieved=req.achieved,
+        predicted_seconds=req.predicted_seconds,
+        actual_seconds=req.actual_seconds, confidence=req.confidence,
+        tool_failures=req.tool_failures, notes=req.notes)
+
+
+@router.get("/bi/{period}", tags=["executive"])
+def bi_report(period: str) -> dict:
+    """Period report built only from what is actually in the ledger.
+
+    Spec Part 4C. Where there is not enough history to project, the forecast
+    reports `available: false` with the reason instead of a number — a
+    projection invented from two data points is worse than none, because it
+    gets planned against.
+    """
+    from ..engines import bi as bi_engine
+    if period not in bi_engine.PERIODS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"period must be one of {sorted(bi_engine.PERIODS)}")
+    return bi_engine.report(period)
+
+
 @router.get("/routing", tags=["system"])
 def routing_report() -> dict:
     """Measured per-provider performance and the order it produces.

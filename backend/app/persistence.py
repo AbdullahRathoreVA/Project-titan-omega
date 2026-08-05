@@ -16,7 +16,7 @@ import json
 import os
 import tempfile
 
-from .core import clients, learning, routing
+from .core import clients, learning, reflection, routing
 from .store import STORE, Store
 
 
@@ -47,6 +47,9 @@ def save(store: Store = STORE) -> None:
             # often, and profiling that resets never gathers enough evidence
             # to route on.
             "routing": routing.export_state(),
+            # Calibration is only useful once it has accumulated evidence;
+            # losing it on every Space restart would keep it at 1.0 forever.
+            "reflection": reflection.export_state(),
         }
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -89,5 +92,8 @@ def load(store: Store = STORE) -> None:
         routes = data.get("routing")
         if isinstance(routes, dict):
             routing.import_state(routes)
+        refl = data.get("reflection")
+        if isinstance(refl, dict):
+            reflection.import_state(refl)
     except Exception:
         pass

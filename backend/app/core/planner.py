@@ -235,6 +235,18 @@ def plan(goal: str) -> Plan:
     goal = (goal or "").strip()
     intent = classify(goal)
     steps = _RECIPES[intent]()
+
+    # Close the reflection loop. Reflection measures how far past estimates
+    # missed and returns a correction; applying it here is the only thing that
+    # makes reflection a feedback loop rather than a diary. The factor is
+    # exactly 1.0 until there is enough evidence, so early plans are untouched.
+    from . import reflection
+    factor = reflection.calibration()
+    if factor != 1.0:
+        for s in steps:
+            s.est_seconds = round(s.est_seconds * factor, 2)
+            s.est_basis = f"{s.est_basis}+calibrated"
+
     p = Plan(goal=goal, steps=steps,
              complexity=_complexity(steps),
              confidence=_confidence(steps, intent))

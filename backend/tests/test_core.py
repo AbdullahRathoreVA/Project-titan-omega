@@ -610,6 +610,198 @@ def test_missing_or_broken_env_file_never_stops_boot(tmp_path):
     assert envfile.load(tmp_path) == []          # a directory, not a file
 
 
+# ── business intelligence + forecasting (spec Part 4C) ─────────────────────
+
+@pytest.fixture
+def isolated_ledger(monkeypatch, tmp_path):
+    from app import persistence
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "s.json"))
+    rev, exp = list(STORE.revenue_entries), list(STORE.expenses)
+    STORE.revenue_entries.clear(); STORE.expenses.clear()
+    yield
+    STORE.revenue_entries.clear(); STORE.revenue_entries.extend(rev)
+    STORE.expenses.clear(); STORE.expenses.extend(exp)
+
+
+def _entry(days_ago: float, amount: float) -> dict:
+    import datetime as dt
+    ts = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days_ago)
+    return {"amount": amount, "source": "test", "created_at": ts.isoformat()}
+
+
+def test_forecast_refuses_rather_than_inventing_a_number(isolated_ledger):
+    """Spec Part 4C says both 'forecast where sufficient data exists' and
+    'never fabricate numbers'. With two data points the only honest output is a
+    refusal — a founder planning against an invented projection makes real
+    decisions on fiction."""
+    from app.engines import bi
+    STORE.revenue_entries.extend([_entry(1, 100), _entry(2, 120)])
+    f = bi.report("monthly")["forecast"]
+    assert f["available"] is False
+    assert "projected_total" not in f
+    assert str(bi.MIN_POINTS_FOR_TREND) in f["reason"]
+    assert f["needed"] == bi.MIN_POINTS_FOR_TREND - 2
+
+
+def test_forecast_states_its_method_uncertainty_and_assumptions(isolated_ledger):
+    from app.engines import bi
+    for d in range(20):
+        STORE.revenue_entries.append(_entry(d, 100 + d))
+    f = bi.report("monthly")["forecast"]
+    assert f["available"] is True
+    assert f["method"] and f["days_of_data"] >= bi.MIN_POINTS_FOR_TREND
+    assert f["low"] <= f["projected_total"] <= f["high"], "no uncertainty band"
+    assert f["assumptions"], "a forecast with no stated assumptions is a guess"
+    assert f["provisional"] is False
+
+
+def test_a_thin_but_usable_sample_is_labelled_provisional(isolated_ledger):
+    from app.engines import bi
+    for d in range(6):
+        STORE.revenue_entries.append(_entry(d, 50))
+    f = bi.report("monthly")["forecast"]
+    assert f["available"] is True and f["provisional"] is True
+    assert any("direction of travel" in a for a in f["assumptions"])
+
+
+def test_missing_days_are_not_counted_as_zero(isolated_ledger):
+    """A day with no entry is missing data, not a measured zero. Counting gaps
+    as zeros manufactures a downward trend out of nothing."""
+    from app.engines import bi
+    for d in (0, 10, 20, 30, 40, 50):
+        STORE.revenue_entries.append(_entry(d, 100))
+    series = bi._daily_totals(STORE.revenue_entries, 90)
+    assert len(series) == 6, "gap days were fabricated into the series"
+    assert all(v == 100 for v in series.values())
+
+
+def test_report_never_reports_revenue_it_does_not_have(isolated_ledger):
+    from app.engines import bi
+    r = bi.report("monthly")
+    assert r["revenue"] == 0.0 and r["profit"] == 0.0
+    assert r["forecast"]["available"] is False
+    assert any("No revenue recorded" in i for i in r["insights"])
+    # And it must say what to do about it rather than just stating the zero.
+    assert r["actions"]
+
+
+def test_report_compares_against_the_previous_window(isolated_ledger):
+    from app.engines import bi
+    STORE.revenue_entries.append(_entry(2, 200))    # this window
+    STORE.revenue_entries.append(_entry(40, 100))   # previous window
+    r = bi.report("monthly")
+    assert "%" in r["comparison"] and "+" in r["comparison"]
+
+
+# ── self-reflection (spec Part 2) ──────────────────────────────────────────
+
+def test_reflection_needs_evidence_before_it_corrects_anything():
+    """One slow network call must not permanently triple every future estimate."""
+    from app.core import reflection
+    reflection.reset()
+    assert reflection.calibration() == 1.0
+    reflection.record(goal="g", achieved=True, predicted_seconds=1,
+                      actual_seconds=30)
+    assert reflection.calibration() == 1.0, "corrected on a single sample"
+    reflection.reset()
+
+
+def test_calibration_uses_the_median_so_one_timeout_cannot_poison_it():
+    from app.core import reflection
+    reflection.reset()
+    for _ in range(9):
+        reflection.record(goal="g", achieved=True, predicted_seconds=2,
+                          actual_seconds=2)          # ratio 1.0
+    reflection.record(goal="g", achieved=False, predicted_seconds=2,
+                      actual_seconds=600)            # ratio 300, an outlier
+    f = reflection.calibration()
+    assert 0.9 <= f <= 1.1, f"a single outlier moved calibration to {f}"
+    reflection.reset()
+
+
+def test_calibration_is_clamped_even_with_a_pathological_history():
+    from app.core import reflection
+    reflection.reset()
+    for _ in range(10):
+        reflection.record(goal="g", achieved=True, predicted_seconds=1,
+                          actual_seconds=500)
+    assert reflection.calibration() == reflection.CALIBRATION_CEIL
+    reflection.reset()
+    for _ in range(10):
+        reflection.record(goal="g", achieved=True, predicted_seconds=500,
+                          actual_seconds=1)
+    assert reflection.calibration() == reflection.CALIBRATION_FLOOR
+    reflection.reset()
+
+
+def test_the_loop_actually_closes_planner_estimates_change():
+    """This is the whole point. If reflection cannot change a later plan, it is
+    a diary, not a feedback loop."""
+    from app.core import planner, reflection
+    from app.engines import adapters
+    adapters.register_all()
+    reflection.reset()
+
+    before = planner.plan("audit the website").est_seconds
+
+    for _ in range(8):      # consistently 3x slower than planned
+        reflection.record(goal="audit", achieved=True, predicted_seconds=1,
+                          actual_seconds=3)
+    assert reflection.calibration() == 3.0
+
+    after = planner.plan("audit the website").est_seconds
+    assert after > before, "reflection did not affect the next plan"
+    assert abs(after - before * 3.0) < 0.5
+    reflection.reset()
+
+
+def test_confident_and_wrong_scores_worse_than_unsure_and_wrong():
+    """Brier scoring: being certain and wrong is the expensive error, because
+    it gets acted on without review."""
+    from app.core import reflection
+    reflection.reset()
+    for _ in range(5):
+        reflection.record(goal="g", achieved=False, predicted_seconds=1,
+                          actual_seconds=1, confidence=0.95)
+    confident_wrong = reflection.report()["confidence_brier"]
+
+    reflection.reset()
+    for _ in range(5):
+        reflection.record(goal="g", achieved=False, predicted_seconds=1,
+                          actual_seconds=1, confidence=0.30)
+    unsure_wrong = reflection.report()["confidence_brier"]
+
+    assert confident_wrong > unsure_wrong
+    reflection.reset()
+
+
+def test_reflection_names_the_expensive_mistake():
+    from app.core import reflection
+    reflection.reset()
+    r = reflection.record(goal="send invoice", achieved=False,
+                          predicted_seconds=2, actual_seconds=2,
+                          confidence=0.9, tool_failures=["messaging.whatsapp"])
+    blob = " ".join(r["lessons"]).lower()
+    assert "confiden" in blob and "review" in blob
+    assert "messaging.whatsapp" in blob
+    reflection.reset()
+
+
+def test_reflection_survives_a_corrupt_state_file():
+    from app.core import reflection
+    reflection.reset()
+    reflection.import_state({"records": [
+        {"goal": "ok", "achieved": True, "predicted_seconds": 1,
+         "actual_seconds": 2, "ratio": 2, "confidence": 0.5},
+        {"goal": "bad", "predicted_seconds": "nonsense"},
+        "not even a dict",
+    ]})
+    rep = reflection.report()
+    assert rep["tasks_reflected"] == 1, "one bad row lost the whole history"
+    reflection.import_state("not a dict")
+    reflection.reset()
+
+
 # ── planning engine (spec Part 2) ──────────────────────────────────────────
 
 def test_plan_is_produced_before_anything_runs():
