@@ -151,6 +151,33 @@ VERTICALS: dict[str, Vertical] = {
         "Shop",
         "Product and Offer markup for the range, with price and availability",
         "product links shared to friends"),
+    "wholesale": _V(
+        "wholesale", "Wholesale supplier", "WholesaleStore",
+        ("wholesale", "bulk", "moq", "minimum order", "trade price",
+         "b2b", "distributor", "supplier", "grosshandel", "großhandel",
+         "per dozen", "per unit", "trade enquiry", "export"),
+        "the product catalogue photography",
+        "full-grain leather jacket, front view on a plain background",
+        "Wholesale supplier",
+        "Product and Offer markup per SKU with priceSpecification and "
+        "eligibleQuantity (the MOQ), plus areaServed for the markets you ship to",
+        "catalogue links sent to buyers",
+        # A wholesaler is found by a buyer searching for the PRODUCT or the
+        # trade, not by someone standing nearby. Scoring it on Google Business
+        # Profile and review velocity produces a low number that means nothing.
+        local_business=False),
+    "manufacturer": _V(
+        "manufacturer", "Manufacturer", "Organization",
+        ("manufacturer", "factory", "oem", "odm", "production capacity",
+         "we produce", "hersteller", "fabrik", "tannery", "workshop",
+         "units per month", "private label"),
+        "the production and facility photography",
+        "stitching line in the workshop, wide shot",
+        "Manufacturer",
+        "Organization with makesOffer per product line, plus production "
+        "capacity and certifications stated on the page",
+        "specification sheets shared with buyers",
+        local_business=False),
     "software": _V(
         "software", "Software product", "SoftwareApplication",
         ("saas", "software", "platform", "dashboard", "api", "subscription",

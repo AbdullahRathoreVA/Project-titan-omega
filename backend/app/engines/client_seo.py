@@ -191,12 +191,25 @@ def audit(url: str, *, business_name: str = "", city: str = "",
         re.search(r"\+?\d[\d\s\-()]{8,}\d", html))
     has_addr = bool(re.search(
         r"address|street|road|avenue|block|sector|plaza", html, re.I))
-    add("nap", "high", "Name / address / phone not clearly on the page",
-        f"phone detected: {has_phone}, address wording detected: {has_addr}. "
-        f"Consistent NAP is a core local ranking signal.",
-        "Put the full address and a tel: link in the footer of every page, "
-        "matching your Google Business Profile exactly.",
-        key="nap", ok=has_phone and has_addr)
+    # Contact details matter for every business, but WHY differs. Telling a
+    # wholesaler to match its Google Business Profile is advice for a shop, and
+    # a B2B buyer is not standing outside the building.
+    if vert.local_business:
+        add("nap", "high", "Name / address / phone not clearly on the page",
+            f"phone detected: {has_phone}, address wording detected: "
+            f"{has_addr}. Consistent NAP is a core local ranking signal.",
+            "Put the full address and a tel: link in the footer of every page, "
+            "matching your Google Business Profile exactly.",
+            key="nap", ok=has_phone and has_addr)
+    else:
+        add("nap", "high", "Contact details not clearly on the page",
+            f"phone detected: {has_phone}, address wording detected: "
+            f"{has_addr}. A buyer evaluating a supplier checks that a real "
+            f"company with a real address is behind the site before enquiring.",
+            "Put a direct phone number, an email and the registered company "
+            "address in the footer of every page, and keep them identical "
+            "across every trade directory and marketplace listing you hold.",
+            key="nap", ok=has_phone and has_addr)
 
     # ---------------------------------------------------------- images ----
     imgs = re.findall(r"<img\b[^>]*>", html, re.I)
@@ -211,7 +224,7 @@ def audit(url: str, *, business_name: str = "", city: str = "",
 
     # ------------------------------------------------------- technical ----
     add("viewport", "high", "No mobile viewport tag",
-        "Most local searches are on a phone. Without this the layout "
+        "Most searches now happen on a phone. Without this the layout "
         "will not adapt and mobile ranking suffers.",
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         key="viewport", ok=bool(re.search(r'name=["\']viewport["\']', html, re.I)))

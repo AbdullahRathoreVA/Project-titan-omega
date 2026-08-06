@@ -733,6 +733,37 @@ def test_ledger_survives_a_corrupt_state_file(clean_ledger):
 
 # ── Titan's own SEO ────────────────────────────────────────────────────────
 
+def test_a_wholesaler_is_audited_as_b2b_not_as_a_local_shop():
+    """A leather wholesaler's buyers find it by searching the product or the
+    trade, not by standing nearby. Scoring it on Google Business Profile and
+    review velocity produces a low number that means nothing and buries the
+    findings that would actually win it business."""
+    from app.engines import client_seo, verticals
+    import unittest.mock as mock
+
+    assert verticals.profile("wholesale").local_business is False
+    assert verticals.profile("manufacturer").local_business is False
+    # Declared trade wins, and the German spelling resolves too.
+    assert verticals.detect("", "wholesale") == "wholesale"
+    assert verticals.detect("", "Großhandel") == "wholesale"
+    assert verticals.detect("", "manufacturer") == "manufacturer"
+
+    html = ('<html lang="en"><head><title>Leather Co</title></head><body>'
+            '<img src="a.jpg"><p>Wholesale leather jackets, MOQ 50 units, '
+            'trade price on enquiry.</p></body></html>')
+    with mock.patch.object(client_seo, "_fetch", return_value=(html, None, 200)):
+        r = client_seo.audit("https://leather.example", business_name="Leather Co",
+                             industry="wholesale")
+
+    blob = json.dumps(r["findings"], ensure_ascii=False).lower()
+    assert "openinghours" not in blob, "a wholesaler was told to publish opening hours"
+    assert "google business profile" not in blob
+    assert r["local"]["not_applicable"] is True
+    # The advice that DOES matter for B2B.
+    assert "moq" in blob or "eligiblequantity" in blob
+    assert "wholesalestore" in blob
+
+
 def test_a_software_product_is_not_told_to_publish_opening_hours():
     """Titan audited its own site and was told to add LocalBusiness schema with
     a street address and opening hours. A SaaS is not served from a place, and
