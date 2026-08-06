@@ -1192,6 +1192,27 @@ def admin_run_client_seo(cid: str) -> dict:
                               city=rec.get("city", ""),
                               country=rec.get("country", ""),
                               industry=rec.get("industry", ""))
+    # The crawl already happened. File what it OBSERVED about the business,
+    # tagged with the surface it was seen on, so the CRM record carries its own
+    # provenance instead of a value nobody can trace. Never fatal to the audit.
+    try:
+        from ..core import evidence
+        from ..engines import client_seo as _cs
+        page, _err, _st = _cs._fetch(result.get("url") or rec.get("website", ""))
+        if page:
+            evidence.observe_from_page(cid, page)
+        # The Impressum is a separate page and is the strongest source there is
+        # for the operator's legal name, address and VAT id.
+        if result.get("ok"):
+            base = (result.get("url") or "").rstrip("/")
+            for path in ("/impressum", "/imprint"):
+                imp, _e, st = _cs._fetch(base + path)
+                if imp and st == 200:
+                    evidence.observe_from_page(cid, imp, impressum=True)
+                    break
+    except Exception:
+        pass
+
     clients.bump(cid, "seo_audits")
     if result.get("ok"):
         clients.bump(cid, "issues_found", len(result.get("findings", [])))
@@ -1368,6 +1389,46 @@ def admin_discovery(live: bool = Query(False)) -> dict:
             if last:
                 cache[c["id"]] = last
     return discovery.report(cache, live=live)
+
+
+@router.get("/admin/clients/{cid}/evidence", tags=["clients"])
+def client_evidence(cid: str) -> dict:
+    """What Titan believes about this business, and why it believes it.
+
+    Every field carries the surface it was observed on. Fields with only weak
+    evidence stay BLANK and appear as a suggestion for a human to settle — a
+    confidently wrong fact about a client is worse than an empty one, because
+    nobody can tell it is wrong.
+    """
+    from ..core import evidence
+    if not clients.get(cid):
+        raise HTTPException(status_code=404, detail="Client not found")
+    return evidence.record(cid)
+
+
+class SettleIn(BaseModel):
+    field: str = Field(..., min_length=1)
+    value: str = Field(..., min_length=1)
+
+
+@router.post("/admin/clients/{cid}/evidence/settle", tags=["clients"])
+def settle_evidence(cid: str, req: SettleIn) -> dict:
+    """A human decides a contested field. Recorded as manual, which outranks
+    every machine observation from then on."""
+    from ..core import evidence
+    if not clients.get(cid):
+        raise HTTPException(status_code=404, detail="Client not found")
+    evidence.settle(cid, req.field, req.value)
+    persistence.save(STORE)
+    return evidence.record(cid)
+
+
+@router.get("/evidence/sources", tags=["clients"])
+def evidence_sources() -> dict:
+    """The source ranking, and the rule that nothing accepts a self-reported
+    confidence score."""
+    from ..core import evidence
+    return evidence.sources()
 
 
 @router.get("/admin/watch", tags=["clients"])

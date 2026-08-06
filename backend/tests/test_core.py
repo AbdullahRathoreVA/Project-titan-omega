@@ -610,6 +610,127 @@ def test_missing_or_broken_env_file_never_stops_boot(tmp_path):
     assert envfile.load(tmp_path) == []          # a directory, not a file
 
 
+# ── evidence ledger (pattern from trycompai/crm) ───────────────────────────
+
+@pytest.fixture
+def clean_ledger():
+    from app.core import evidence
+    evidence.reset()
+    yield
+    evidence.reset()
+
+
+def test_no_observation_can_carry_a_self_reported_confidence(clean_ledger):
+    """The rule the whole pattern rests on: a model asked to grade its own
+    certainty will, and it will be wrong in the direction that makes it look
+    useful. Callers name the SURFACE they looked at; nothing else is accepted."""
+    from app.core import evidence
+    with pytest.raises(ValueError) as exc:
+        evidence.observe("c1", "phone", "+49 1", "model_said_90_percent")
+    assert "surface" in str(exc.value).lower()
+
+
+def test_strong_evidence_writes_weak_evidence_only_suggests(clean_ledger):
+    from app.core import evidence
+    # A footer is too weak to trust automatically.
+    evidence.observe("c1", "phone", "+49 111", "site.footer")
+    rec = evidence.record("c1")
+    assert "phone" not in rec["known"], "a footer value was written as fact"
+    assert rec["suggestions"] and rec["suggestions"][0]["field"] == "phone"
+
+    # Schema is published deliberately, so it writes.
+    evidence.observe("c1", "phone", "+49 222", "site.schema")
+    rec = evidence.record("c1")
+    assert rec["known"]["phone"]["value"] == "+49 222"
+    assert not any(s["field"] == "phone" for s in rec["suggestions"])
+
+
+def test_the_impressum_outranks_schema(clean_ledger):
+    """German law requires the Impressum to carry the operator's real legal
+    name and address, and getting it wrong is a fineable offence. Nothing else
+    a machine can read is tied that tightly to being correct."""
+    from app.core import evidence
+    evidence.observe("c1", "business_name", "Schema Name GmbH", "site.schema")
+    evidence.observe("c1", "business_name", "Legal Name GmbH", "site.impressum")
+    assert evidence.record("c1")["known"]["business_name"]["value"] == "Legal Name GmbH"
+
+
+def test_a_human_decision_outranks_every_machine_observation(clean_ledger):
+    from app.core import evidence
+    evidence.observe("c1", "email", "scraped@site.example", "site.impressum")
+    evidence.settle("c1", "email", "real@business.example")
+    rec = evidence.record("c1")
+    assert rec["known"]["email"]["value"] == "real@business.example"
+    assert rec["known"]["email"]["source"] == "manual"
+
+
+def test_conflicting_weak_observations_are_surfaced_not_resolved(clean_ledger):
+    """This is precisely the case where guessing does damage."""
+    from app.core import evidence
+    evidence.observe("c1", "phone", "+49 111", "site.footer")
+    evidence.observe("c1", "phone", "+49 999", "site.contact")
+    sug = evidence.record("c1")["suggestions"]
+    row = next(s for s in sug if s["field"] == "phone")
+    assert row["conflict"] is True
+    assert "different values" in row["prompt"]
+
+
+def test_unresolved_fields_stay_blank_rather_than_plausible(clean_ledger):
+    from app.core import evidence
+    evidence.observe("c1", "address", "Somewhere 1", "site.title")
+    rec = evidence.record("c1")
+    assert "address" not in rec["known"]
+    assert rec["unresolved"]["address"]["best_seen"] == "Somewhere 1"
+    assert "worse than an empty field" in rec["note"]
+
+
+def test_facts_are_observed_from_a_page_the_audit_already_fetched(clean_ledger):
+    from app.core import evidence
+    html = """<html><head><title>Trattoria Bella | Bochum</title>
+      <script type="application/ld+json">
+      {"@context":"https://schema.org","@type":"Restaurant",
+       "name":"Trattoria Bella GmbH","telephone":"+49 234 555",
+       "address":{"@type":"PostalAddress","streetAddress":"Hauptstr 1",
+                  "postalCode":"44787","addressLocality":"Bochum"}}
+      </script></head>
+      <body><a href="mailto:hallo@bella.example">mail</a>
+      <a href="tel:+49234999">call</a></body></html>"""
+    filed = evidence.observe_from_page("c1", html)
+    assert filed, "nothing was observed from a page full of facts"
+    rec = evidence.record("c1")
+    # Schema beats the page title for the name, and beats the tel: link.
+    assert rec["known"]["business_name"]["value"] == "Trattoria Bella GmbH"
+    assert rec["known"]["phone"]["value"] == "+49 234 555"
+    assert rec["known"]["city"]["value"] == "Bochum"
+    # The mailto was only in the footer, so it is a suggestion, not a fact.
+    assert "email" not in rec["known"]
+
+
+def test_impressum_flag_upgrades_what_is_found_on_that_page(clean_ledger):
+    from app.core import evidence
+    html = '<html><body>USt-IdNr: DE123456789 ' \
+           '<a href="mailto:info@kanzlei.example">e</a></body></html>'
+    evidence.observe_from_page("c1", html, impressum=True)
+    rec = evidence.record("c1")
+    assert rec["known"]["vat_id"]["value"] == "DE123456789"
+    assert rec["known"]["email"]["source"] == "site.impressum"
+
+
+def test_ledger_survives_a_corrupt_state_file(clean_ledger):
+    from app.core import evidence
+    evidence.import_state({"ledger": {
+        "c1": {"phone": [
+            {"value": "+49 1", "source": "site.schema", "ts": 1.0},
+            {"value": "x", "source": "made_up_source"},
+            "not a dict",
+        ]},
+        "c2": "not a dict either",
+    }})
+    rec = evidence.record("c1")
+    assert rec["known"]["phone"]["value"] == "+49 1"
+    evidence.import_state("not a dict")
+
+
 # ── Titan's own SEO ────────────────────────────────────────────────────────
 
 def test_a_software_product_is_not_told_to_publish_opening_hours():
@@ -772,6 +893,10 @@ def test_every_founder_endpoint_is_hidden_from_guests(monkeypatch):
         # Marketing assets, deliberately crawlable: Titan's own audit score and
         # its product schema. Both describe Titan itself, not any client.
         "/api/self-seo", "/api/structured-data",
+        # Methodology, not data: the evidence source ranking and the rule that
+        # nothing accepts a self-reported confidence score. Describes HOW Titan
+        # decides what to trust, and contains no observation about anyone.
+        "/api/evidence/sources",
         # Demo-safe by substitution or by containing no private data.
         "/api/status", "/api/divisions", "/api/agents", "/api/opportunities",
         "/api/feed", "/api/executions", "/api/connectors", "/api/posts",

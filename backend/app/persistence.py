@@ -16,7 +16,8 @@ import json
 import os
 import tempfile
 
-from .core import billing, clients, learning, reflection, routing
+from .core import (billing, clients, evidence, learning, reflection,
+                   routing)
 from .store import STORE, Store
 
 
@@ -51,6 +52,10 @@ def save(store: Store = STORE) -> None:
             # losing it on every Space restart would keep it at 1.0 forever.
             "reflection": reflection.export_state(),
             "billing": billing.export_state(),
+            # Provenance is the whole value of the ledger. Losing it on restart
+            # would leave values with no record of where they came from, which
+            # is the state this replaced.
+            "evidence": evidence.export_state(),
         }
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -99,5 +104,8 @@ def load(store: Store = STORE) -> None:
         bill = data.get("billing")
         if isinstance(bill, dict):
             billing.import_state(bill)
+        ev = data.get("evidence")
+        if isinstance(ev, dict):
+            evidence.import_state(ev)
     except Exception:
         pass
