@@ -34,6 +34,11 @@ class Vertical:
     title_example: str         # "{name} — {this} in {city}"
     extra_schema: str = ""     # subtype-specific properties worth adding
     share_context: str = ""    # why OG tags matter for this trade
+    # Does this trade actually serve customers from a PLACE? Almost all do, but
+    # a software product does not, and telling a SaaS to publish a street
+    # address, opening hours and LocalBusiness markup is wrong advice. Titan
+    # gave itself exactly that advice when it first audited its own site.
+    local_business: bool = True
 
 
 _V = Vertical
@@ -146,6 +151,20 @@ VERTICALS: dict[str, Vertical] = {
         "Shop",
         "Product and Offer markup for the range, with price and availability",
         "product links shared to friends"),
+    "software": _V(
+        "software", "Software product", "SoftwareApplication",
+        ("saas", "software", "platform", "dashboard", "api", "subscription",
+         "app", "pricing per month"),
+        "the product screenshots",
+        "the dashboard showing a completed audit",
+        "Platform",
+        "applicationCategory, operatingSystem and an Offer per pricing tier",
+        "links shared in comparison threads",
+        # Added because Titan audited ITSELF and was told to add LocalBusiness
+        # schema. A SaaS is not a local business, and advising a software
+        # company to publish an address and opening hours is wrong advice that
+        # would have been given to every SaaS client too.
+        local_business=False),
     "tradesperson": _V(
         "tradesperson", "Trades business", "HomeAndConstructionBusiness",
         ("installateur", "elektriker", "klempner", "plumber", "electrician",
@@ -161,7 +180,7 @@ VERTICALS: dict[str, Vertical] = {
 # A generic profile so an unrecognised trade still gets sane, non-food advice
 # instead of being told its food photography is the product.
 GENERIC = Vertical(
-    "", "Business", "LocalBusiness",
+    "", "Business", "LocalBusiness",  # noqa: E501 - generic fallback stays local
     (),
     "the imagery on the site",
     "the main product or service, photographed clearly",

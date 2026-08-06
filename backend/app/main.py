@@ -16,7 +16,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -70,6 +70,13 @@ async def _heartbeat_loop() -> None:
             _last_watch = time.monotonic()
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(client_watch.cycle)
+            # Titan audits its own site with the engine it sells. Rides the
+            # existing client-watch tick rather than adding a timer: self_seo
+            # keeps its own 6-hour interval internally, so calling it more
+            # often than that is a cheap no-op.
+            with contextlib.suppress(Exception):
+                from .engines import self_seo
+                await asyncio.to_thread(self_seo.cycle)
 
         # Run the live research engine on its own slow cadence.
         if time.monotonic() - _last_growth >= GROWTH_INTERVAL:
@@ -152,6 +159,10 @@ _OPEN_PATHS = {
     "/api/plans",
     "/api/signup",
     "/api/account/login",
+    # Titan's own audit score and product schema are marketing assets — they
+    # are meant to be read by strangers and by crawlers.
+    "/api/self-seo",
+    "/api/structured-data",
     # NOTE: the client portal is handled by _OPEN_PREFIXES below, not here.
     # Listing each path individually meant every new client endpoint silently
     # 401'd until someone remembered to register it — /client/social and
@@ -187,17 +198,67 @@ def _static_page(name: str) -> FileResponse:
     return FileResponse(page, media_type="text/html")
 
 
-@app.get("/pricing", include_in_schema=False)
-def pricing_page():
-    """Public pricing and signup. Static HTML, not a Next route: this is the
-    page a stranger sees before they have any reason to download a 175 kB
-    dashboard bundle, and it must render instantly on a slow connection.
+@app.get("/robots.txt", include_in_schema=False)
+def robots():
+    """Titan's own robots.txt.
 
-    It holds no prices of its own — it fetches /api/plans. A pricing page that
-    disagrees with what the server enforces is how customers end up billed for
-    something they were never shown.
+    NOTE: Cloudflare serves a managed AI-content-signals robots.txt at the zone
+    level, which takes precedence at the edge and does NOT declare a sitemap.
+    If this file is not what titanomega-ai.com returns, disable the managed
+    robots.txt in the Cloudflare dashboard so this one is served instead.
     """
-    return _static_page("pricing.html")
+    from .engines import self_seo
+    return Response(content=self_seo.robots_txt(), media_type="text/plain")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+def sitemap():
+    """Titan's audit reports a missing sitemap as a finding on client sites.
+    Shipping without one was indefensible."""
+    from .engines import self_seo
+    return Response(content=self_seo.sitemap_xml(),
+                    media_type="application/xml")
+
+
+@app.get("/privacy", include_in_schema=False)
+def privacy_page():
+    """Exists because Titan's own audit flagged its absence as legal-critical
+    against titanomega-ai.com — the same finding it charges clients to fix.
+    Signup now collects email addresses and the target market is the EU."""
+    return _static_page("privacy.html")
+
+
+@app.get("/pricing", include_in_schema=False)
+def pricing_page_with_schema():
+    """Pricing, with the product JSON-LD injected SERVER-SIDE.
+
+    The page originally fetched /api/structured-data and appended a script tag
+    from JavaScript. Google executes JS, but most AI answer-engine crawlers do
+    not — and Titan's own audit tells clients that schema is how those engines
+    decide what to quote. Schema that only exists after hydration is schema
+    those crawlers never see, so Titan was failing its own advice.
+
+    Injected at request time rather than baked into the file so the marked-up
+    prices are generated from the live plan table and cannot drift from what is
+    actually charged.
+    """
+    import json as _json
+    import os as _os
+
+    from .engines import self_seo
+
+    page = _os.path.join(_os.path.dirname(__file__), "static", "pricing.html")
+    if not _os.path.exists(page):
+        raise HTTPException(status_code=404, detail="pricing.html not installed")
+    with open(page, encoding="utf-8") as fh:
+        html = fh.read()
+    ld = _json.dumps(self_seo.structured_data(), ensure_ascii=False)
+    # Escaping "</" prevents a stray closing tag inside the JSON from ending the
+    # script element early, which would break the page and the markup with it.
+    ld = ld.replace("</", "<\\/")
+    tag = f'<script type="application/ld+json">{ld}</script>\n</head>'
+    return Response(content=html.replace("</head>", tag, 1),
+                    media_type="text/html")
 
 
 @app.get("/portal", include_in_schema=False)

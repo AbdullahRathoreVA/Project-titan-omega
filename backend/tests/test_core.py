@@ -610,6 +610,95 @@ def test_missing_or_broken_env_file_never_stops_boot(tmp_path):
     assert envfile.load(tmp_path) == []          # a directory, not a file
 
 
+# ── Titan's own SEO ────────────────────────────────────────────────────────
+
+def test_a_software_product_is_not_told_to_publish_opening_hours():
+    """Titan audited its own site and was told to add LocalBusiness schema with
+    a street address and opening hours. A SaaS is not served from a place, and
+    that same wrong advice would have gone to every software client."""
+    from app.engines import client_seo, verticals
+    import unittest.mock as mock
+
+    assert verticals.profile("software").local_business is False
+    assert verticals.profile("restaurant").local_business is True
+
+    html = '<html lang="en"><head><title>A SaaS</title></head><body></body></html>'
+    with mock.patch.object(client_seo, "_fetch", return_value=(html, None, 200)):
+        r = client_seo.audit("https://saas.example", business_name="Acme",
+                             industry="software")
+    blob = json.dumps(r["findings"], ensure_ascii=False).lower()
+    assert "openinghours" not in blob and "street address" not in blob
+    assert "localbusiness" not in blob
+    # Local scoring is skipped rather than reported as a bad score.
+    assert r["local"]["not_applicable"] is True and r["local"]["score"] is None
+    # Structured data still matters, just as the right type.
+    assert "softwareapplication" in blob
+
+    with mock.patch.object(client_seo, "_fetch", return_value=(html, None, 200)):
+        rest = client_seo.audit("https://food.example", business_name="Bella",
+                                industry="restaurant")
+    assert rest["local"].get("not_applicable") is not True
+    assert isinstance(rest["local"]["score"], int)
+
+
+def test_titan_publishes_a_sitemap_and_its_own_robots(client):
+    """Titan's audit reports a missing sitemap as a finding on client sites.
+    Measured on the live site before this: sitemap.xml returned 404."""
+    r = client.get("/sitemap.xml")
+    assert r.status_code == 200 and "xml" in r.headers["content-type"]
+    body = r.text
+    assert "<urlset" in body and "titanomega-ai.com/pricing" in body
+
+    rb = client.get("/robots.txt")
+    assert rb.status_code == 200
+    txt = rb.text
+    assert "Sitemap: " in txt, "robots.txt does not declare the sitemap"
+    assert "Disallow: /api/" in txt, "JSON endpoints are crawlable"
+    assert "Disallow: /portal" in txt, "the client portal is indexable"
+    # AI answer engines are explicitly welcome — being quotable is the product.
+    assert "GPTBot" in txt and "PerplexityBot" in txt
+
+
+def test_product_schema_offers_match_the_real_prices(client):
+    """A marked-up price that drifts from the charged price is a consumer
+    problem, not a cosmetic one — so offers are generated from the plan table."""
+    from app.core import billing
+    ld = client.get("/api/structured-data").json()
+    assert ld["@context"] == "https://schema.org"
+    app_node = next(n for n in ld["@graph"]
+                    if n["@type"] == "SoftwareApplication")
+    offers = {o["name"]: float(o["price"]) for o in app_node["offers"]}
+    for key in billing.ORDER:
+        plan = billing.PLANS[key]
+        assert offers[plan.name] == plan.price_usd, (
+            f"schema advertises {offers[plan.name]} for {plan.name} but the "
+            f"server charges {plan.price_usd}")
+
+
+def test_self_audit_reports_honestly_before_it_has_run(client):
+    """A placeholder score would be the exact fabrication this product exists
+    to catch."""
+    from app.engines import self_seo
+    with self_seo._lock:
+        self_seo._last.clear()
+    body = client.get("/api/self-seo").json()
+    assert body["checked"] is False
+    assert "score" not in body
+    assert "has not audited itself yet" in body["note"]
+
+
+def test_self_seo_endpoints_are_public(monkeypatch):
+    """The score and the schema are marketing assets — meant for strangers and
+    for crawlers, so they must not sit behind the founder token."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    c = TestClient(app)
+    assert c.get("/api/self-seo").status_code == 200
+    assert c.get("/api/structured-data").status_code == 200
+    assert c.get("/sitemap.xml").status_code == 200
+    assert c.get("/robots.txt").status_code == 200
+
+
 # ── demo isolation: the guard that fails open ──────────────────────────────
 
 def test_executive_endpoints_are_hidden_from_the_public_demo(monkeypatch):
@@ -680,6 +769,9 @@ def test_every_founder_endpoint_is_hidden_from_guests(monkeypatch):
         "/api/content/daily", "/api/intel/news", "/api/inbox/auto-reply",
         "/api/plans",            # pricing must be readable to sell anything
         "/api/signup", "/api/account/login", "/api/account",
+        # Marketing assets, deliberately crawlable: Titan's own audit score and
+        # its product schema. Both describe Titan itself, not any client.
+        "/api/self-seo", "/api/structured-data",
         # Demo-safe by substitution or by containing no private data.
         "/api/status", "/api/divisions", "/api/agents", "/api/opportunities",
         "/api/feed", "/api/executions", "/api/connectors", "/api/posts",
@@ -802,6 +894,26 @@ def test_login_works_and_wrong_password_fails(isolated_billing):
     assert billing.authenticate("l@m.com", "wrong") is None
     tok = billing.authenticate("l@m.com", "password123")
     assert tok and billing.resolve(tok) == "l@m.com"
+
+
+def test_pricing_page_ships_schema_in_the_html_not_via_javascript(
+        isolated_billing, monkeypatch):
+    """Titan's audit tells clients that schema is how AI answer engines decide
+    what to quote. Most of those crawlers do not execute JavaScript, so schema
+    appended after hydration is schema they never see — Titan was failing its
+    own advice on its own pricing page."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    from app.core import billing
+    c = TestClient(app)
+    html = c.get("/pricing").text
+    assert 'type="application/ld+json"' in html, "no schema in the served HTML"
+    assert "SoftwareApplication" in html and '"@context"' in html
+    # Prices in the markup must be the prices the server charges.
+    for key in billing.ORDER:
+        p = billing.PLANS[key]
+        assert f'"price": "{p.price_usd:.2f}"' in html, (
+            f"{p.name} is missing or mispriced in the structured data")
 
 
 def test_pricing_page_serves_and_hardcodes_no_prices(isolated_billing,

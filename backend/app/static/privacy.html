@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy &amp; Legal — Titan Omega</title>
+<link rel="canonical" href="https://titanomega-ai.com/privacy">
+<link rel="icon" href="/favicon.png">
+<meta name="theme-color" content="#05070d">
+<meta name="description" content="What Titan Omega collects, why, how long it is kept, and how to have it deleted.">
+<!--
+  This page exists because Titan's OWN audit flagged its absence as
+  legal-critical against its own site — the same finding it charges clients to
+  fix. Titan now collects email addresses at signup and sells to businesses in
+  the EU, so a privacy notice is a legal requirement, not a nicety.
+
+  Written as plain statements of what the software actually does. Every claim
+  here is checkable against the code: no analytics SDK is loaded anywhere in
+  this repo, and passwords are hashed with PBKDF2 in core/billing.py.
+-->
+<style>
+  :root{--void:#05070d;--panel:#0a0e1a;--edge:#16203a;--cyan:#22d3ee;--mut:#64748b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--void);color:#e2e8f0;
+       font:15px/1.7 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:48px 22px 80px}
+  .mark{font-size:12px;letter-spacing:.32em;color:var(--cyan);margin-bottom:14px}
+  h1{font-size:30px;margin:0 0 6px;font-weight:600;letter-spacing:-.02em}
+  .upd{color:var(--mut);font-size:13px;margin-bottom:30px}
+  h2{font-size:17px;margin:32px 0 8px;font-weight:600}
+  p,li{color:#cbd5e1;font-size:14.5px}
+  ul{padding-left:20px}
+  a{color:var(--cyan)}
+  .box{background:var(--panel);border:1px solid var(--edge);border-radius:12px;
+       padding:16px 20px;margin:18px 0}
+  footer{margin-top:44px;font-size:12.5px;color:var(--mut)}
+  table{width:100%;border-collapse:collapse;margin:10px 0}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--edge);
+        font-size:13.5px;vertical-align:top}
+  th{color:var(--mut);font-weight:500;font-size:11px;letter-spacing:.1em;
+     text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="mark">TITAN OMEGA</div>
+  <h1>Privacy &amp; legal</h1>
+  <div class="upd">Last updated 6 August 2026</div>
+
+  <div class="box">
+    Titan Omega audits websites. To do that it fetches pages that its users ask
+    it to fetch, and it stores the findings. It does not build profiles of
+    people, and it does not sell anything to anyone.
+  </div>
+
+  <h2>Who is responsible</h2>
+  <p>
+    Muhammad Abdullah Rathore, operating Titan Omega. Contact:
+    <a href="mailto:rathoreabdullah816@gmail.com">rathoreabdullah816@gmail.com</a>.
+    Written enquiries and data-subject requests go to the same address.
+  </p>
+
+  <h2>What is collected, and why</h2>
+  <table>
+    <tr><th>Data</th><th>Why</th><th>Kept for</th></tr>
+    <tr>
+      <td>Email address</td>
+      <td>To create and identify your account. It is the only personal detail
+          signup asks for.</td>
+      <td>Until you ask for the account to be deleted.</td>
+    </tr>
+    <tr>
+      <td>Password</td>
+      <td>To let you sign in. Stored only as a PBKDF2 hash with a per-account
+          salt &mdash; the plaintext is never written to disk or logs and cannot
+          be recovered, including by us.</td>
+      <td>Same as the account.</td>
+    </tr>
+    <tr>
+      <td>Websites you ask Titan to audit</td>
+      <td>To run the audit and show you the result over time.</td>
+      <td>Per your plan&rsquo;s history window, then discarded.</td>
+    </tr>
+    <tr>
+      <td>Usage counts (audits run, AI calls made)</td>
+      <td>To enforce plan limits. Counts only &mdash; not the contents.</td>
+      <td>Rolling 30-day window.</td>
+    </tr>
+  </table>
+
+  <h2>What is not collected</h2>
+  <ul>
+    <li><strong>No analytics or tracking scripts.</strong> No Google Analytics,
+        no Meta Pixel, no session recording. There is no third-party script on
+        this site at all, which is why you were not asked to accept cookies.</li>
+    <li><strong>No advertising identifiers</strong>, and no data is sold or
+        shared for advertising.</li>
+    <li><strong>No card details.</strong> Payment is handled by the payment
+        provider on their own pages; Titan never sees a card number.</li>
+  </ul>
+
+  <h2>Cookies</h2>
+  <p>
+    Titan sets no advertising or analytics cookies. Your session token is held
+    in your own browser&rsquo;s local storage so you stay signed in, and it is
+    removed when you sign out.
+  </p>
+
+  <h2>Who else sees the data</h2>
+  <p>
+    Only the services needed to run the product: the hosting provider, and the
+    AI provider that generates text when you request it. Prompts sent to an AI
+    provider contain the content you asked Titan to work on. If that matters
+    for a particular client, do not paste confidential material into those
+    fields.
+  </p>
+
+  <h2>Your rights</h2>
+  <p>
+    If you are in the EU/EEA or the UK you have the right to access, correct,
+    export, restrict, object to, or delete your data, and to complain to your
+    data protection authority. Everyone gets the same rights here regardless of
+    where they live &mdash; email the address above and it will be actioned
+    within 30 days.
+  </p>
+
+  <h2>Security</h2>
+  <p>
+    Traffic is HTTPS-only and forced with HSTS. Passwords use PBKDF2 with
+    200,000 iterations. Founder-only data is separated from customer data at the
+    API level and the separation is covered by automated tests that walk the
+    live route table.
+  </p>
+
+  <h2>Changes</h2>
+  <p>
+    Material changes will be dated at the top of this page. Continuing to use
+    Titan after a change means you accept it.
+  </p>
+
+  <footer>
+    <a href="/">Command centre</a> &middot;
+    <a href="/pricing">Pricing</a> &middot;
+    <a href="/portal">Client portal</a>
+    <br><br>
+    This page describes how Titan Omega handles data. It is not legal advice,
+    and it is not a substitute for advice on your own business&rsquo;s
+    obligations.
+  </footer>
+</div>
+</body>
+</html>

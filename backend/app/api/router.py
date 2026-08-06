@@ -883,6 +883,28 @@ class SignupIn(BaseModel):
     plan: str = Field(default="free")
 
 
+@router.get("/self-seo", tags=["billing"])
+def self_seo_report() -> dict:
+    """Titan's own audit score, from the engine it sells.
+
+    Deliberately PUBLIC. It is the strongest trust signal available and it
+    costs nothing: anyone can claim their SEO tool is good, but a score
+    produced by the same code the customer is buying can be checked by the
+    reader in seconds. Published as measured — if Titan's own site regresses,
+    this number falls in public.
+    """
+    from ..engines import self_seo
+    return self_seo.report()
+
+
+@router.get("/structured-data", tags=["billing"])
+def structured_data() -> dict:
+    """JSON-LD for the product, offers generated from the real plan table so a
+    marked-up price can never drift from the price actually charged."""
+    from ..engines import self_seo
+    return self_seo.structured_data()
+
+
 @router.get("/plans", tags=["billing"])
 def list_plans() -> dict:
     """Public pricing. Free is a usable product, not a demo."""

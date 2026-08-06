@@ -80,6 +80,11 @@
     <div class="card"><div class="note">Loading plans&hellip;</div></div>
   </div>
 
+  <!-- Titan's own audit score, from the engine being sold. Rendered only when
+       it has actually run; a placeholder score would be the exact fabrication
+       this product exists to catch. -->
+  <div id="selfseo" style="margin-top:38px"></div>
+
   <footer>
     Prices in USD. Cancel any time.
     &middot; <a href="/">Command centre</a>
@@ -198,6 +203,46 @@ $('#go').onclick = async () => {
     msg.textContent = 'Network error — please try again.';
   }
 };
+
+// Product schema, fetched rather than hardcoded so the marked-up prices are
+// always the prices the server actually charges. Titan's own audit tells
+// clients that schema is how AI answer engines decide what to quote; shipping
+// a pricing page without any would have been indefensible.
+(async () => {
+  try {
+    const ld = await (await fetch('/api/structured-data')).json();
+    const el = document.createElement('script');
+    el.type = 'application/ld+json';
+    el.textContent = JSON.stringify(ld);
+    document.head.appendChild(el);
+  } catch (e) { /* schema is an enhancement, never a blocker */ }
+})();
+
+// Titan's own score. Shown only if the audit has actually run.
+(async () => {
+  try {
+    const s = await (await fetch('/api/self-seo')).json();
+    if (!s.checked || typeof s.score !== 'number') return;
+    const tone = s.score >= 85 ? 'var(--emerald)'
+               : s.score >= 70 ? 'var(--amber)' : '#fb7185';
+    $('#selfseo').innerHTML = `
+      <div class="card" style="text-align:center">
+        <div class="tag">Measured, not claimed</div>
+        <div style="font-size:13px;color:var(--mut);margin-bottom:8px">
+          Titan runs its own audit against its own site, with the same engine
+          you would be buying, every ${esc(String(s.interval_hours))} hours.
+        </div>
+        <div style="font-size:40px;font-weight:600;color:${tone};line-height:1">
+          ${s.score}<span style="font-size:15px;color:var(--mut)">/100 &nbsp;grade ${esc(s.grade || '?')}</span>
+        </div>
+        <div style="font-size:11.5px;color:var(--mut);margin-top:10px">
+          ${s.open_findings && s.open_findings.length
+            ? esc(String(s.open_findings.length)) + ' finding(s) still open on our own site &mdash; shown because hiding them would make every other number here worth less.'
+            : 'No findings currently open.'}
+        </div>
+      </div>`;
+  } catch (e) { /* never block the page on a trust badge */ }
+})();
 
 load();
 </script>

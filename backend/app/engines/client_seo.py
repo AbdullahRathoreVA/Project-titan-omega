@@ -160,15 +160,31 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     local_types = {"LocalBusiness", "Restaurant", "FoodEstablishment",
                    "CafeOrCoffeeShop", "BarOrPub", "Store", "Organization"}
     has_local = bool(local_types & set(types))
-    add("local_business", "critical",
-        f"No LocalBusiness / {vert.schema_type} schema",
-        "For a local business this is the single highest-leverage markup. "
-        "Local ranking is driven by proximity (~55%), Google Business Profile "
-        "(~32%) and reviews (16-20%) — this schema feeds all three surfaces.",
-        f"Add {vert.schema_type} schema with name, address, geo, telephone, "
-        f"openingHoursSpecification, priceRange"
-        + (f", plus {vert.extra_schema}." if vert.extra_schema else "."),
-        key="local_business", ok=has_local)
+    # A software product is not served from a place. Demanding a street
+    # address, geo coordinates and opening hours from a SaaS is wrong advice —
+    # Titan gave itself exactly that when it first audited its own site.
+    if vert.local_business:
+        add("local_business", "critical",
+            f"No LocalBusiness / {vert.schema_type} schema",
+            "For a local business this is the single highest-leverage markup. "
+            "Local ranking is driven by proximity (~55%), Google Business "
+            "Profile (~32%) and reviews (16-20%) — this schema feeds all three "
+            "surfaces.",
+            f"Add {vert.schema_type} schema with name, address, geo, telephone, "
+            f"openingHoursSpecification, priceRange"
+            + (f", plus {vert.extra_schema}." if vert.extra_schema else "."),
+            key="local_business", ok=has_local)
+    else:
+        add("local_business", "high",
+            f"No {vert.schema_type} schema",
+            f"A {vert.label.lower()} is not found by proximity, so the local "
+            f"signals do not apply — but structured data still decides what AI "
+            f"answer engines can quote about the product.",
+            f"Add {vert.schema_type} schema with "
+            + (vert.extra_schema or "the properties that describe the product")
+            + ".",
+            key="local_business",
+            ok=bool({vert.schema_type} & set(types)))
 
     # ------------------------------------------------------------- NAP ----
     has_phone = bool(re.search(r'href=["\']tel:', html, re.I)) or bool(
@@ -250,8 +266,18 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     # Weighted local scoring on published 2026 ranking factors. Kept separate
     # from the technical score: a restaurant can have perfect meta tags and
     # still be invisible locally, and averaging the two would hide that.
-    local = local_seo.analyse(html, business=business_name, city=city,
-                              industry=industry, url=url)
+    # Local ranking factors are meaningless for a business without a location.
+    # Scoring a SaaS on Google Business Profile and NAP consistency produces a
+    # low number that means nothing and buries the findings that do matter.
+    local = (local_seo.analyse(html, business=business_name, city=city,
+                               industry=industry, url=url)
+             if vert.local_business else
+             {"score": None, "vertical": vert.key or "unknown",
+              "not_applicable": True,
+              "reason": (f"A {vert.label.lower()} is not found by proximity, so "
+                         f"Google Business Profile, NAP and review-velocity "
+                         f"factors do not apply."),
+              "dimensions": {}, "findings": [], "expected_schema": ""})
     findings.extend([
         {"id": f"local:{f['dimension']}", "severity": f["severity"],
          "title": f["title"], "detail": f["detail"] + f"  [{f['source']}]",
