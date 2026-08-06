@@ -883,6 +883,136 @@ class SignupIn(BaseModel):
     plan: str = Field(default="free")
 
 
+class OnboardIn(BaseModel):
+    business_name: str = Field(..., min_length=1)
+    website: str = Field(default="")
+    industry: str = Field(default="")
+    instagram: str = Field(default="")
+    city: str = Field(default="")
+    country: str = Field(default="")
+    run_audit: bool = Field(default=True)
+
+
+@router.post("/account/onboard", tags=["billing"])
+def account_onboard(req: OnboardIn,
+                    x_account_token: Optional[str] = Header(None)) -> dict:
+    """A subscriber adds their business and gets their first audit immediately.
+
+    This is the conversion path. Everything before it is a promise; this is the
+    first moment the product does something for the person who signed up, and
+    the audit is what makes the value obvious rather than described.
+
+    The plan's business limit is enforced here, and a refusal names the limit
+    and the tier that lifts it rather than failing blankly.
+    """
+    from ..core import billing, evidence
+    from ..engines import client_seo as _cs
+
+    email = billing.resolve(x_account_token or "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in first")
+
+    verdict = billing.can_add_client(email)
+    if not verdict["allowed"]:
+        # 402 rather than 403: this is not forbidden, it is a plan ceiling.
+        raise HTTPException(status_code=402, detail=verdict)
+
+    # A subscriber's own business gets no separate portal login — they already
+    # authenticate as the account holder. A random credential is stored so the
+    # shared client record shape stays valid without creating a usable second
+    # login nobody was told about.
+    import secrets as _secrets
+    try:
+        rec = clients.create_client(
+            business_name=req.business_name.strip(),
+            username=f"acct-{_secrets.token_hex(6)}",
+            password=_secrets.token_urlsafe(24),
+            website=req.website.strip(),
+            instagram=req.instagram.strip(),
+            industry=req.industry.strip(),
+            city=req.city.strip(),
+            country=req.country.strip() or "Pakistan",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    billing.attach_client(email, rec["id"])
+
+    audit = None
+    if req.run_audit and req.website.strip():
+        quota = billing.consume(email, "audits")
+        if not quota["allowed"]:
+            audit = {"skipped": True, **quota}
+        else:
+            audit = _cs.audit(rec["website"],
+                              business_name=rec["business_name"],
+                              city=rec.get("city", ""),
+                              country=rec.get("country", ""),
+                              industry=rec.get("industry", ""))
+            clients.bump(rec["id"], "seo_audits")
+            if audit.get("ok"):
+                clients.bump(rec["id"], "issues_found",
+                             len(audit.get("findings", [])))
+                clients.update_raw(rec["id"], last_audit=audit)
+                # The crawl already happened — file what it observed.
+                try:
+                    page, _e, _s = _cs._fetch(rec["website"])
+                    if page:
+                        evidence.observe_from_page(rec["id"], page)
+                except Exception:
+                    pass
+
+    persistence.save(STORE)
+    return {
+        "client": clients.public(rec["id"]),
+        "audit": audit,
+        "account": billing.public(email),
+        "next": ("Download the PDF report, or open the SEO view to work "
+                 "through the findings."),
+        "report_url": f"/api/account/clients/{rec['id']}/report.pdf",
+    }
+
+
+@router.get("/account/clients", tags=["billing"])
+def account_clients(x_account_token: Optional[str] = Header(None)) -> dict:
+    """The businesses THIS subscriber owns. Never anyone else's."""
+    from ..core import billing
+    email = billing.resolve(x_account_token or "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in first")
+    rows = [clients.public(cid) for cid in billing.owned_clients(email)]
+    return {"clients": [r for r in rows if r],
+            "limit": billing.can_add_client(email)}
+
+
+@router.get("/account/clients/{cid}/report.pdf", tags=["billing"])
+def account_report(cid: str, x_account_token: Optional[str] = Header(None)):
+    """The PDF a subscriber can hand to their own client.
+
+    Ownership is checked against the account's own list — a valid token for one
+    subscriber must never fetch another subscriber's report.
+    """
+    from ..core import billing
+    email = billing.resolve(x_account_token or "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in first")
+    if cid not in billing.owned_clients(email):
+        raise HTTPException(status_code=404, detail="Not found")
+    rec = clients.get(cid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Not found")
+    seo = client_seo.audit(rec.get("website", ""),
+                           business_name=rec.get("business_name", ""),
+                           city=rec.get("city", ""),
+                           country=rec.get("country", ""),
+                           industry=rec.get("industry", ""))
+    pdf = client_report.build(clients.public(cid), seo, social=_social_pack(rec))
+    fname = (rec.get("business_name", "report").lower()
+             .replace(" ", "-")[:40] + "-report.pdf")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
 @router.get("/self-seo", tags=["billing"])
 def self_seo_report() -> dict:
     """Titan's own audit score, from the engine it sells.
@@ -1389,6 +1519,22 @@ def admin_discovery(live: bool = Query(False)) -> dict:
             if last:
                 cache[c["id"]] = last
     return discovery.report(cache, live=live)
+
+
+@router.get("/admin/news", tags=["clients"])
+def news_watch() -> dict:
+    """What the 24/7 news watch has found across every client."""
+    from ..engines import client_news
+    return client_news.summary()
+
+
+@router.post("/admin/clients/{cid}/news", tags=["clients"])
+def news_for_client(cid: str) -> dict:
+    """Force a news check for one client now."""
+    from ..engines import client_news
+    if not clients.get(cid):
+        raise HTTPException(status_code=404, detail="Client not found")
+    return client_news.check_client(cid)
 
 
 @router.get("/admin/clients/{cid}/evidence", tags=["clients"])

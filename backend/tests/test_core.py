@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 
 import pytest
 from fastapi.testclient import TestClient
@@ -610,6 +611,71 @@ def test_missing_or_broken_env_file_never_stops_boot(tmp_path):
     assert envfile.load(tmp_path) == []          # a directory, not a file
 
 
+# ── 24/7 news watch ────────────────────────────────────────────────────────
+
+def test_news_watch_searches_brand_industry_and_city_not_empty_strings():
+    """An empty query to a news search returns the whole world, which is worse
+    than no result because it looks like a finding."""
+    from app.engines import client_news
+    qs = dict(client_news._queries({"business_name": "Leather Co",
+                                    "industry": "wholesale", "city": "Sialkot"}))
+    assert qs["brand"] == '"Leather Co"'
+    assert qs["local"] == "wholesale Sialkot"
+    # Missing fields are skipped entirely.
+    assert client_news._queries({"business_name": "Solo"}) == [("brand", '"Solo"')]
+    assert client_news._queries({}) == []
+
+
+def test_brand_mentions_sort_first_because_they_are_time_critical():
+    from app.engines import client_news
+    import unittest.mock as mock
+
+    def fake(query, limit=4):
+        kind = "brand" if query.startswith('"') else "other"
+        return [{"title": f"{kind}-{query}-{i}", "link": "https://x.example"}
+                for i in range(2)]
+
+    client_news.reset()
+    with mock.patch.object(client_news.news, "fetch_headlines", side_effect=fake):
+        snap = client_news.check_client("c1", {
+            "business_name": "Leather Co", "industry": "wholesale",
+            "city": "Sialkot"})
+    kinds = [i["kind"] for i in snap["items"]]
+    assert kinds[0] == "brand", "a brand mention was not surfaced first"
+    assert snap["brand_mentions"] == 2
+    assert all(i["angle"] for i in snap["items"]), "an item had no angle"
+    client_news.reset()
+
+
+def test_one_dead_query_does_not_lose_the_others():
+    from app.engines import client_news
+    import unittest.mock as mock
+
+    def flaky(query, limit=4):
+        if query.startswith('"'):
+            raise RuntimeError("news source down")
+        return [{"title": f"ok-{query}", "link": "https://x.example"}]
+
+    client_news.reset()
+    with mock.patch.object(client_news.news, "fetch_headlines", side_effect=flaky):
+        snap = client_news.check_client("c1", {
+            "business_name": "Leather Co", "industry": "wholesale",
+            "city": "Sialkot"})
+    assert snap["ok"] is True and snap["items"], "a single failure lost everything"
+    client_news.reset()
+
+
+def test_the_news_watch_never_posts_anything():
+    """Abdullah's standing rule: drafts queue for approval. An auto-posted
+    mistake or a platform ban ends the service a client is paying for."""
+    from app.engines import client_news
+    src = pathlib.Path(client_news.__file__).read_text(encoding="utf-8")
+    for forbidden in ("publisher.publish", "post_now", "requests.post",
+                      "urlopen("):
+        assert forbidden not in src, f"the news watch can {forbidden}"
+    assert "human approves" in client_news.summary()["note"]
+
+
 # ── evidence ledger (pattern from trycompai/crm) ───────────────────────────
 
 @pytest.fixture
@@ -1089,6 +1155,78 @@ def test_pricing_page_serves_and_hardcodes_no_prices(isolated_billing,
         if plan.price_usd:
             assert f"${plan.price_usd:.0f}/month" not in html, (
                 f"{plan.key} price is hardcoded into the page")
+
+
+def test_self_serve_onboarding_delivers_the_first_audit(isolated_billing,
+                                                        isolated_clients,
+                                                        monkeypatch):
+    """The conversion path. Everything before this is a promise; this is the
+    first moment the product does something for the person who signed up."""
+    import unittest.mock as mock
+    from app.engines import client_seo
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    c = TestClient(app)
+
+    c.post("/api/signup", json={"email": "w@leather.example",
+                                "password": "password123", "plan": "free"})
+    tok = c.post("/api/account/login",
+                 json={"email": "w@leather.example",
+                       "password": "password123"}).json()["token"]
+    h = {"X-Account-Token": tok}
+
+    html = ('<html lang="en"><head><title>Leather Co</title></head><body>'
+            '<p>Wholesale leather jackets, MOQ 50.</p></body></html>')
+    with mock.patch.object(client_seo, "_fetch", return_value=(html, None, 200)):
+        r = c.post("/api/account/onboard", headers=h, json={
+            "business_name": "Leather Co", "website": "https://leather.example",
+            "industry": "wholesale", "country": "Pakistan"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["client"]["business_name"] == "Leather Co"
+    assert body["audit"]["ok"] is True and isinstance(body["audit"]["score"], int)
+    # The audit must have consumed exactly one from the plan quota.
+    assert body["account"]["usage"]["audits"] == 1
+    # It must be audited as B2B, not as a corner shop.
+    assert body["audit"]["local"]["not_applicable"] is True
+
+    mine = c.get("/api/account/clients", headers=h).json()
+    assert len(mine["clients"]) == 1
+
+
+def test_a_subscriber_cannot_exceed_their_plan_or_read_someone_elses(
+        isolated_billing, isolated_clients, monkeypatch):
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    from app.core import billing
+    c = TestClient(app)
+
+    def acct(email):
+        c.post("/api/signup", json={"email": email, "password": "password123",
+                                    "plan": "free"})
+        t = c.post("/api/account/login",
+                   json={"email": email, "password": "password123"}).json()["token"]
+        return {"X-Account-Token": t}
+
+    a, b = acct("a@x.example"), acct("b@x.example")
+
+    first = c.post("/api/account/onboard", headers=a, json={
+        "business_name": "First", "run_audit": False})
+    assert first.status_code == 200
+    cid = first.json()["client"]["id"]
+
+    # Free covers 1 business; the second must be refused with a way forward.
+    second = c.post("/api/account/onboard", headers=a, json={
+        "business_name": "Second", "run_audit": False})
+    assert second.status_code == 402
+    detail = second.json()["detail"]
+    assert detail["upgrade_to"] == "student" and "$" in detail["upgrade_gives"]
+
+    # Subscriber B must not see or fetch subscriber A's business.
+    assert c.get("/api/account/clients", headers=b).json()["clients"] == []
+    assert c.get(f"/api/account/clients/{cid}/report.pdf",
+                 headers=b).status_code == 404
+    assert billing.owned_clients("b@x.example") == []
 
 
 def test_signup_and_pricing_are_reachable_without_the_founder_token(

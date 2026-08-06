@@ -177,6 +177,10 @@ def signup(email: str, password: str, plan: str = "free") -> dict:
             "usage": {"audits": 0, "ai_calls": 0},
             "subscription_id": "",
             "status": "active" if plan == "free" else "pending_payment",
+            # Businesses this subscriber has onboarded. The plan's `clients`
+            # limit is enforced against the length of this list, so a Free
+            # account cannot quietly manage ten businesses.
+            "client_ids": [],
         }
     events.emit("SubscriptionChanged", {"email": email, "plan": plan,
                                         "status": _accounts[email]["status"]},
@@ -275,6 +279,50 @@ def consume(email: str, kind: str, cost: int = 1) -> dict:
             if acct:
                 acct["usage"][kind] = acct["usage"].get(kind, 0) + cost
     return verdict
+
+
+def owned_clients(email: str) -> list:
+    with _lock:
+        acct = _accounts.get(email)
+        return list(acct.get("client_ids", [])) if acct else []
+
+
+def can_add_client(email: str) -> dict:
+    """Is this subscriber allowed another business? Never a bare boolean —
+    a refusal has to say what to do about it."""
+    with _lock:
+        acct = _accounts.get(email)
+        if not acct:
+            return {"allowed": False, "reason": "No such account."}
+        plan = PLANS[acct["plan"]]
+        used = len(acct.get("client_ids", []))
+    if plan.clients == -1 or used < plan.clients:
+        return {"allowed": True, "used": used, "limit": plan.clients}
+
+    nxt = None
+    for k in ORDER[ORDER.index(acct["plan"]) + 1:]:
+        if PLANS[k].clients == -1 or PLANS[k].clients > plan.clients:
+            nxt = PLANS[k]
+            break
+    return {
+        "allowed": False,
+        "reason": (f"The {plan.name} plan covers {plan.clients} business"
+                   f"{'es' if plan.clients != 1 else ''}, and you have "
+                   f"{used}."),
+        "upgrade_to": nxt.key if nxt else None,
+        "upgrade_gives": (
+            f"{nxt.name} covers "
+            f"{'unlimited businesses' if nxt.clients == -1 else str(nxt.clients) + ' businesses'}"
+            f" for ${nxt.price_usd:.0f}/month." if nxt else
+            "You are already on the highest plan."),
+    }
+
+
+def attach_client(email: str, client_id: str) -> None:
+    with _lock:
+        acct = _accounts.get(email)
+        if acct is not None and client_id not in acct.setdefault("client_ids", []):
+            acct["client_ids"].append(client_id)
 
 
 def set_plan(email: str, plan: str, subscription_id: str = "",

@@ -77,6 +77,12 @@ async def _heartbeat_loop() -> None:
             with contextlib.suppress(Exception):
                 from .engines import self_seo
                 await asyncio.to_thread(self_seo.cycle)
+            # Per-client news watch. Keeps its own 3-hour interval and
+            # round-robins a few clients per tick, so a large portfolio never
+            # stalls the heartbeat.
+            with contextlib.suppress(Exception):
+                from .engines import client_news
+                await asyncio.to_thread(client_news.cycle)
 
         # Run the live research engine on its own slow cadence.
         if time.monotonic() - _last_growth >= GROWTH_INTERVAL:
