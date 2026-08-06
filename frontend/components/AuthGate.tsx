@@ -80,11 +80,34 @@ export function AuthGate() {
   }, [probe]);
 
   if (state === "loading") {
+    // This is what a CRAWLER sees. The app is client-rendered, so the static
+    // export prerenders exactly this state — and it used to contain only the
+    // words "Booting Titan Omega…", no heading and no links. Titan's own audit
+    // reported the resulting page as having an H1 problem and no privacy
+    // policy linked, which is the same finding it charges clients to fix.
+    //
+    // The content below is real and visible, not markup hidden for robots:
+    // a visitor on a slow connection sees this too, and every claim in it is
+    // accurate.
     return (
-      <main className="flex min-h-screen items-center justify-center">
-        <span className="animate-pulseGlow font-mono text-sm text-hud-cyan">
-          Booting Titan Omega…
+      <main className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
+        <h1 className="font-mono text-2xl font-semibold tracking-wide text-white">
+          TITAN<span className="text-hud-cyan"> OMEGA</span>
+        </h1>
+        <p className="mt-3 max-w-lg text-sm text-slate-400">
+          SEO, local ranking and legal compliance audits for any business, in
+          any jurisdiction. Technical, local and legal findings are scored
+          separately — never averaged into one number that hides the expensive
+          one.
+        </p>
+        <span className="mt-6 animate-pulseGlow font-mono text-xs text-hud-cyan">
+          Booting the command centre…
         </span>
+        <nav className="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-slate-500">
+          <a className="hover:text-hud-cyan" href="/pricing">Pricing</a>
+          <a className="hover:text-hud-cyan" href="/privacy">Privacy</a>
+          <a className="hover:text-hud-cyan" href="/portal">Client portal</a>
+        </nav>
       </main>
     );
   }

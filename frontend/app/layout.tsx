@@ -42,6 +42,41 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+/**
+ * Product schema, rendered server-side into the static export.
+ *
+ * Titan's own audit reports "no structured data" as CRITICAL on client sites,
+ * and its own homepage had none — the schema on /pricing is injected by the
+ * FastAPI route, which never touches this Next-rendered page.
+ *
+ * Deliberately carries no prices. The priced Offers live on /pricing where the
+ * server generates them from the live plan table; duplicating them here as
+ * static strings is how a marked-up price silently drifts from the charged one.
+ */
+const PRODUCT_SCHEMA = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      name: "Titan Omega",
+      applicationCategory: "BusinessApplication",
+      operatingSystem: "Web",
+      url: SITE,
+      description:
+        "SEO, local ranking and legal compliance audits for any business in any jurisdiction. Technical, local and legal findings are scored separately, never averaged.",
+      featureList: [
+        "Technical SEO audit",
+        "Local ranking factor scoring on published 2026 weights",
+        "Legal compliance across 9 jurisdictions (Impressum / §5 DDG, GDPR consent)",
+        "24/7 monitoring with regression alerts",
+        "Client-ready PDF reports",
+      ],
+    },
+    { "@type": "Organization", name: "Titan Omega", url: SITE, logo: `${SITE}/icons/icon-512.png` },
+    { "@type": "WebSite", name: "Titan Omega", url: SITE },
+  ],
+};
+
 export default function RootLayout({
   children,
 }: {
@@ -52,6 +87,11 @@ export default function RootLayout({
       <body className="min-h-screen antialiased">
         {children}
         <RegisterSW />
+        <script
+          type="application/ld+json"
+          // Next escapes this for us; the object is a literal, never user input.
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(PRODUCT_SCHEMA) }}
+        />
       </body>
     </html>
   );
