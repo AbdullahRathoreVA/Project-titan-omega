@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Activity, AlertTriangle, BarChart3, Brain, Gauge, RefreshCw, TrendingUp,
+  Activity, AlertTriangle, BarChart3, Brain, Gauge, RefreshCw, TrendingUp, Users,
 } from "lucide-react";
 
 type ForecastOff = { available: false; reason: string; needed?: number };
@@ -67,6 +67,56 @@ type RoutingReport = {
   }[];
   configured_chain: string[];
   effective_order: string[];
+  note: string;
+};
+
+/** Founder-only. Served from /api/founder/analytics, which is registered
+ *  sensitive server-side — a demo visitor gets 403, not a sample. */
+type FunnelStep = {
+  step: string;
+  count: number;
+  pct_of_signups: number;
+  dropped_from_previous: number | null;
+  source: string;
+  reliable: boolean;
+};
+type AccountRow = {
+  email: string;
+  plan: string;
+  plan_name: string;
+  status: string;
+  paying: boolean;
+  days_since_signup: number;
+  usage: Record<string, number>;
+  business_count: number;
+  businesses: { business_name: string; website: string; industry: string }[];
+  actions: Record<string, number>;
+  days_since_seen: number | null;
+  returned_after_signup: boolean;
+};
+type Analytics = {
+  totals: {
+    accounts: number;
+    signed_up_in_window: number;
+    paying: number;
+    active_7d: number;
+    dormant_30d: number;
+    by_plan: Record<string, number>;
+    by_status: Record<string, number>;
+  };
+  revenue: {
+    collectable: boolean;
+    paying_accounts: number;
+    committed_mrr_usd: number | null;
+    note: string;
+  };
+  funnel: FunnelStep[];
+  accounts: AccountRow[];
+  activity: {
+    recent: { ts: number; email: string; action: string; meta: Record<string, unknown> }[];
+    totals: Record<string, number>;
+  };
+  storage_warning: string | null;
   note: string;
 };
 
@@ -123,19 +173,22 @@ export default function ExecutiveCommand() {
   const [bi, setBi] = useState<BiReport | null>(null);
   const [refl, setRefl] = useState<ReflectionReport | null>(null);
   const [route, setRoute] = useState<RoutingReport | null>(null);
+  const [users, setUsers] = useState<Analytics | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      const [b, r, m] = await Promise.all([
+      const [b, r, m, u] = await Promise.all([
         api<BiReport>(`/bi/${period}`),
         api<ReflectionReport>("/reflection"),
         api<RoutingReport>("/routing"),
+        api<Analytics>("/founder/analytics"),
       ]);
       setBi(b);
       setRefl(r);
       setRoute(m);
+      setUsers(u);
     } finally {
       setBusy(false);
     }
@@ -182,6 +235,164 @@ export default function ExecutiveCommand() {
             <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} /> Refresh
           </button>
         </div>
+      </div>
+
+      {/* who signed up, and what they actually did ------------------------ */}
+      <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
+          <Users className="h-3.5 w-3.5 text-hud-emerald" /> Subscribers
+          <span className="ml-auto font-normal normal-case tracking-normal text-slate-600">
+            founder only
+          </span>
+        </div>
+
+        {!users ? (
+          <div className="mt-3 text-[11px] text-slate-500">
+            Not loaded. This endpoint is founder-only — a demo session is refused.
+          </div>
+        ) : users.totals.accounts === 0 ? (
+          <div className="mt-3 text-[11px] text-slate-400">
+            No one has signed up yet. This is a real measurement, not a loading
+            state — the funnel below will fill in as people arrive.
+          </div>
+        ) : (
+          <>
+            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-5">
+              {[
+                ["Accounts", String(users.totals.accounts), "text-white"],
+                ["Paying", String(users.totals.paying),
+                  users.totals.paying > 0 ? "text-hud-emerald" : "text-slate-500"],
+                ["Active 7d", String(users.totals.active_7d), "text-hud-emerald"],
+                ["Dormant 30d", String(users.totals.dormant_30d),
+                  users.totals.dormant_30d > 0 ? "text-hud-amber" : "text-slate-500"],
+                ["Committed MRR",
+                  users.revenue.committed_mrr_usd === null
+                    ? "n/a"
+                    : `$${money(users.revenue.committed_mrr_usd)}`,
+                  users.revenue.collectable ? "text-hud-emerald" : "text-slate-500"],
+              ].map(([label, value, tone]) => (
+                <div key={label as string}>
+                  <div className={`font-mono text-xl font-semibold leading-none ${tone}`}>
+                    {value}
+                  </div>
+                  <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
+                    {label}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* A currency figure that cannot be collected must say so, or a
+                dash reads as "zero earned" rather than "nothing can be paid". */}
+            {!users.revenue.collectable && (
+              <div className="mt-3 flex items-start gap-2 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-3 py-2 text-[10px] leading-relaxed text-hud-amber">
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                <span>{users.revenue.note}</span>
+              </div>
+            )}
+
+            {/* funnel */}
+            <div className="mt-4 space-y-1.5">
+              {users.funnel.map((s) => (
+                <div key={s.step} className="flex items-center gap-3">
+                  <div className="w-44 shrink-0 text-[11px] text-slate-400">
+                    {s.step}
+                    {!s.reliable && (
+                      <span
+                        title={`Counted from the activity log, which began when analytics shipped. A zero here means not observed, not never happened.`}
+                        className="ml-1 cursor-help text-slate-600"
+                      >
+                        *
+                      </span>
+                    )}
+                  </div>
+                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/5">
+                    <div
+                      className={`h-full rounded-full ${
+                        s.reliable ? "bg-hud-emerald/70" : "bg-slate-500/50"
+                      }`}
+                      style={{ width: `${Math.max(s.pct_of_signups, s.count > 0 ? 2 : 0)}%` }}
+                    />
+                  </div>
+                  <div className="w-24 shrink-0 text-right font-mono text-[11px] text-slate-300">
+                    {s.count}
+                    <span className="ml-1 text-slate-600">{s.pct_of_signups}%</span>
+                  </div>
+                </div>
+              ))}
+              <div className="pt-1 text-[10px] text-slate-600">
+                * counted from the activity log only — a zero means not observed
+                since analytics shipped, not never happened.
+              </div>
+            </div>
+
+            {/* per-account detail */}
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[640px] text-left text-[11px]">
+                <thead className="text-[10px] uppercase tracking-widest text-slate-600">
+                  <tr>
+                    <th className="pb-2 font-normal">Email</th>
+                    <th className="pb-2 font-normal">Plan</th>
+                    <th className="pb-2 font-normal">Signed up</th>
+                    <th className="pb-2 font-normal">Businesses</th>
+                    <th className="pb-2 font-normal">Audits</th>
+                    <th className="pb-2 font-normal">Last seen</th>
+                  </tr>
+                </thead>
+                <tbody className="text-slate-300">
+                  {users.accounts.map((a) => (
+                    <tr key={a.email} className="border-t border-white/5">
+                      <td className="py-2 pr-3 font-mono text-slate-200">{a.email}</td>
+                      <td className="py-2 pr-3">
+                        <span
+                          className={
+                            a.paying ? "text-hud-emerald" : "text-slate-400"
+                          }
+                        >
+                          {a.plan_name}
+                        </span>
+                        {a.status !== "active" && (
+                          <span className="ml-1 text-hud-amber">({a.status})</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-slate-500">
+                        {a.days_since_signup}d ago
+                      </td>
+                      <td className="py-2 pr-3">
+                        {a.business_count === 0 ? (
+                          <span className="text-hud-rose">none</span>
+                        ) : (
+                          <span title={a.businesses.map((b) => b.business_name).join(", ")}>
+                            {a.business_count}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-slate-400">
+                        {a.usage.audits ?? 0}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {a.days_since_seen === null ? (
+                          <span className="text-hud-rose" title="Signed up and never came back">
+                            never returned
+                          </span>
+                        ) : (
+                          <span className="text-slate-500">{a.days_since_seen}d ago</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {users.storage_warning && (
+              <div className="mt-3 flex items-start gap-2 text-[10px] leading-relaxed text-slate-500">
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-hud-amber" />
+                <span>{users.storage_warning}</span>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* money */}

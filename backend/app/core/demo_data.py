@@ -58,6 +58,11 @@ _SENSITIVE_PREFIXES = (
     # demo is a breach of their trust and, for an EU client, a GDPR problem for
     # the operator. Found by the route-table audit test, not by inspection.
     "/api/admin",
+    # Founder analytics. Every row is a real subscriber's email address, their
+    # plan and what they did. This is the most personal data in the system and
+    # the demo has no business version of it — blocked outright, never
+    # substituted.
+    "/api/founder",
 )
 
 _LEAD_STATUSES = ["new", "contacted", "replied", "won", "lost"]

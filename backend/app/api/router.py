@@ -905,7 +905,7 @@ def account_onboard(req: OnboardIn,
     The plan's business limit is enforced here, and a refusal names the limit
     and the tier that lifts it rather than failing blankly.
     """
-    from ..core import billing, evidence
+    from ..core import analytics, billing, evidence
     from ..engines import client_seo as _cs
 
     email = billing.resolve(x_account_token or "")
@@ -937,6 +937,10 @@ def account_onboard(req: OnboardIn,
         raise HTTPException(status_code=400, detail=str(e))
 
     billing.attach_client(email, rec["id"])
+    analytics.record(email, analytics.ADDED_BUSINESS,
+                     business=rec["business_name"],
+                     industry=rec.get("industry", ""),
+                     country=rec.get("country", ""))
 
     audit = None
     if req.run_audit and req.website.strip():
@@ -950,6 +954,9 @@ def account_onboard(req: OnboardIn,
                               country=rec.get("country", ""),
                               industry=rec.get("industry", ""))
             clients.bump(rec["id"], "seo_audits")
+            analytics.record(email, analytics.RAN_AUDIT,
+                             website=rec["website"], ok=bool(audit.get("ok")),
+                             findings=len(audit.get("findings", [])))
             if audit.get("ok"):
                 clients.bump(rec["id"], "issues_found",
                              len(audit.get("findings", [])))
@@ -998,6 +1005,8 @@ def account_report(cid: str, x_account_token: Optional[str] = Header(None)):
         raise HTTPException(status_code=401, detail="Sign in first")
     if cid not in billing.owned_clients(email):
         raise HTTPException(status_code=404, detail="Not found")
+    from ..core import analytics
+    analytics.record(email, analytics.DOWNLOADED_REPORT, client_id=cid)
     rec = clients.get(cid)
     if not rec:
         raise HTTPException(status_code=404, detail="Not found")
@@ -1044,11 +1053,12 @@ def list_plans() -> dict:
 
 @router.post("/signup", tags=["billing"])
 def signup(req: SignupIn) -> dict:
-    from ..core import billing
+    from ..core import analytics, billing
     try:
         account = billing.signup(req.email, req.password, req.plan)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    analytics.record(req.email, analytics.SIGNED_UP, plan=req.plan)
     persistence.save(STORE)
     return account
 
@@ -1059,6 +1069,10 @@ def account_login(req: SignupIn) -> dict:
     token = billing.authenticate(req.email, req.password)
     if not token:
         raise HTTPException(status_code=401, detail="Wrong email or password")
+    # Coming back after signup is the difference between interest and use. It
+    # has no durable trace anywhere else, so it is recorded here or not at all.
+    from ..core import analytics
+    analytics.record(req.email, analytics.SIGNED_IN)
     return {"token": token, "account": billing.public(req.email)}
 
 
@@ -1083,10 +1097,26 @@ def checkout(plan_key: str,
     email = billing.resolve(x_account_token or "")
     if not email:
         raise HTTPException(status_code=401, detail="Sign in first")
+    from ..core import analytics
+    analytics.record(email, analytics.OPENED_CHECKOUT, plan=plan_key)
     try:
         return billing.checkout(email, plan_key)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# --- founder analytics ------------------------------------------------------
+# Founder-only by construction: `/api/founder` is registered in
+# demo_data._SENSITIVE_PREFIXES, so a guest token is refused outright by the
+# middleware rather than served a sample. Subscriber tokens never reach here —
+# they authenticate with X-Account-Token, which this route does not accept.
+
+@router.get("/founder/analytics", tags=["executive"])
+def founder_analytics(days: int = Query(default=30, ge=1, le=365),
+                      recent: int = Query(default=40, ge=1, le=200)) -> dict:
+    """Who signed up, what they are on, and what they actually did with it."""
+    from ..core import analytics
+    return analytics.report(days=days, recent=recent)
 
 
 @router.get("/reflection", tags=["executive"])

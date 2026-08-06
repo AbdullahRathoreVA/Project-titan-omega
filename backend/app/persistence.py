@@ -16,7 +16,7 @@ import json
 import os
 import tempfile
 
-from .core import (billing, clients, evidence, learning, reflection,
+from .core import (analytics, billing, clients, evidence, learning, reflection,
                    routing)
 from .store import STORE, Store
 
@@ -52,6 +52,10 @@ def save(store: Store = STORE) -> None:
             # losing it on every Space restart would keep it at 1.0 forever.
             "reflection": reflection.export_state(),
             "billing": billing.export_state(),
+            # What subscribers actually DID. Losing this on every restart would
+            # reset the founder's only view of the funnel to empty, which is
+            # indistinguishable from nobody having used the product.
+            "analytics": analytics.export_state(),
             # Provenance is the whole value of the ledger. Losing it on restart
             # would leave values with no record of where they came from, which
             # is the state this replaced.
@@ -104,6 +108,9 @@ def load(store: Store = STORE) -> None:
         bill = data.get("billing")
         if isinstance(bill, dict):
             billing.import_state(bill)
+        stats = data.get("analytics")
+        if isinstance(stats, dict):
+            analytics.import_state(stats)
         ev = data.get("evidence")
         if isinstance(ev, dict):
             evidence.import_state(ev)

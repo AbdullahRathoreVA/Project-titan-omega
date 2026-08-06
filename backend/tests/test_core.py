@@ -1032,11 +1032,15 @@ def test_every_founder_endpoint_is_hidden_from_guests(monkeypatch):
 @pytest.fixture
 def isolated_billing(monkeypatch, tmp_path):
     from app import persistence
-    from app.core import billing
+    from app.core import analytics, billing
     monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "s.json"))
     billing.reset()
+    # Analytics is module-level and persisted like the registry it measures. A
+    # signup in one test would otherwise show up in another test's funnel.
+    analytics.reset()
     yield
     billing.reset()
+    analytics.reset()
 
 
 def test_free_tier_keeps_the_thing_worth_paying_for(isolated_billing):
@@ -2000,3 +2004,125 @@ def test_session_endpoint_identifies_token_kind(monkeypatch):
 
     anon = client.get("/api/session").json()
     assert anon["founder"] is False and anon["guest"] is False
+
+
+# ── founder analytics ──────────────────────────────────────────────────────
+
+def test_founder_analytics_is_never_served_to_the_public_demo(
+        client, isolated_billing, monkeypatch):
+    """Every row of this report is a real subscriber's email address. The
+    route-table audit test skips it because it is registered sensitive — this
+    asserts the registration actually refuses a guest, rather than trusting a
+    string being present in a tuple."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    from app.core import demo_data
+
+    assert "/api/founder" in demo_data._SENSITIVE_PREFIXES
+
+    client.post("/api/signup", json={"email": "leak@example.com",
+                                     "password": "hunter2hunter2"})
+    tok = client.post("/api/demo/enter").json()["token"]
+    r = client.get("/api/founder/analytics",
+                   headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 403
+    assert "leak@example.com" not in r.text
+
+
+def test_founder_analytics_reports_who_signed_up_and_what_they_did(
+        client, isolated_billing, isolated_clients):
+    """The three questions the founder cannot currently answer: who signed up,
+    which plan, and what they actually did."""
+    from app.core import analytics
+
+    client.post("/api/signup", json={"email": "a@example.com",
+                                     "password": "hunter2hunter2"})
+    tok = client.post("/api/account/login",
+                      json={"email": "a@example.com",
+                            "password": "hunter2hunter2"}).json()["token"]
+    r = client.post("/api/account/onboard",
+                    json={"business_name": "Triad Thread Studio",
+                          "website": "", "industry": "wholesale",
+                          "run_audit": False},
+                    headers={"X-Account-Token": tok})
+    assert r.status_code == 200, r.text
+
+    rep = analytics.report()
+    assert rep["totals"]["accounts"] == 1
+    row = rep["accounts"][0]
+    assert row["email"] == "a@example.com"
+    assert row["plan"] == "free"
+    assert row["business_count"] == 1
+    assert row["businesses"][0]["business_name"] == "Triad Thread Studio"
+    # Signing back in is the difference between interest and use.
+    assert row["returned_after_signup"] is True
+
+    steps = {s["step"]: s for s in rep["funnel"]}
+    assert steps["Signed up"]["count"] == 1
+    assert steps["Added a business"]["count"] == 1
+    assert steps["Is paying"]["count"] == 0
+
+
+def test_funnel_says_which_steps_it_can_actually_prove(client, isolated_billing):
+    """The activity log starts empty the day this ships, but accounts already
+    exist. A step reconstructed from account state is true for every account
+    ever created; a step that can only come from the log is not. Presenting
+    both as the same kind of number would be inventing one."""
+    from app.core import analytics
+    rep = analytics.report()
+    steps = {s["step"]: s for s in rep["funnel"]}
+
+    assert steps["Signed up"]["reliable"] is True
+    assert steps["Signed up"]["source"] == "account state"
+    assert steps["Added a business"]["reliable"] is True
+    assert steps["Ran an audit"]["reliable"] is True
+    assert steps["Is paying"]["reliable"] is True
+
+    # These have no durable trace anywhere and must say so.
+    assert steps["Downloaded a PDF report"]["reliable"] is False
+    assert steps["Downloaded a PDF report"]["source"] == "activity log"
+    assert steps["Opened checkout"]["reliable"] is False
+
+
+def test_mrr_is_not_reported_as_zero_when_it_cannot_be_collected(
+        client, isolated_billing, monkeypatch):
+    """No processor is configured, so no account can complete a purchase. A
+    0.0 sitting under a dollar sign would read as 'measured, and it is zero'.
+    It is not measured — it is uncollectable, and the report has to say which."""
+    monkeypatch.delenv("PAYPAL_CLIENT_ID", raising=False)
+    monkeypatch.delenv("PAYPAL_CLIENT_SECRET", raising=False)
+    from app.core import analytics
+
+    rev = analytics.report()["revenue"]
+    assert rev["collectable"] is False
+    assert rev["committed_mrr_usd"] is None
+    assert "PAYPAL_CLIENT_ID" in rev["note"]
+
+
+def test_analytics_survives_a_restart(isolated_billing):
+    """Losing the funnel on every Space restart would make 'nobody used it'
+    indistinguishable from 'we forgot'."""
+    from app.core import analytics
+    analytics.record("b@example.com", analytics.DOWNLOADED_REPORT, client_id="c1")
+    saved = analytics.export_state()
+    analytics.reset()
+    assert analytics.report()["activity"]["log_size"] == 0
+    analytics.import_state(saved)
+    assert analytics.report()["activity"]["log_size"] == 1
+
+
+def test_analytics_can_never_break_the_action_it_measures(isolated_billing):
+    """A metric that can raise is a metric that takes down a signup."""
+    from app.core import analytics
+    analytics.record("", analytics.SIGNED_UP)
+    analytics.record(None, None)
+    analytics.record("c@example.com", "")
+    assert analytics.report()["activity"]["log_size"] == 0
+
+
+def test_analytics_log_is_bounded(isolated_billing):
+    """Free-tier container. An unbounded log is an OOM with a delay."""
+    from app.core import analytics
+    for i in range(analytics.MAX_EVENTS + 50):
+        analytics.record("d@example.com", analytics.SIGNED_IN, n=i)
+    assert analytics.report()["activity"]["log_size"] == analytics.MAX_EVENTS
