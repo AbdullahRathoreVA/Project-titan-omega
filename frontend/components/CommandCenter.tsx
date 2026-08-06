@@ -319,26 +319,32 @@ export function CommandCenter() {
           </div>
 
           {/* View switcher.
-              Founder-only views are removed for guests rather than disabled.
-              The backend refuses them either way, but a visible tab that
-              answers 403 looks like a broken product to a prospect — and these
-              tabs hold real client data and real revenue, so they are not a
-              demo asset in the first place. */}
+              Only EXECUTIVE is founder-only. It is Abdullah's private
+              business intelligence — real revenue, real provider errors, what
+              the platform learned about itself — and no substitute would be
+              honest.
+
+              Everything else stays in the demo, because the demo is the sales
+              pitch. Clients and SEO in particular are the screens that show
+              the German Impressum finding priced as a fine, which is the whole
+              reason to pay for this; the backend serves [SAMPLE] businesses
+              for them rather than blocking them. Finance, CRM, Telegram and
+              Job Radar already had demo-safe payloads all along. */}
           <div className="flex gap-2">
             {(([
               ["universe", "Universe", false],
               ["dashboard", "Dashboard", false],
               ["mission", "Mission", false],
-              ["clients", "Clients", true],
-              ["seo", "SEO", true],
+              ["clients", "Clients", false],
+              ["seo", "SEO", false],
               ["executive", "Executive", true],
               ["graph", "Graph", false],
               ["city", "AI City", false],
               ["warroom", "War Room", false],
-              ["telegram", "Telegram", true],
-              ["jobs", "Job Radar", true],
-              ["finance", "Finance", true],
-              ["crm", "CRM", true],
+              ["telegram", "Telegram", false],
+              ["jobs", "Job Radar", false],
+              ["finance", "Finance", false],
+              ["crm", "CRM", false],
             ] as const).filter(([, , founderOnly]) => !(founderOnly && isGuest()))
             ).map(([v, label]) => (
               <button

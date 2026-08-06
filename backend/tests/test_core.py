@@ -628,6 +628,42 @@ def test_executive_endpoints_are_hidden_from_the_public_demo(monkeypatch):
         assert r.json().get("guest") is True
 
 
+def test_demo_shows_the_sales_pitch_without_showing_a_real_client(monkeypatch):
+    """Clients and SEO are the screens that sell Titan — they show the German
+    Impressum finding priced as a fine, which is the reason to pay. Blocking
+    them removed the pitch. They are substituted, and the substitute must be
+    unmistakably sample data."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    c = TestClient(app)
+    tok = c.post("/api/demo/enter").json()["token"]
+    h = {"Authorization": f"Bearer {tok}"}
+
+    body = c.get("/api/admin/clients", headers=h).json()
+    assert body["clients"], "demo has no portfolio to show"
+    for cl in body["clients"]:
+        assert "[SAMPLE]" in cl["business_name"], "a real client name reached the demo"
+        assert ".example" in (cl.get("website") or ""), "a real domain reached the demo"
+
+    # The differentiator must actually be visible.
+    audit = body["clients"][0]["last_audit"]
+    # ensure_ascii=False, or json.dumps escapes the § in "§5 DDG" to § and
+    # the assertion fails on its own encoding rather than on the content.
+    blob = json.dumps(audit, ensure_ascii=False)
+    assert "Impressum" in blob and "§5" in blob and "Abmahnung" in blob
+    assert audit["legal"]["legal_critical"] == 2
+    assert audit["local"]["dimensions"], "local ranking factors missing"
+
+    # And the supporting screens.
+    disc = c.get("/api/admin/discovery", headers=h).json()
+    assert disc["opportunities"] and disc["pipeline_value_eur"] > 0
+    watch = c.get("/api/admin/watch", headers=h).json()
+    assert watch["watching"] > 0 and watch["trends"]
+
+    # Anything under /api/admin WITHOUT a substitute must still be refused.
+    assert c.get("/api/admin/nope", headers=h).status_code in (403, 404)
+
+
 def test_every_founder_endpoint_is_hidden_from_guests(monkeypatch):
     """The sensitive-path list fails OPEN — an endpoint added later and not
     registered simply serves real data. This walks the REAL route table so a
