@@ -7,7 +7,7 @@ sdk: docker
 app_port: 7860
 pinned: false
 license: other
-short_description: SEO, local ranking and legal compliance audits for any business
+short_description: SEO, local ranking and legal compliance audits
 ---
 
 <div align="center">
