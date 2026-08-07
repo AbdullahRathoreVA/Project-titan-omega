@@ -475,14 +475,22 @@ def checkout(email: str, plan_key: str) -> dict:
             "plan": plan_key,
             "price_usd": plan.price_usd,
             "needs": ("No payment processor is connected, so nothing can be "
-                      "sold yet. Two options:\n"
-                      "• Dodo Payments (recommended for Pakistan): create an "
-                      "account, add a subscription product per tier, then set "
-                      "DODO_PAYMENTS_API_KEY and DODO_PRODUCT_ID_STUDENT / "
-                      "_INDIVIDUAL / _ENTERPRISE as Space secrets.\n"
-                      "• PayPal: set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET "
-                      "and PAYPAL_PLAN_ID_* — note PayPal cannot RECEIVE "
-                      "payments in Pakistan, so it will not pay out there."),
+                      "sold yet.\n"
+                      "• Paddle (checked 2026-08-08: Pakistan is NOT on "
+                      "Paddle's unsupported-suppliers list). Merchant of "
+                      "Record — it handles sales tax and VAT and pays out via "
+                      "Payoneer, which works in Pakistan. ~5% + $0.50. Set "
+                      "PADDLE_API_KEY and PADDLE_PRICE_ID_STUDENT / "
+                      "_INDIVIDUAL / _ENTERPRISE.\n"
+                      "• Dodo Payments: same model, set DODO_PAYMENTS_API_KEY "
+                      "and DODO_PRODUCT_ID_*. Confirm it onboards Pakistan "
+                      "sellers before relying on it.\n"
+                      "• PayPal: PAYPAL_CLIENT_ID / _SECRET / _PLAN_ID_*. "
+                      "Works only where PayPal can RECEIVE — not Pakistan.\n"
+                      "The account must be in YOUR name. Routing your revenue "
+                      "through someone else's account breaks every "
+                      "processor's terms, makes it their taxable income, and "
+                      "gets funds frozen — see docs/PAYMENTS.md."),
             "note": ("Until then signup works and the free tier is fully "
                      "usable — only paid upgrades are unavailable."),
         }

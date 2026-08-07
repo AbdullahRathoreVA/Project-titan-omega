@@ -142,6 +142,13 @@ type SeoOverview = {
     score: number | null;
     grade: string | null;
     open_findings: { id: string; severity: string; title: string }[];
+    passed: string[];
+    failed: string[];
+    counts: Record<string, number>;
+    minutes_ago: number | null;
+    next_check_in_minutes: number | null;
+    interval_hours: number;
+    error: string | null;
     note: string;
   };
   clients: {
@@ -424,6 +431,80 @@ export default function ExecutiveCommand() {
                 Titan has not audited itself yet — the first check runs on the
                 heartbeat shortly after boot.
               </div>
+            )}
+
+            {/* An audit that failed to run is not a passing audit. */}
+            {seo.titan.error && (
+              <div className="mt-2 flex items-start gap-2 rounded-lg border border-hud-rose/30 bg-hud-rose/5 px-3 py-2 text-[10px] text-hud-rose">
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                <span>Last self-audit errored: {seo.titan.error}</span>
+              </div>
+            )}
+
+            {seo.titan.checked && (
+              <>
+                <div className="mt-2 font-mono text-[10px] text-slate-500">
+                  {seo.titan.url} · checked{" "}
+                  {seo.titan.minutes_ago != null
+                    ? `${seo.titan.minutes_ago} min ago`
+                    : "—"}
+                  {seo.titan.next_check_in_minutes != null &&
+                    ` · next in ${Math.round(seo.titan.next_check_in_minutes)} min`}
+                  {` · every ${seo.titan.interval_hours}h`}
+                </div>
+
+                {/* Everything it checked, not just the headline. A score with
+                    no list is a number to be trusted rather than checked. */}
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-hud-rose">
+                      Open findings ({seo.titan.open_findings.length})
+                    </div>
+                    {seo.titan.open_findings.length === 0 ? (
+                      <p className="mt-1 text-[11px] text-hud-emerald">
+                        Nothing outstanding.
+                      </p>
+                    ) : (
+                      seo.titan.open_findings.map((f) => (
+                        <div key={f.id} className="mt-1 flex gap-2 text-[11px]">
+                          <span
+                            className={`font-mono text-[9px] uppercase ${
+                              f.severity === "critical" || f.severity === "high"
+                                ? "text-hud-rose"
+                                : f.severity === "medium"
+                                  ? "text-hud-amber"
+                                  : "text-slate-500"
+                            }`}
+                          >
+                            {f.severity}
+                          </span>
+                          <span className="text-slate-300">{f.title}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-hud-emerald">
+                      Passing ({seo.titan.passed.length})
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {seo.titan.passed.slice(0, 24).map((p) => (
+                        <span
+                          key={p}
+                          className="rounded border border-hud-emerald/25 bg-hud-emerald/5 px-1.5 py-0.5 font-mono text-[9px] text-hud-emerald"
+                        >
+                          {p}
+                        </span>
+                      ))}
+                      {seo.titan.passed.length === 0 && (
+                        <span className="text-[11px] text-slate-600">
+                          Nothing recorded as passing.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
             )}
 
             {seo.clients.length > 0 && (

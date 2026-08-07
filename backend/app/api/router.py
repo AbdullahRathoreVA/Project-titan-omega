@@ -1159,6 +1159,9 @@ def founder_seo_overview() -> dict:
 
     scored = [r["score"] for r in rows if isinstance(r.get("score"), (int, float))]
     rows.sort(key=lambda r: (r["score"] is None, r["score"] or 0))
+    import time as _t
+    checked_at = own.get("checked_at")
+    interval_h = own.get("interval_hours", 6.0)
     return {
         "titan": {
             "checked": own.get("checked", False),
@@ -1166,7 +1169,20 @@ def founder_seo_overview() -> dict:
             "score": own.get("score"),
             "grade": own.get("grade"),
             "open_findings": own.get("open_findings", []),
-            "checked_at": own.get("checked_at"),
+            # The full picture, not just the headline. "94/A" without the list
+            # of what passed is a number to be trusted rather than checked.
+            "passed": own.get("passed", []),
+            "failed": own.get("failed", []),
+            "counts": own.get("counts", {}),
+            "checked_at": checked_at,
+            "minutes_ago": (round((_t.time() - checked_at) / 60, 1)
+                            if checked_at else None),
+            "next_check_in_minutes": (
+                max(0, round(interval_h * 60 - (_t.time() - checked_at) / 60, 1))
+                if checked_at else None),
+            "interval_hours": interval_h,
+            # An audit that failed to run is not a passing audit.
+            "error": own.get("error"),
             "note": own.get("note", ""),
         },
         "clients": rows,

@@ -2744,11 +2744,16 @@ def test_with_no_processor_the_refusal_names_both_options(no_processor,
     out = billing.checkout("a@example.com", "individual")
     assert out["ready"] is False
     assert billing.processor_name() == "none"
-    # Must name the option that actually works where he lives, and say plainly
-    # why the one he prefers does not.
-    assert "DODO_PAYMENTS_API_KEY" in out["needs"]
-    assert "cannot RECEIVE" in out["needs"]
-    assert "Pakistan" in out["needs"]
+    needs = out["needs"]
+    # Must name the option verified to work where he lives...
+    assert "Paddle" in needs
+    assert "PADDLE_API_KEY" in needs
+    assert "Payoneer" in needs
+    # ...say plainly why the one he prefers does not...
+    assert "not Pakistan" in needs
+    # ...and warn off the shortcut that gets a family member's account frozen.
+    assert "must be in YOUR name" in needs
+    assert "someone else's account" in needs
 
 
 def test_dodo_is_preferred_when_both_are_configured(monkeypatch, isolated_billing):
