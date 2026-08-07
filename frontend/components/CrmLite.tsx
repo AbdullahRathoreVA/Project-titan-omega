@@ -1,9 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, Filter, Plus, Trash2, Users } from "lucide-react";
+import { ChevronRight, Filter, Plus, Search, Trash2, Users } from "lucide-react";
 import { api } from "@/lib/api";
 import type { LeadsState } from "@/lib/types";
+
+type DiscoverResult = {
+  created: { id: string; name: string; website?: string }[];
+  researched: number;
+  reason: string;
+  rejected?: { directory: number; duplicate: number; already_known: number };
+};
 
 const STAGE_BAR: Record<string, string> = {
   new: "bg-hud-cyan",
@@ -40,6 +47,9 @@ export function CrmLite() {
   const [source, setSource] = useState("manual");
   const [contact, setContact] = useState("");
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [finding, setFinding] = useState(false);
+  const [found, setFound] = useState<DiscoverResult | null>(null);
 
   const refresh = useCallback(async () => {
     setState(await api.leads());
@@ -48,6 +58,19 @@ export function CrmLite() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const discover = async () => {
+    if (finding || query.trim().length < 3) return;
+    setFinding(true);
+    setFound(null);
+    try {
+      const res = await api.discoverLeads(query.trim());
+      setFound(res);
+      await refresh();
+    } finally {
+      setFinding(false);
+    }
+  };
 
   const add = async () => {
     if (!name.trim() || busy) return;
@@ -83,6 +106,70 @@ export function CrmLite() {
 
   return (
     <div className="space-y-4">
+      {/* Find real businesses, file them, audit their sites, draft the approach.
+          Directories and duplicates are dropped server-side — see
+          engines/prospecting.py for why that filtering is the whole value. */}
+      <section className="panel">
+        <header className="panel-header">
+          <div className="flex items-center gap-2">
+            <Search className="h-4 w-4 text-hud-emerald" strokeWidth={1.6} />
+            <h2 className="text-sm font-medium text-slate-200">Find leads</h2>
+          </div>
+          <span className="hud-label">audits their site · drafts nothing sent</span>
+        </header>
+        <div className="space-y-2 p-3">
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void discover()}
+              placeholder="leather goods manufacturer Sialkot Pakistan"
+              className="min-w-0 flex-1 rounded-lg border border-edge bg-black/40 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600"
+            />
+            <button
+              onClick={() => void discover()}
+              disabled={finding || query.trim().length < 3}
+              className="rounded-lg border border-hud-emerald/40 bg-hud-emerald/10 px-4 py-2 text-xs font-medium text-hud-emerald transition hover:bg-hud-emerald/20 disabled:opacity-40"
+            >
+              {finding ? "Searching…" : "Find"}
+            </button>
+          </div>
+          <p className="text-[10px] text-slate-600">
+            A town and a trade works better than an industry alone. Titan audits
+            the first three sites it finds and drafts outreach from the real
+            findings — it never sends anything.
+          </p>
+          {found && (
+            <div
+              className={`rounded-lg border px-3 py-2 text-[11px] ${
+                found.created.length
+                  ? "border-hud-emerald/30 bg-hud-emerald/5 text-hud-emerald"
+                  : "border-hud-amber/30 bg-hud-amber/5 text-hud-amber"
+              }`}
+            >
+              {found.created.length ? (
+                <>
+                  Added {found.created.length} lead
+                  {found.created.length === 1 ? "" : "s"}, audited{" "}
+                  {found.researched}.{" "}
+                  {found.rejected && (
+                    <span className="text-slate-500">
+                      Dropped {found.rejected.directory} director
+                      {found.rejected.directory === 1 ? "y" : "ies"},{" "}
+                      {found.rejected.duplicate} duplicate
+                      {found.rejected.duplicate === 1 ? "" : "s"},{" "}
+                      {found.rejected.already_known} already in your CRM.
+                    </span>
+                  )}
+                </>
+              ) : (
+                found.reason
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+
       <div className="grid grid-cols-5 gap-2">
         {(state?.statuses ?? ["new", "contacted", "replied", "won", "lost"]).map((s) => (
           <div key={s} className="panel px-3 py-2 text-center">

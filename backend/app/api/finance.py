@@ -199,6 +199,82 @@ def set_lead_status(lead_id: str, req: LeadStatus) -> dict:
     return lead
 
 
+class LeadDiscover(BaseModel):
+    query: str = Field(..., min_length=3)
+    limit: int = Field(default=6, ge=1, le=15)
+    # Auditing a prospect's site is a real HTTP crawl of someone else's server.
+    # Off by default, and hard-capped below, because firing fifteen at once is
+    # both slow and rude.
+    research: bool = Field(default=True)
+    research_limit: int = Field(default=3, ge=0, le=6)
+    lang: str = Field(default="en")
+
+
+@router.post("/leads/discover", tags=["crm"])
+def discover_leads(req: LeadDiscover) -> dict:
+    """Find real businesses, file them as leads, and prepare the approach.
+
+    The whole pipeline in one call: search → drop directories and duplicates →
+    create CRM records → audit the first few sites → draft outreach citing what
+    was actually found. Nothing is sent to anyone.
+    """
+    from ..engines import outreach, prospecting
+
+    # Never re-file a business already in the pipeline.
+    known = set()
+    for lead in STORE.leads.values():
+        site = outreach.find_website(lead)
+        if site:
+            d = prospecting.registrable(site)
+            if d:
+                known.add(d)
+
+    found = prospecting.discover(req.query, req.limit, known)
+    if not found.get("candidates"):
+        return {**found, "created": [], "researched": 0}
+
+    created = []
+    for c in found["candidates"]:
+        lead = {
+            "id": STORE.new_id("lead"),
+            "name": c["name"][:80],
+            "source": "discovered",
+            "contact": c["website"],
+            "note": (c["why"] or "")[:300],
+            "status": "new",
+            "stage_reached": 0,
+            "website": c["website"],
+            "created_at": now().isoformat(),
+            "updated_at": now().isoformat(),
+        }
+        STORE.leads[lead["id"]] = lead
+        created.append(lead)
+
+    # Audit the first few and draft from the findings. Bounded deliberately:
+    # each one crawls a stranger's website.
+    researched = 0
+    if req.research:
+        for lead in created[:req.research_limit]:
+            res = outreach.research(lead)
+            lead["research"] = res
+            lead["draft"] = outreach.draft(lead, res, req.lang)
+            lead["updated_at"] = now().isoformat()
+            if res.get("ok"):
+                researched += 1
+
+    STORE.emit("revenue-head", "discovery",
+               f"Discovered {len(created)} leads for '{req.query}', "
+               f"audited {researched}", "success")
+    persistence.save(STORE)
+    return {
+        **found,
+        "created": created,
+        "researched": researched,
+        "next": ("Open each lead to read the draft. Nothing has been sent — "
+                 "send it yourself from your own mailbox."),
+    }
+
+
 class LeadResearch(BaseModel):
     lang: str = Field(default="en")
 

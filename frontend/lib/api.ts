@@ -238,6 +238,15 @@ export const api = {
       items: [], counts: {}, statuses: [], stages: [],
       funnel: [], lost: 0, conversion_pct: 0,
     }),
+  /** Find real businesses, file them, audit their sites, draft the approach.
+   *  Directories and duplicates are dropped server-side. Sends nothing. */
+  discoverLeads: (query: string) =>
+    post<{
+      created: { id: string; name: string; website?: string }[];
+      researched: number;
+      reason: string;
+      rejected?: { directory: number; duplicate: number; already_known: number };
+    }>("/leads/discover", { query, limit: 6, research: true, research_limit: 3 }),
   createLead: (name: string, source: string, contact: string, note: string) =>
     post<Lead>("/leads", { name, source, contact, note }),
   setLeadStatus: (id: string, status: string) => post<Lead>(`/leads/${id}/status`, { status }),

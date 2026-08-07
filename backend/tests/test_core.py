@@ -2575,3 +2575,151 @@ def test_a_silent_answer_can_return_to_idle(client, isolated_voice):
     client.post(f"/api/voice/sessions/{sid}/end")
     assert client.post(f"/api/voice/sessions/{sid}/state",
                        json={"state": "idle"}).status_code == 409
+
+
+# ── prospecting ────────────────────────────────────────────────────────────
+
+def test_directories_are_never_filed_as_leads():
+    """Searching a trade returns Alibaba and Yellow Pages long before it
+    returns a manufacturer. Filing those produces a CRM nobody can sell to —
+    and Titan would then audit alibaba.com and draft outreach about Alibaba's
+    SEO."""
+    from app.engines import prospecting as p
+    for bad in ("https://www.alibaba.com/showroom/leather.html",
+                "https://yellowpages.com/sialkot",
+                "https://en.wikipedia.org/wiki/Leather",
+                "https://www.facebook.com/somebusiness",
+                "https://www.linkedin.com/company/x",
+                "https://amazon.de/dp/B01",
+                "https://example.com/category/leather-bags"):
+        assert p.is_blocked(bad), bad
+    for good in ("https://triadthread.pk/", "https://www.bellavista.de/kontakt"):
+        assert not p.is_blocked(good), good
+
+
+def test_deduplicates_by_domain_not_by_url(monkeypatch):
+    """One company appears as example.com, www.example.com/about and
+    example.com/contact in a single search. Three leads for one business
+    wastes the audit quota and makes the funnel lie."""
+    from app.engines import prospecting as p, research
+    monkeypatch.setattr(research, "available", lambda: True)
+    monkeypatch.setattr(research, "search", lambda q, max_results=8: [
+        {"title": "Acme Leather | Home", "url": "https://acme-leather.pk/", "content": "maker"},
+        {"title": "About — Acme Leather", "url": "https://www.acme-leather.pk/about", "content": "x"},
+        {"title": "Contact", "url": "https://acme-leather.pk/contact", "content": "y"},
+        {"title": "Beta Tannery", "url": "https://beta-tannery.pk/", "content": "z"},
+    ])
+    out = p.discover("leather manufacturers sialkot", limit=10)
+    assert [c["domain"] for c in out["candidates"]] == ["acme-leather.pk", "beta-tannery.pk"]
+    assert out["rejected"]["duplicate"] == 2
+
+
+def test_businesses_already_in_the_crm_are_skipped(monkeypatch):
+    from app.engines import prospecting as p, research
+    monkeypatch.setattr(research, "available", lambda: True)
+    monkeypatch.setattr(research, "search", lambda q, max_results=8: [
+        {"title": "Acme", "url": "https://acme-leather.pk/", "content": ""},
+        {"title": "Beta", "url": "https://beta-tannery.pk/", "content": ""},
+    ])
+    out = p.discover("x", limit=10, known_domains={"acme-leather.pk"})
+    assert [c["domain"] for c in out["candidates"]] == ["beta-tannery.pk"]
+    assert out["rejected"]["already_known"] == 1
+
+
+def test_no_search_key_means_no_invented_prospects(monkeypatch):
+    """A hallucinated prospect wastes a real crawl and an hour of his day."""
+    from app.engines import prospecting as p, research
+    monkeypatch.setattr(research, "available", lambda: False)
+    out = p.discover("leather manufacturers")
+    assert out["ok"] is False
+    assert out["candidates"] == []
+    assert "TAVILY_API_KEY" in out["reason"]
+
+
+def test_business_name_is_usable_in_a_greeting():
+    """A 90-character SEO title cannot open an email."""
+    from app.engines import prospecting as p
+    assert p.clean_name("Acme Leather | Official Website", "acme.pk") == "Acme Leather"
+    assert p.clean_name("Triad Thread Studio - Home", "triad.pk") == "Triad Thread Studio"
+    # Junk title falls back to the domain rather than greeting nobody.
+    assert p.clean_name("", "triad-thread.pk") == "Triad Thread"
+
+
+def test_discover_endpoint_files_leads_and_drafts(client, isolated_leads, monkeypatch):
+    from app.core import llm
+    from app.engines import research
+    monkeypatch.setattr(llm, "complete", lambda **kw: "")
+    monkeypatch.setattr(research, "available", lambda: True)
+    monkeypatch.setattr(research, "search", lambda q, max_results=8: [
+        {"title": "Acme Leather | Home", "url": "https://acme-leather.invalid/", "content": "maker"},
+        {"title": "Alibaba leather", "url": "https://www.alibaba.com/x", "content": "directory"},
+    ])
+    r = client.post("/api/leads/discover",
+                    json={"query": "leather manufacturers sialkot",
+                          "limit": 5, "research": True, "research_limit": 1})
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["created"]) == 1, "the directory must not become a lead"
+    lead = body["created"][0]
+    assert lead["name"] == "Acme Leather"
+    assert lead["website"] == "https://acme-leather.invalid"
+    # The site is unreachable, so there must be no audit-based claims.
+    assert STORE.leads[lead["id"]]["research"]["ok"] is False
+    assert STORE.leads[lead["id"]]["draft"]["sent"] is False
+
+    # Running the same query again must not duplicate the business.
+    again = client.post("/api/leads/discover",
+                        json={"query": "leather manufacturers sialkot", "research": False}).json()
+    assert again["created"] == []
+    assert again["rejected"]["already_known"] == 1
+
+
+def test_a_profile_page_about_a_company_is_not_that_company():
+    """Found by running a real Tavily search. leatherworkinggroup.com/
+    get-involved/our-community/certified-suppliers/sheikh-of-sialkot is a
+    CERTIFIER's page about a manufacturer: the title is the manufacturer, the
+    domain is the certifier. Filed as a lead, Titan audits the certifier's
+    site and emails them about somebody else's business."""
+    from app.engines import prospecting as p
+    assert p.is_blocked(
+        "https://www.leatherworkinggroup.com/get-involved/our-community/"
+        "certified-suppliers/sheikh-of-sialkot-pvt-ltd")
+    for u in ("https://x.com-example.pk/members/acme",
+              "https://trade.example/suppliers/acme-leather",
+              "https://portal.example/company/acme"):
+        assert p.is_blocked(u), u
+
+
+def test_real_search_titles_produce_sendable_greetings():
+    """Every case here came out of one live search for Sialkot leather
+    manufacturers. The bar is 'would Abdullah send this?' — 'Hi Manufacturer l
+    Leather Jackets l Leather Goods l Promotional ...,' loses the deal in the
+    first line."""
+    from app.engines import prospecting as p
+    cases = [
+        # keyword-stuffed with a lowercase L standing in for a pipe
+        ("Manufacturer l Leather goods & Accessories l Leather Promotional Products Sialkot Pakistan",
+         "leatherpromo.com", "Leatherpromo"),
+        ("Manufacturer l Leather Jackets l Leather Goods l Promotional ...",
+         "superlative.com.pk", "Superlative"),
+        # listicle headline that happened to rank
+        ("Top 5 Best Leather Goods Manufacturers in Sialkot, Pakistan",
+         "hookescollection.com", "Hookescollection"),
+        # comma-stuffed keyword title
+        ("Leather jackets, Leather Gloves, Leather Bondage gear & Leather Goods Manufacturer Sialkot Pakistan",
+         "leatherfeel.com", "Leatherfeel"),
+        # genuinely good titles must survive untouched
+        ("Urfa Leather Industry | Custom & Wholesale Leather Goods",
+         "urfaleathers.com", "Urfa Leather Industry"),
+        ("Leather Signal Industry", "lsipk.com", "Leather Signal Industry"),
+        ("Leather Master", "leathermaster.com.pk", "Leather Master"),
+    ]
+    for title, host, expected in cases:
+        got = p.clean_name(title, host)
+        assert got == expected, f"{title[:40]!r} -> {got!r}, wanted {expected!r}"
+
+
+def test_a_bare_category_word_is_never_a_business_name():
+    from app.engines import prospecting as p
+    for junk in ("Manufacturer", "Suppliers", "Home", "Welcome", "Leather Goods"):
+        assert p.clean_name(junk, "acme-leather.pk") == "Acme Leather", junk
