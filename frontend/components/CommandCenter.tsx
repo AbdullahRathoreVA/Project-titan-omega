@@ -1,6 +1,7 @@
 "use client";
 
 import ClientCommand from "./ClientCommand";
+import VoiceAgents from "./VoiceAgents";
 import SeoCommand from "./SeoCommand";
 import ExecutiveCommand from "./ExecutiveCommand";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -85,7 +86,7 @@ export function CommandCenter() {
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
   const [view, setView] = useState<
-    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm" | "clients" | "seo" | "executive"
+    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm" | "clients" | "seo" | "executive" | "voice"
   >("universe");
   const [executions, setExecutions] = useState<ExecutionItem[]>([]);
   const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
@@ -338,6 +339,10 @@ export function CommandCenter() {
               ["clients", "Clients", false],
               ["seo", "SEO", false],
               ["executive", "Executive", true],
+              // Founder-only: sessions carry live transcripts, and /api/voice
+              // is registered sensitive server-side. Showing the tab to a
+              // guest would only produce a wall of 403s.
+              ["voice", "Voice", true],
               ["graph", "Graph", false],
               ["city", "AI City", false],
               ["warroom", "War Room", false],
@@ -411,6 +416,8 @@ export function CommandCenter() {
           {view === "seo" && <SeoCommand />}
 
           {view === "executive" && <ExecutiveCommand />}
+
+          {view === "voice" && <VoiceAgents />}
 
           {view === "telegram" && <TelegramCenter />}
 
