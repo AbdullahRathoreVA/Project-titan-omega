@@ -28,6 +28,7 @@ import {
   PhoneForwarded, RefreshCw, ShieldQuestion, Radio,
 } from "lucide-react";
 import VoiceSphere from "./VoiceSphere";
+import { AskTitan } from "./AskTitan";
 
 type SessionRow = {
   id: string;
@@ -415,6 +416,11 @@ export default function VoiceAgents() {
           </div>
         )}
       </div>
+
+      {/* Talk to it from here. Without this the screen showed a voice avatar
+          with no way to speak to it — the sessions it renders could only be
+          started from another tab. */}
+      <AskTitan />
 
       <div className="grid gap-3 lg:grid-cols-2">
         {/* live sessions */}

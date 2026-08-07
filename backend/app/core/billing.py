@@ -341,13 +341,117 @@ def set_plan(email: str, plan: str, subscription_id: str = "",
 
 
 # -------------------------------------------------------------- processor --
+# Two adapters behind one seam.
+#
+# PayPal is Abdullah's stated preference and stays supported. It also cannot
+# RECEIVE money in Pakistan, which means a PayPal-only build can never be paid
+# — the plan table, the quotas and the signup flow are all finished and the
+# product still earns nothing.
+#
+# Dodo Payments is the researched alternative: a Merchant of Record that
+# handles US sales tax and EU VAT and pays out to Payoneer and Wise, both of
+# which work in Pakistan. Fees ~4% + $0.40. Preferred here purely because it
+# is the one that can actually complete a sale from where he lives.
+#
+# Neither is required. With neither configured, signup and the free tier work
+# and the refusal names exactly what is missing.
+
+
+def _dodo_key() -> str:
+    return os.getenv("DODO_PAYMENTS_API_KEY", "").strip()
+
+
+def dodo_configured() -> bool:
+    return bool(_dodo_key())
+
+
+def paypal_configured() -> bool:
+    return bool(os.getenv("PAYPAL_CLIENT_ID", "").strip()
+                and os.getenv("PAYPAL_CLIENT_SECRET", "").strip())
+
+
 def processor_name() -> str:
-    return "paypal" if os.getenv("PAYPAL_CLIENT_ID", "").strip() else "none"
+    if dodo_configured():
+        return "dodo"
+    if os.getenv("PAYPAL_CLIENT_ID", "").strip():
+        return "paypal"
+    return "none"
 
 
 def configured() -> bool:
-    return bool(os.getenv("PAYPAL_CLIENT_ID", "").strip()
-                and os.getenv("PAYPAL_CLIENT_SECRET", "").strip())
+    return dodo_configured() or paypal_configured()
+
+
+def _dodo_product_id(plan_key: str) -> str:
+    return os.getenv(f"DODO_PRODUCT_ID_{plan_key.upper()}", "").strip()
+
+
+def _dodo_checkout(email: str, plan_key: str, plan: Plan) -> dict:
+    """Create a Dodo checkout session and hand back the URL the CUSTOMER opens.
+
+    Titan never sees a card number. The SDK is imported inside the function on
+    purpose: a missing package must degrade to an honest "not configured"
+    message, never take the process down at import time the way reportlab once
+    did.
+    """
+    product_id = _dodo_product_id(plan_key)
+    if not product_id:
+        return {
+            "ready": False, "processor": "dodo", "plan": plan_key,
+            "price_usd": plan.price_usd,
+            "needs": (f"Create a ${plan.price_usd:.0f}/month subscription "
+                      f"product in the Dodo dashboard and set "
+                      f"DODO_PRODUCT_ID_{plan_key.upper()} to its id "
+                      f"(looks like pdt_…)."),
+        }
+    try:
+        from dodopayments import DodoPayments
+    except Exception:
+        return {
+            "ready": False, "processor": "dodo", "plan": plan_key,
+            "needs": ("The dodopayments package is not installed in this "
+                      "deployment. It is in requirements.txt — the Space "
+                      "needs a rebuild."),
+        }
+
+    site = os.getenv("TITAN_SITE_URL", "https://titanomega-ai.com").rstrip("/")
+    env = os.getenv("DODO_PAYMENTS_ENVIRONMENT", "live_mode").strip() or "live_mode"
+    try:
+        kwargs = {"bearer_token": _dodo_key(), "environment": env}
+        base = os.getenv("DODO_PAYMENTS_BASE_URL", "").strip()
+        if base:
+            kwargs["base_url"] = base
+        client = DodoPayments(**kwargs)
+        session = client.checkout_sessions.create(
+            product_cart=[{"product_id": product_id, "quantity": 1}],
+            customer={"email": email},
+            return_url=f"{site}/join?paid=1",
+            cancel_url=f"{site}/pricing",
+        )
+        url = getattr(session, "checkout_url", "") or ""
+        if not url:
+            raise ValueError("no checkout_url in the response")
+        return {
+            "ready": True, "processor": "dodo", "plan": plan_key,
+            "price_usd": plan.price_usd,
+            "checkout_url": url,
+            "session_id": getattr(session, "session_id", ""),
+            "environment": env,
+            "flow": ("Open checkout_url. Dodo takes the payment as Merchant of "
+                     "Record and pays out to Payoneer or Wise. Titan never "
+                     "sees card details."),
+        }
+    except Exception as exc:
+        # Report the real failure. A checkout that silently returns nothing is
+        # indistinguishable from a customer who changed their mind.
+        return {
+            "ready": False, "processor": "dodo", "plan": plan_key,
+            "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+            "needs": ("Dodo rejected the checkout request. Check "
+                      "DODO_PAYMENTS_API_KEY, that DODO_PAYMENTS_ENVIRONMENT "
+                      "matches the key (test_mode vs live_mode), and that the "
+                      "product id belongs to the same account."),
+        }
 
 
 def checkout(email: str, plan_key: str) -> dict:
@@ -360,15 +464,25 @@ def checkout(email: str, plan_key: str) -> dict:
     if plan_key not in PLANS or plan_key == "free":
         raise ValueError("Choose a paid plan.")
     plan = PLANS[plan_key]
+
+    if dodo_configured():
+        return _dodo_checkout(email, plan_key, plan)
+
     if not configured():
         return {
             "ready": False,
+            "processor": "none",
             "plan": plan_key,
             "price_usd": plan.price_usd,
-            "needs": ("Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET as Space "
-                      "secrets, and create a subscription Plan ID in the "
-                      "PayPal dashboard for each paid tier "
-                      "(PAYPAL_PLAN_ID_STUDENT, _INDIVIDUAL, _ENTERPRISE)."),
+            "needs": ("No payment processor is connected, so nothing can be "
+                      "sold yet. Two options:\n"
+                      "• Dodo Payments (recommended for Pakistan): create an "
+                      "account, add a subscription product per tier, then set "
+                      "DODO_PAYMENTS_API_KEY and DODO_PRODUCT_ID_STUDENT / "
+                      "_INDIVIDUAL / _ENTERPRISE as Space secrets.\n"
+                      "• PayPal: set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET "
+                      "and PAYPAL_PLAN_ID_* — note PayPal cannot RECEIVE "
+                      "payments in Pakistan, so it will not pay out there."),
             "note": ("Until then signup works and the free tier is fully "
                      "usable — only paid upgrades are unavailable."),
         }

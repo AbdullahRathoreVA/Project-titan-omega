@@ -18,3 +18,10 @@ pytest==8.3.4
 # PDF client reports (engines/client_report.py). Pinned because a
 # missing dependency here previously took the WHOLE API down at import.
 reportlab==4.4.9
+
+# Payments. Dodo Payments is a Merchant of Record that pays out to Payoneer
+# and Wise, which is what makes it usable from Pakistan where PayPal cannot
+# RECEIVE money. Imported INSIDE the checkout function, never at module load,
+# so a missing package degrades to an honest "not configured" instead of
+# taking the API down the way reportlab once did.
+dodopayments>=1.0.0

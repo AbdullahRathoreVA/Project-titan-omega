@@ -2723,3 +2723,84 @@ def test_a_bare_category_word_is_never_a_business_name():
     from app.engines import prospecting as p
     for junk in ("Manufacturer", "Suppliers", "Home", "Welcome", "Leather Goods"):
         assert p.clean_name(junk, "acme-leather.pk") == "Acme Leather", junk
+
+
+# ── payments ───────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def no_processor(monkeypatch):
+    for v in ("DODO_PAYMENTS_API_KEY", "PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET",
+              "DODO_PRODUCT_ID_INDIVIDUAL", "DODO_PAYMENTS_ENVIRONMENT"):
+        monkeypatch.delenv(v, raising=False)
+    yield
+
+
+def test_with_no_processor_the_refusal_names_both_options(no_processor,
+                                                          isolated_billing):
+    """The product is finished and earns nothing. A refusal that does not say
+    what to do about it is how that stays true."""
+    from app.core import billing
+    billing.signup("a@example.com", "hunter2hunter2")
+    out = billing.checkout("a@example.com", "individual")
+    assert out["ready"] is False
+    assert billing.processor_name() == "none"
+    # Must name the option that actually works where he lives, and say plainly
+    # why the one he prefers does not.
+    assert "DODO_PAYMENTS_API_KEY" in out["needs"]
+    assert "cannot RECEIVE" in out["needs"]
+    assert "Pakistan" in out["needs"]
+
+
+def test_dodo_is_preferred_when_both_are_configured(monkeypatch, isolated_billing):
+    """PayPal cannot pay out to Pakistan, so a build that picks it over a
+    working processor would earn nothing while looking configured."""
+    from app.core import billing
+    monkeypatch.setenv("DODO_PAYMENTS_API_KEY", "dodo_test_key")
+    monkeypatch.setenv("PAYPAL_CLIENT_ID", "pp")
+    monkeypatch.setenv("PAYPAL_CLIENT_SECRET", "pps")
+    assert billing.processor_name() == "dodo"
+    assert billing.configured() is True
+
+
+def test_dodo_without_a_product_id_says_exactly_what_to_create(
+        monkeypatch, isolated_billing):
+    from app.core import billing
+    monkeypatch.setenv("DODO_PAYMENTS_API_KEY", "dodo_test_key")
+    monkeypatch.delenv("DODO_PRODUCT_ID_INDIVIDUAL", raising=False)
+    billing.signup("b@example.com", "hunter2hunter2")
+    out = billing.checkout("b@example.com", "individual")
+    assert out["ready"] is False
+    assert "DODO_PRODUCT_ID_INDIVIDUAL" in out["needs"]
+    assert "19" in out["needs"], "it should name the price to create"
+
+
+def test_a_failing_processor_reports_the_real_error(monkeypatch, isolated_billing):
+    """A checkout that silently returns nothing is indistinguishable from a
+    customer who changed their mind."""
+    from app.core import billing
+    monkeypatch.setenv("DODO_PAYMENTS_API_KEY", "definitely-invalid")
+    monkeypatch.setenv("DODO_PRODUCT_ID_INDIVIDUAL", "pdt_fake")
+    monkeypatch.setenv("DODO_PAYMENTS_BASE_URL", "http://127.0.0.1:9")  # nothing listening
+    billing.signup("c@example.com", "hunter2hunter2")
+    out = billing.checkout("c@example.com", "individual")
+    assert out["ready"] is False
+    assert out["error"], "the real failure must be reported, not swallowed"
+    assert "DODO_PAYMENTS_API_KEY" in out["needs"]
+
+
+def test_the_payments_package_is_never_imported_at_module_load():
+    """reportlab took production down exactly this way. The import must sit
+    inside the function so a missing package degrades to a message."""
+    import inspect
+    from app.core import billing
+    src = inspect.getsource(billing)
+    head = src.split("def _dodo_checkout")[0]
+    assert "import dodopayments" not in head
+    assert "from dodopayments" not in head
+
+
+def test_dodo_is_declared_in_requirements():
+    """Any new dependency goes in requirements.txt in the SAME commit."""
+    import pathlib
+    req = pathlib.Path(__file__).resolve().parents[1] / "requirements.txt"
+    assert "dodopayments" in req.read_text(encoding="utf-8")
