@@ -7,16 +7,18 @@ sdk: docker
 app_port: 7860
 pinned: false
 license: other
-short_description: Autonomous Founder Empire OS with 102 AI agents
+short_description: SEO, local ranking and legal compliance audits for any business
 ---
 
 <div align="center">
 
-# TITAN Ω — the Autonomous AI Business Operating System
+# TITAN Ω
 
-**Not a dashboard. A living AI command universe that runs a founder's business 24/7 — built solo, with $0.**
+**SEO, local ranking and legal compliance — audited for any business, in any jurisdiction.**
+Multi-tenant platform with a voice-agent layer, built solo on a $0 stack.
 
-[🚀 Live demo](https://careermind2026-project-titan-omega.hf.space) · Built by [Abdullah Rathore](https://github.com/AbdullahRathoreVA)
+[**titanomega-ai.com**](https://titanomega-ai.com) · [Start free](https://titanomega-ai.com/join) · [Pricing](https://titanomega-ai.com/pricing)
+Built by [Abdullah Rathore](https://github.com/AbdullahRathoreVA)
 
 ![Titan Omega — Neural Command Universe](docs/media/demo.gif)
 
@@ -24,68 +26,154 @@ short_description: Autonomous Founder Empire OS with 102 AI agents
 
 ---
 
-## What you're looking at
+## What it sells
 
-Every glow in that universe is **real activity** — nothing is decorative. The core pulses with live agent
-work streamed over Server-Sent Events. The 12 galaxies are real departments with real AI agents. Comets
-fire when real events happen. Revenue starts at $0 and only ever shows the truth.
+Add a website. Titan crawls it and returns a technical, local and **legal** audit —
+scored separately, never averaged — then a client-ready PDF.
 
-| | |
-|---|---|
-| ![Neural Command Universe](docs/media/universe.png) | ![Galaxy hologram](docs/media/galaxy-hologram.png) |
-| The Neural Command Universe — 12 division galaxies orbit the Titan Core | Click a galaxy → the camera flies there and a hologram window opens with its live agents |
+The legal check is the differentiator: **Impressum / §5 DDG, GDPR consent, and
+cookie disclosure across 9 jurisdictions**. It is a defect a business owner
+cannot argue with, and it is included **in full on the free tier** — hiding the
+one finding that proves the product's value would sell nothing.
 
-## The whole operating system
+16 verticals. `wholesale` and `manufacturer` are correctly `local_business=False`,
+because a B2B buyer finds a supplier by searching the product, never by proximity.
 
-- 🌌 **Neural Command Universe** — cinematic 3D home: breathing camera, division galaxies, floating live-metric holograms, activity comets
-- 🎬 **Cinematic boot** — particles assemble `HELLO ABDULLAH` from light, an AI voice announces systems status, the camera flies through into the universe
-- 🏙 **AI City** — departments as neon districts; fly between them, inspect and **talk to any of 102 agents** (in character, with live task context)
-- ⚔️ **War Room** — three AI marketers pitch → a **CFO and Risk Officer challenge them** → the head decides with a confidence score. Every decision audited
-- 🏭 **Content Factory** — one idea → blog + LinkedIn + X thread + Instagram caption + email + Shorts script, in one click
-- 🌍 **Universal voice** — Ask Titan answers *and speaks* in 12 languages (English, اردو, हिन्दी, العربية, Español, Français, Deutsch, 中文, 日本語, Türkçe, Português, Русский) with a voice-reactive **holographic founder**
-- 📡 **Autonomous growth engine** — live web research every 4h: earning opportunities, competitor moves, SEO keywords
-- 💼 **Job Radar** — hunts real remote gigs, fit-scores them 0–100, drafts truthful proposals
-- 💰 **Finance + CRM** — real revenue/expense ledgers, honest run-rate forecast, leads pipeline, automation-ROI panel
-- 📱 **Telegram command center** — `/status`, `/revenue`, `/approveplan`… run the empire from a phone
-- 🤖 **Auto-PRs** — agents open real GitHub pull requests (review-gated, never auto-merged)
-- 🏆 **Founder XP** — levels and milestones computed **only from real events**
+## The rule the whole codebase is built on
 
-## Engineering highlights
+**No number is shown unless it was measured.**
 
-- **Self-healing AI layer** — Groq → Gemini → OpenRouter failover with **live model-catalog discovery** on all three, so provider model retirements can't silence the system. Every credential whitespace-hardened. One diagnostic URL (`/api/doctor`) exposes exactly what the running container sees
-- **Real-time everywhere** — FastAPI SSE stream drives counters, feeds, and every 3D intensity
-- **One container** — Next.js static export served by FastAPI; GitHub Actions → Hugging Face Spaces auto-deploy
-- **Graceful everywhere** — every 3D scene has an error boundary + mobile fallback; every engine degrades honestly when a key is missing
-- **32 backend tests**, verified deploys, zero paid services
+- Cost is `null`, never `$0.00` — a zero under a currency symbol claims a
+  measurement nobody took.
+- Latency is `null` when no session passed through `thinking`; `0 ms` would read
+  as instantaneous.
+- An unaudited client site shows *not audited*, never `0` beside a real `58`.
+- The funnel labels each step by **source** — steps rebuilt from durable account
+  state are true for every account ever created; steps that can only come from
+  the activity log say so, because a zero there means *not observed*, not
+  *never happened*.
+- Forecasting **refuses** to project on thin data.
+
+## Voice Agent OS
+
+![Voice Agents](docs/media/voice-agents.png)
+
+A validated state machine — `idle · listening · thinking · speaking ·
+interrupted · escalated · ended` — that **refuses illegal transitions** (409).
+A dashboard cannot honestly animate a state the agent was never in.
+
+- **Sensitive tools block on human approval.** Booking, paying, emailing,
+  calling and deleting land `pending`; executing one without an approver
+  returns **403**. Not a convention — a state the store enforces.
+- **Session replay** — transcript, tool-call timeline, state history.
+- **Speech reactivity is honest.** Browsers don't expose synthesized speech to
+  the audio graph, so while Titan speaks the avatar is driven by real
+  `onboundary` word events. The microphone path is a true FFT. The UI says
+  which is driving. Faking a waveform would be inventing a measurement.
+- The particle avatar uses **no 3D library** — plain canvas and arithmetic, so
+  it adds nothing to the bundle and runs on integrated graphics.
+
+## Founder-only intelligence
+
+Who signed up, which plan, what they actually did — plus visitor analytics
+measured **in-process**: no Google Analytics, no third-party script, no cookie,
+no consent banner, no bill.
+
+Privacy is the design constraint, not a footnote: Titan sells legal compliance,
+so **visitor IPs are never stored** — only a hash with a salt that rotates every
+24h. Referrers are reduced to a host before storage. Crawler hits are counted
+separately and never folded into human traffic.
+
+That costs something, and the report admits it: unique visitors is a **per-day**
+figure only, so there is no honest all-time total to divide signups by. It ships
+**no conversion percentage** rather than inventing the denominator.
+
+## Lead discovery → audit → draft
+
+Search the web, drop the junk, file real businesses as CRM leads, audit their
+sites, draft outreach citing what was actually found.
+
+The value is in what gets thrown away. Directories are not leads — filed as one,
+Titan would audit `alibaba.com` and draft outreach about Alibaba's SEO. A
+certifier's supplier-profile page is not the supplier. Deduplication is by
+registrable domain, because one company appears three times in a single search.
+
+**Nothing is ever sent.** A test asserts the module has no send capability at all.
+
+## Titan audits itself
+
+Every 6 hours, with the same engine it sells, and publishes the score at
+`/api/self-seo` — **currently 94/100, grade A**, up from 58/D. Anyone can claim
+their SEO tool is good; a score produced by the code the customer is buying can
+be checked by the reader in seconds. If Titan regresses, that number falls in
+public.
+
+## Security
+
+A test walks the **real route table** and fails on any endpoint serving real
+data to a public demo visitor. It was written after `/api/admin/clients` was
+found exposing real client names and contacts to anyone clicking "View the live
+demo" — the guard fails *open*, so anything unregistered leaks. That test has
+caught four endpoints since. It is never to be deleted.
+
+Founder analytics and voice transcripts are refused outright to guests rather
+than substituted: there is no demo-safe version of a subscriber's email address
+or a caller's own words.
+
+## Payments
+
+Behind one adapter seam. **Dodo Payments** is preferred — a Merchant of Record
+that handles US sales tax and EU VAT and pays out to **Payoneer and Wise**,
+which is what makes it usable from Pakistan, where **PayPal cannot receive
+money at all**. PayPal remains supported for other markets.
+
+With neither configured, signup and the free tier work normally and the refusal
+names exactly which variables are missing. Titan never sees a card number.
+
+## Engineering
+
+- **182 tests**, run before every push.
+- **Self-healing AI layer** — Groq → Gemini → OpenRouter with live model-catalog
+  discovery, so provider retirements can't silence it. Every credential
+  whitespace-hardened. `/api/doctor` reports what the running container actually
+  sees.
+- **Measured model routing** — ranks providers on evidence, never drops one,
+  reliability beats latency.
+- **Reflection loop that closes** — six slow tasks moved the next plan's
+  estimate from 3.5 s to 10.5 s.
+- **One container** — Next.js static export served by FastAPI; GitHub Actions →
+  Hugging Face Spaces auto-deploy behind a free Cloudflare Worker on the custom
+  domain.
+- **PWA** — installs on Android, iOS and Windows. $0 versus Apple's $99/yr.
+- Every engine degrades honestly when a key is missing; no paid service is a
+  hard dependency.
 
 ## Stack
 
-`Python` `FastAPI` `Next.js 14` `TypeScript` `Tailwind` `three.js / react-three-fiber` `@react-three/postprocessing`
-`framer-motion` `WebAudio (synthesized sound)` `Web Speech API` `SSE` `Telegram Bot API` `Tavily` `Make.com` `Docker` `HF Spaces`
+`Python` `FastAPI` `Next.js 14` `TypeScript` `Tailwind` `three.js / react-three-fiber`
+`framer-motion` `Web Speech API` `Web Audio` `SSE` `Tavily` `Dodo Payments` `Docker` `HF Spaces`
 
 ## Run it yourself
 
 ```bash
 # backend
-cd backend && pip install -r requirements.txt && uvicorn app.main:app --port 8000
-# frontend (dev, separate terminal)
+cd backend && pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+
+# frontend (dev)
 cd frontend && npm install && npm run dev
+
+# frontend (production build served by FastAPI)
+cd frontend && TITAN_STATIC=1 npm run build
 ```
 
-Deploy: push to `main` → GitHub Actions syncs to a Hugging Face Space (Docker). See `DEPLOY.md`,
-`MAKE_SETUP.md` (automations) and `TELEGRAM_SETUP.md` (phone control).
+`TITAN_STATIC=1` is required for the static export — a plain `npm run build`
+produces the dev variant and leaves a stale `out/` in place.
 
-## Honesty as a design principle
+Runs with no keys at all. Add `GROQ_API_KEY` for conversational AI,
+`TAVILY_API_KEY` for lead discovery, `DODO_PAYMENTS_API_KEY` for checkout.
 
-Titan never fakes numbers. Revenue is $0 until a real order is logged. Forecasts are labelled run-rates.
-XP moves only on real events. Missing integrations say "connect" instead of showing invented data.
-That constraint shaped every feature in this repo.
+## Status
 
----
-
-<div align="center">
-
-**Built with zero budget by a solo founder in Pakistan — with AI pair-programming.**
-*If this repo impresses you, the founder is available for AI product work.*
-
-</div>
+Live, tested, and **earning nothing yet**. The gap is distribution and a
+connected payment processor — not features.
