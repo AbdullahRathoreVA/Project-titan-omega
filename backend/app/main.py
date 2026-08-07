@@ -33,6 +33,7 @@ from .api.finance import router as finance_router
 from .api.growth import router as growth_router
 from .api.router import router
 from .api.tts import router as tts_router
+from .api.voice import router as voice_router
 from .connectors import careermind, github
 from .core import auth, demo_data, executive, traffic
 from .engines import client_watch, opportunity, publisher
@@ -390,6 +391,7 @@ app.include_router(growth_router)
 app.include_router(comms_router)
 app.include_router(finance_router)
 app.include_router(tts_router)
+app.include_router(voice_router)
 
 
 @app.get("/health", tags=["system"])

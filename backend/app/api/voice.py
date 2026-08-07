@@ -1,0 +1,227 @@
+"""Voice agent OS API — sessions, transcripts, tool timeline, approvals, replay.
+
+Every endpoint here writes or reads the store in `core/voice_sessions.py`, which
+is the only source the 3D Voice Agents screen is allowed to render. That is
+deliberate: the dashboard brief forbids decorative state, so there is exactly
+one path from "something happened" to "something is drawn".
+
+The whole prefix is registered in `demo_data._SENSITIVE_PREFIXES`. Transcripts
+are the most personal data Titan holds and there is no demo-safe version.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+
+from .. import persistence
+from ..core import voice_sessions as vs
+from ..store import STORE
+
+router = APIRouter(prefix="/api/voice", tags=["voice"])
+
+
+class StartIn(BaseModel):
+    channel: str = Field(default="web")
+    agent: str = Field(default="titan-voice")
+    language: str = Field(default="en")
+    caller: str = Field(default="")
+
+
+class StateIn(BaseModel):
+    state: str
+    reason: str = Field(default="")
+
+
+class TurnIn(BaseModel):
+    role: str
+    text: str
+    language: str = Field(default="")
+    confidence: Optional[float] = None
+
+
+class ToolIn(BaseModel):
+    name: str
+    args_summary: str = Field(default="")
+
+
+class ApproveIn(BaseModel):
+    approver: str
+
+
+class FinishIn(BaseModel):
+    ok: bool
+    error: str = Field(default="")
+
+
+class EscalateIn(BaseModel):
+    reason: str
+    to: str = Field(default="human")
+
+
+@router.get("/live")
+def live() -> dict:
+    """What is happening right now. The 3D screen polls this."""
+    return vs.live()
+
+
+@router.get("/sessions")
+def sessions(limit: int = Query(default=50, ge=1, le=400)) -> dict:
+    return {"sessions": vs.history(limit), "states": list(vs.STATES),
+            "channels": list(vs.CHANNELS)}
+
+
+@router.get("/sessions/{sid}")
+def session_detail(sid: str) -> dict:
+    """Full replay: every turn, every tool call, the whole state timeline."""
+    data = vs.transcript(sid)
+    if not data:
+        raise HTTPException(status_code=404, detail="No such session")
+    return data
+
+
+@router.post("/sessions")
+def start_session(req: StartIn) -> dict:
+    try:
+        out = vs.start(req.channel, req.agent, req.language, req.caller)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    persistence.save(STORE)
+    return out
+
+
+@router.post("/sessions/{sid}/state")
+def change_state(sid: str, req: StateIn) -> dict:
+    try:
+        return vs.set_state(sid, req.state, req.reason)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such session")
+    except vs.TransitionError as e:
+        # 409, not 400: the request is well-formed, the session is simply not
+        # in a state from which this move is legal.
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/sessions/{sid}/turn")
+def add_turn(sid: str, req: TurnIn) -> dict:
+    try:
+        return vs.add_turn(sid, req.role, req.text, req.language, req.confidence)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such session")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/sessions/{sid}/tool")
+def record_tool(sid: str, req: ToolIn) -> dict:
+    """Log a tool call. Sensitive names come back `pending` — see
+    voice_sessions.SENSITIVE_TOOLS for which and why."""
+    try:
+        return vs.record_tool(sid, req.name, req.args_summary)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such session")
+
+
+@router.post("/sessions/{sid}/tool/{call_id}/approve")
+def approve(sid: str, call_id: str, req: ApproveIn) -> dict:
+    try:
+        out = vs.approve_tool(sid, call_id, req.approver)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such session or call")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    persistence.save(STORE)
+    return out
+
+
+@router.post("/sessions/{sid}/tool/{call_id}/finish")
+def finish(sid: str, call_id: str, req: FinishIn) -> dict:
+    try:
+        return vs.finish_tool(sid, call_id, req.ok, req.error)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such session or call")
+    except ValueError as e:
+        # An unapproved sensitive call cannot be reported as executed.
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@router.post("/sessions/{sid}/escalate")
+def escalate(sid: str, req: EscalateIn) -> dict:
+    try:
+        out = vs.escalate(sid, req.reason, req.to)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such session")
+    except vs.TransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    persistence.save(STORE)
+    return out
+
+
+@router.post("/sessions/{sid}/end")
+def end_session(sid: str) -> dict:
+    try:
+        out = vs.set_state(sid, vs.ENDED, "closed")
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such session")
+    except vs.TransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    persistence.save(STORE)
+    return out
+
+
+@router.get("/capabilities")
+def capabilities() -> dict:
+    """What the voice layer can actually do on this deployment, right now.
+
+    Deliberately reports configuration rather than intent: a screen that lists
+    "phone" as a channel while no telephony credential exists is the kind of
+    claim that gets discovered in front of a customer.
+    """
+    import os
+    from ..core import tools as tool_layer
+
+    def has(*names: str) -> bool:
+        return all(os.getenv(n, "").strip() for n in names)
+
+    reg = {}
+    try:
+        reg = tool_layer.registry_report()
+    except Exception:
+        pass
+
+    return {
+        "browser_speech": {
+            "ready": True,
+            "cost": "free",
+            "note": ("Web Speech API in the visitor's own browser. Speech in "
+                     "and out at no cost, no key, no server. Chrome and Edge "
+                     "support the microphone; Firefox does not."),
+        },
+        "livekit": {
+            "ready": has("LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"),
+            "cost": "free tier, then per connection-minute",
+            "note": ("Apache-2.0, already registered as a tool adapter. It "
+                     "carries audio — it does NOT do speech-to-text or "
+                     "text-to-speech, so it is transport, not a voice stack."),
+        },
+        "premium_tts": {
+            "ready": has("ELEVENLABS_API_KEY"),
+            "cost": "free character cap, then paid",
+            "note": "ElevenLabs. Optional adapter; browser speech is the default.",
+        },
+        "telephony": {
+            "ready": False,
+            "cost": "paid, per minute",
+            "note": ("No telephony provider is configured. Real phone calls "
+                     "require an account in Abdullah's name with ID "
+                     "verification — there is no free path to placing a call."),
+        },
+        "tool_registry": reg.get("tools", []) if isinstance(reg, dict) else [],
+        "channels": list(vs.CHANNELS),
+        "note": ("Reported from configuration, not from a wish list. A channel "
+                 "marked not-ready cannot be used until its credential exists."),
+    }

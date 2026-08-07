@@ -2376,3 +2376,178 @@ def test_template_does_not_claim_a_legal_finding_that_is_not_there(monkeypatch):
          "title": "No Impressum (required by §5 DDG)", "detail": ""}])
     msg2 = outreach.draft({"name": "Bella Vista"}, legal)["message"]
     assert "legal one matters most" in msg2.lower(), msg2
+
+
+# ── voice agent sessions ───────────────────────────────────────────────────
+
+@pytest.fixture
+def isolated_voice(monkeypatch, tmp_path):
+    from app import persistence
+    from app.core import voice_sessions as vs
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "v.json"))
+    vs.reset()
+    yield
+    vs.reset()
+
+
+def test_illegal_state_transitions_are_refused(client, isolated_voice):
+    """A store that accepts any transition lets the dashboard animate a state
+    the agent was never in — the same class of lie as a fabricated metric."""
+    sid = client.post("/api/voice/sessions", json={"channel": "web"}).json()["id"]
+    assert client.post(f"/api/voice/sessions/{sid}/state",
+                       json={"state": "listening"}).status_code == 200
+    client.post(f"/api/voice/sessions/{sid}/end")
+    # ended is terminal
+    r = client.post(f"/api/voice/sessions/{sid}/state", json={"state": "speaking"})
+    assert r.status_code == 409
+    assert "not a legal transition" in r.json()["detail"]
+
+
+def test_unknown_channel_is_refused(client, isolated_voice):
+    """Listing a channel Titan cannot serve is how a claim gets discovered in
+    front of a customer."""
+    r = client.post("/api/voice/sessions", json={"channel": "telepathy"})
+    assert r.status_code == 400
+
+
+def test_sensitive_tool_cannot_complete_without_human_approval(client, isolated_voice):
+    """Abdullah's standing rule, enforced as a state rather than a convention."""
+    sid = client.post("/api/voice/sessions", json={"channel": "phone"}).json()["id"]
+    call = client.post(f"/api/voice/sessions/{sid}/tool",
+                       json={"name": "book_appointment",
+                             "args_summary": "Tue 3pm"}).json()
+    assert call["requires_approval"] is True
+    assert call["status"] == "pending"
+
+    # Executing it without approval must be refused, not merely discouraged.
+    r = client.post(f"/api/voice/sessions/{sid}/tool/{call['id']}/finish",
+                    json={"ok": True})
+    assert r.status_code == 403
+    assert "needs approval" in r.json()["detail"]
+
+    client.post(f"/api/voice/sessions/{sid}/tool/{call['id']}/approve",
+                json={"approver": "abdullah"})
+    ok = client.post(f"/api/voice/sessions/{sid}/tool/{call['id']}/finish",
+                     json={"ok": True})
+    assert ok.status_code == 200
+    assert ok.json()["approved_by"] == "abdullah"
+
+
+def test_harmless_tool_needs_no_approval(client, isolated_voice):
+    sid = client.post("/api/voice/sessions", json={}).json()["id"]
+    call = client.post(f"/api/voice/sessions/{sid}/tool",
+                       json={"name": "lookup_opening_hours"}).json()
+    assert call["requires_approval"] is False
+    assert client.post(f"/api/voice/sessions/{sid}/tool/{call['id']}/finish",
+                       json={"ok": True}).status_code == 200
+
+
+def test_latency_is_null_when_it_was_never_measured(client, isolated_voice):
+    """0 ms would read as instantaneous. A session that never thought has no
+    latency to report at all."""
+    sid = client.post("/api/voice/sessions", json={}).json()["id"]
+    client.post(f"/api/voice/sessions/{sid}/state", json={"state": "listening"})
+    body = client.get(f"/api/voice/sessions/{sid}").json()
+    assert body["avg_thinking_ms"] is None
+
+    client.post(f"/api/voice/sessions/{sid}/state", json={"state": "thinking"})
+    client.post(f"/api/voice/sessions/{sid}/state", json={"state": "speaking"})
+    after = client.get(f"/api/voice/sessions/{sid}").json()
+    assert isinstance(after["avg_thinking_ms"], float)
+    assert after["avg_thinking_ms"] >= 0
+
+
+def test_cost_is_null_not_zero(client, isolated_voice):
+    """No provider is billing, so there is no cost. 0.00 would claim a
+    measurement nobody took."""
+    body = client.get("/api/voice/live").json()
+    assert body["cost_usd"] is None
+    assert "0.00" in body["cost_note"]
+
+
+def test_live_summary_is_plain_language_and_counts_real_sessions(
+        client, isolated_voice):
+    assert "No voice sessions yet" in client.get("/api/voice/live").json()["summary"]
+
+    sid = client.post("/api/voice/sessions", json={"channel": "whatsapp"}).json()["id"]
+    client.post(f"/api/voice/sessions/{sid}/state", json={"state": "speaking"})
+    client.post(f"/api/voice/sessions/{sid}/tool",
+                json={"name": "send_whatsapp", "args_summary": "confirm booking"})
+
+    live = client.get("/api/voice/live").json()
+    assert live["active_count"] == 1
+    assert live["by_channel"] == {"whatsapp": 1}
+    assert live["pending_approvals"] == 1
+    assert "speaking" in live["summary"]
+    assert "approval" in live["summary"]
+
+
+def test_replay_keeps_transcript_tools_and_state_timeline(client, isolated_voice):
+    sid = client.post("/api/voice/sessions", json={"language": "en"}).json()["id"]
+    client.post(f"/api/voice/sessions/{sid}/turn",
+                json={"role": "user", "text": "Do you ship to Germany?",
+                      "language": "de", "confidence": 0.91})
+    client.post(f"/api/voice/sessions/{sid}/turn",
+                json={"role": "agent", "text": "Yes, three to five days."})
+    client.post(f"/api/voice/sessions/{sid}/state", json={"state": "thinking"})
+
+    body = client.get(f"/api/voice/sessions/{sid}").json()
+    assert len(body["turns_detail"]) == 2
+    assert body["turns_detail"][0]["confidence"] == 0.91
+    # The recogniser is the authority on what was actually spoken.
+    assert body["language"] == "de"
+    assert [h["state"] for h in body["state_history"]] == ["idle", "thinking"]
+
+
+def test_escalation_records_the_reason_and_locks_the_session(client, isolated_voice):
+    sid = client.post("/api/voice/sessions", json={"channel": "phone"}).json()["id"]
+    r = client.post(f"/api/voice/sessions/{sid}/escalate",
+                    json={"reason": "Caller asked for a refund", "to": "abdullah"})
+    assert r.status_code == 200
+    assert r.json()["escalated"] is True
+    assert r.json()["escalation"]["reason"] == "Caller asked for a refund"
+    # A human has the call; the agent may only end afterwards.
+    assert client.post(f"/api/voice/sessions/{sid}/state",
+                       json={"state": "speaking"}).status_code == 409
+    assert client.post(f"/api/voice/sessions/{sid}/end").status_code == 200
+
+
+def test_voice_sessions_are_never_served_to_the_public_demo(
+        client, isolated_voice, monkeypatch):
+    """Transcripts are the most personal data Titan holds."""
+    # Seed the session BEFORE the guard goes up, otherwise the setup call is
+    # itself refused and the test passes for the wrong reason.
+    sid = client.post("/api/voice/sessions", json={}).json()["id"]
+    client.post(f"/api/voice/sessions/{sid}/turn",
+                json={"role": "user", "text": "my card number is secret"})
+
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    tok = client.post("/api/demo/enter").json()["token"]
+    h = {"Authorization": f"Bearer {tok}"}
+    assert client.get("/api/voice/live", headers=h).status_code == 403
+    r = client.get(f"/api/voice/sessions/{sid}", headers=h)
+    assert r.status_code == 403
+    assert "card number" not in r.text
+
+
+def test_capabilities_reports_configuration_not_intent(client, no_ambient_config):
+    """A screen listing 'phone' while no telephony credential exists is a
+    claim that gets discovered in front of a customer."""
+    body = client.get("/api/voice/capabilities").json()
+    assert body["browser_speech"]["ready"] is True
+    assert body["telephony"]["ready"] is False
+    assert "no free path" in body["telephony"]["note"].lower()
+    assert body["livekit"]["ready"] is False
+
+
+def test_voice_sessions_survive_a_restart(isolated_voice):
+    from app.core import voice_sessions as vs
+    s = vs.start("phone", caller="+49 555 0100")
+    vs.add_turn(s["id"], "user", "Hello")
+    saved = vs.export_state()
+    vs.reset()
+    assert vs.live()["total_sessions"] == 0
+    vs.import_state(saved)
+    assert vs.live()["total_sessions"] == 1
+    assert vs.transcript(s["id"])["turns_detail"][0]["text"] == "Hello"

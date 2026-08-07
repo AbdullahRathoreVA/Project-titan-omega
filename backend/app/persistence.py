@@ -17,7 +17,7 @@ import os
 import tempfile
 
 from .core import (analytics, billing, clients, evidence, learning, reflection,
-                   routing, traffic)
+                   routing, traffic, voice_sessions)
 from .store import STORE, Store
 
 
@@ -59,6 +59,10 @@ def save(store: Store = STORE) -> None:
             # Visitor counts are the top of the funnel. A restart that zeroes
             # them makes a launch day look like it never happened.
             "traffic": traffic.export_state(),
+            # Transcripts and tool timelines are the replay record. Losing them
+            # on restart would make session replay a feature that only works
+            # until the container recycles.
+            "voice": voice_sessions.export_state(),
             # Provenance is the whole value of the ledger. Losing it on restart
             # would leave values with no record of where they came from, which
             # is the state this replaced.
@@ -117,6 +121,9 @@ def load(store: Store = STORE) -> None:
         visits = data.get("traffic")
         if isinstance(visits, dict):
             traffic.import_state(visits)
+        voice = data.get("voice")
+        if isinstance(voice, dict):
+            voice_sessions.import_state(voice)
         ev = data.get("evidence")
         if isinstance(ev, dict):
             evidence.import_state(ev)

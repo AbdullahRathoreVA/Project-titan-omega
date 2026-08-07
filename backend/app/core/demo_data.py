@@ -63,6 +63,11 @@ _SENSITIVE_PREFIXES = (
     # the demo has no business version of it — blocked outright, never
     # substituted.
     "/api/founder",
+    # Voice sessions carry live transcripts — what a caller actually said, in
+    # their own words, plus whatever number or handle they were reached on.
+    # That is the most sensitive data Titan holds. No demo substitute exists
+    # and none should: blocked outright.
+    "/api/voice",
 )
 
 _LEAD_STATUSES = ["new", "contacted", "replied", "won", "lost"]
