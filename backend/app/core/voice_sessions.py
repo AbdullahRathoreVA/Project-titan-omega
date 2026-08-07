@@ -62,9 +62,13 @@ STATES = (IDLE, LISTENING, THINKING, SPEAKING, INTERRUPTED, ESCALATED, ENDED)
 TRANSITIONS: dict[str, tuple[str, ...]] = {
     IDLE:        (LISTENING, THINKING, SPEAKING, ESCALATED, ENDED),
     LISTENING:   (THINKING, SPEAKING, INTERRUPTED, ESCALATED, ENDED, IDLE),
-    THINKING:    (SPEAKING, LISTENING, INTERRUPTED, ESCALATED, ENDED),
+    # thinking → idle is real: a text-only answer concludes the thought
+    # without ever speaking. Found by wiring the actual chat client, which
+    # 409'd whenever voice output was switched off.
+    THINKING:    (SPEAKING, LISTENING, INTERRUPTED, ESCALATED, ENDED, IDLE),
     SPEAKING:    (LISTENING, THINKING, INTERRUPTED, ESCALATED, ENDED, IDLE),
-    INTERRUPTED: (LISTENING, THINKING, SPEAKING, ESCALATED, ENDED),
+    # An interrupted turn that simply stops settles back to idle.
+    INTERRUPTED: (LISTENING, THINKING, SPEAKING, ESCALATED, ENDED, IDLE),
     ESCALATED:   (ENDED,),
     ENDED:       (),
 }

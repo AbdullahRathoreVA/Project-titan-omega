@@ -7,6 +7,7 @@ import { langTag, speakText } from "@/lib/voice";
 import { speakPremium } from "@/lib/sound";
 import { isGuest } from "@/lib/guest";
 import VoiceSphere from "./VoiceSphere";
+import { VoiceSession } from "@/lib/voiceSession";
 
 // Universal voice: Titan answers and SPEAKS in any of these languages.
 const LANGS: [string, string][] = [
@@ -48,6 +49,23 @@ export function AskTitan() {
   const [voiceMissing, setVoiceMissing] = useState<string | null>(null);
   const recRef = useRef<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
   const endRef = useRef<HTMLDivElement | null>(null);
+  // One session per mounted panel, so the Voice Agents screen shows a
+  // conversation rather than a fresh node per sentence. Every call inside is
+  // best-effort: a guest is refused the whole /api/voice prefix and must still
+  // be able to talk to Titan.
+  const voiceRef = useRef<VoiceSession | null>(null);
+  if (voiceRef.current === null && typeof window !== "undefined") {
+    voiceRef.current = new VoiceSession("web", "titan-assistant");
+  }
+
+  // Close the session when the panel unmounts, otherwise it sits on the live
+  // screen forever claiming to be in progress.
+  useEffect(() => {
+    const s = voiceRef.current;
+    return () => {
+      void s?.end();
+    };
+  }, []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -60,6 +78,12 @@ export function AskTitan() {
       setTurns((t) => [...t, { role: "you", text: q }]);
       setInput("");
       setBusy(true);
+      // Record the real conversation. `thinking` starts here so the latency
+      // the Voice Agents screen reports is the actual wait for /api/assistant,
+      // not a number invented to fill the dial.
+      const vs = voiceRef.current;
+      void vs?.turn("user", q, lang);
+      void vs?.state("thinking");
       try {
         const res = await fetch("/api/assistant", {
           method: "POST",
@@ -75,15 +99,26 @@ export function AskTitan() {
         // 'spoken' is Hindi/Devanagari for Urdu so the Hindi voice can read it.
         const spoken = data?.spoken ?? answer;
         setTurns((t) => [...t, { role: "titan", text: answer }]);
+        void vs?.turn("agent", answer, lang);
+        // Only claim `speaking` when Titan is actually going to speak. With
+        // voice output off it goes straight back to idle — the screen must not
+        // animate a mouth that is closed.
+        void vs?.state(voiceOut ? "speaking" : "idle");
         if (voiceOut) {
+          // Back to idle when the speech genuinely finishes — speakText's
+          // onEnd fires on the last chunk, so the screen stops showing
+          // "speaking" at the moment the voice actually stops.
+          const done = () => void vs?.state("idle");
           if (lang === "en") {
             // Founder gets the premium ElevenLabs voice for English (if a key is
             // set); everyone else, and every other language, uses the browser voice.
             void speakPremium(answer, () => {
-              void speakText(answer, "en").then((found) => setVoiceMissing(found ? null : "en"));
-            });
+              void speakText(answer, "en", done).then((found) =>
+                setVoiceMissing(found ? null : "en"),
+              );
+            }).then(done);
           } else {
-            void speakText(spoken, lang === "ur" ? "hi" : lang).then((found) =>
+            void speakText(spoken, lang === "ur" ? "hi" : lang, done).then((found) =>
               setVoiceMissing(found ? null : lang),
             );
           }
@@ -93,6 +128,9 @@ export function AskTitan() {
           ...t,
           { role: "titan", text: lang === "ur" ? "رابطہ میں مسئلہ۔" : "Connection issue." },
         ]);
+        // A failed exchange is still a real session event. Leaving it stuck on
+        // "thinking" would show a hung agent on the live screen forever.
+        void vs?.state("idle", "core unreachable");
       } finally {
         setBusy(false);
       }
@@ -104,6 +142,7 @@ export function AskTitan() {
     if (listening) {
       recRef.current?.stop();
       setListening(false);
+      void voiceRef.current?.state("idle");
       return;
     }
     const rec = getRecognition();
@@ -124,9 +163,14 @@ export function AskTitan() {
       void ask(said);
     };
     rec.onend = () => setListening(false);
-    rec.onerror = () => setListening(false);
+    rec.onerror = () => {
+      setListening(false);
+      void voiceRef.current?.state("idle", "recognition error");
+    };
     recRef.current = rec;
     setListening(true);
+    // The mic is genuinely open now, so the state is true rather than assumed.
+    void voiceRef.current?.state("listening");
     rec.start();
   }, [listening, lang, ask]);
 

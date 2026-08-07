@@ -2551,3 +2551,27 @@ def test_voice_sessions_survive_a_restart(isolated_voice):
     vs.import_state(saved)
     assert vs.live()["total_sessions"] == 1
     assert vs.transcript(s["id"])["turns_detail"][0]["text"] == "Hello"
+
+
+def test_a_silent_answer_can_return_to_idle(client, isolated_voice):
+    """Found by wiring the real chat client: with voice output switched off,
+    Titan thinks and then answers in text without ever speaking. That path
+    409'd because thinking -> idle was missing from the machine. A state model
+    that rejects a move the product genuinely makes forces the client to lie
+    about what happened."""
+    sid = client.post("/api/voice/sessions", json={}).json()["id"]
+    client.post(f"/api/voice/sessions/{sid}/state", json={"state": "thinking"})
+    r = client.post(f"/api/voice/sessions/{sid}/state", json={"state": "idle"})
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "idle"
+
+    # An interrupted turn that simply stops also settles.
+    client.post(f"/api/voice/sessions/{sid}/state", json={"state": "listening"})
+    client.post(f"/api/voice/sessions/{sid}/state", json={"state": "interrupted"})
+    assert client.post(f"/api/voice/sessions/{sid}/state",
+                       json={"state": "idle"}).status_code == 200
+
+    # The terminal rule is untouched: ended is still a dead end.
+    client.post(f"/api/voice/sessions/{sid}/end")
+    assert client.post(f"/api/voice/sessions/{sid}/state",
+                       json={"state": "idle"}).status_code == 409
