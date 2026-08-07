@@ -15,7 +15,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Activity, AlertTriangle, BarChart3, Brain, Gauge, RefreshCw, TrendingUp, Users,
+  Activity, AlertTriangle, BarChart3, Brain, Eye, Gauge, RefreshCw, TrendingUp,
+  Users,
 } from "lucide-react";
 
 type ForecastOff = { available: false; reason: string; needed?: number };
@@ -120,6 +121,52 @@ type Analytics = {
   note: string;
 };
 
+type Traffic = {
+  views: number;
+  bot_views: number;
+  visitors_today: number;
+  busiest_day_visitors: number;
+  days_measured: number;
+  series: { day: string; views: number; visitors: number; bot_views: number }[];
+  top_paths: Record<string, number>;
+  top_referrers: Record<string, number>;
+  signups_total: number;
+  conversion_note: string;
+  note: string;
+};
+
+type SeoOverview = {
+  titan: {
+    checked: boolean;
+    url: string;
+    score: number | null;
+    grade: string | null;
+    open_findings: { id: string; severity: string; title: string }[];
+    note: string;
+  };
+  clients: {
+    id: string;
+    business_name: string;
+    website: string;
+    country: string;
+    score: number | null;
+    grade: string | null;
+    findings: number;
+    audited: boolean;
+  }[];
+  client_average: number | null;
+  unaudited: number;
+  note: string;
+};
+
+/** Score colour. Null is grey — "not audited" must never look like "bad". */
+function scoreTone(score: number | null): string {
+  if (score === null || score === undefined) return "text-slate-600";
+  if (score >= 80) return "text-hud-emerald";
+  if (score >= 60) return "text-hud-amber";
+  return "text-hud-rose";
+}
+
 const PERIODS = ["daily", "weekly", "monthly", "quarterly"] as const;
 
 function token(): string {
@@ -174,21 +221,27 @@ export default function ExecutiveCommand() {
   const [refl, setRefl] = useState<ReflectionReport | null>(null);
   const [route, setRoute] = useState<RoutingReport | null>(null);
   const [users, setUsers] = useState<Analytics | null>(null);
+  const [traffic, setTraffic] = useState<Traffic | null>(null);
+  const [seo, setSeo] = useState<SeoOverview | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      const [b, r, m, u] = await Promise.all([
+      const [b, r, m, u, t, s] = await Promise.all([
         api<BiReport>(`/bi/${period}`),
         api<ReflectionReport>("/reflection"),
         api<RoutingReport>("/routing"),
         api<Analytics>("/founder/analytics"),
+        api<Traffic>("/founder/traffic"),
+        api<SeoOverview>("/founder/seo-overview"),
       ]);
       setBi(b);
       setRefl(r);
       setRoute(m);
       setUsers(u);
+      setTraffic(t);
+      setSeo(s);
     } finally {
       setBusy(false);
     }
@@ -235,6 +288,190 @@ export default function ExecutiveCommand() {
             <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} /> Refresh
           </button>
         </div>
+      </div>
+
+      {/* who opened the site ---------------------------------------------- */}
+      <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
+          <Eye className="h-3.5 w-3.5 text-hud-cyan" /> Visitors
+          <span className="ml-auto font-normal normal-case tracking-normal text-slate-600">
+            no cookie · no vendor · no IP stored
+          </span>
+        </div>
+        {!traffic ? (
+          <div className="mt-3 text-[11px] text-slate-500">Not loaded.</div>
+        ) : (
+          <>
+            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-5">
+              {[
+                ["Page views", String(traffic.views), "text-white"],
+                ["Visitors today", String(traffic.visitors_today), "text-hud-cyan"],
+                ["Best day", String(traffic.busiest_day_visitors), "text-hud-emerald"],
+                ["Crawler hits", String(traffic.bot_views), "text-slate-500"],
+                ["Signups", String(traffic.signups_total),
+                  traffic.signups_total > 0 ? "text-hud-emerald" : "text-slate-500"],
+              ].map(([label, value, tone]) => (
+                <div key={label as string}>
+                  <div className={`font-mono text-xl font-semibold leading-none ${tone}`}>
+                    {value}
+                  </div>
+                  <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
+                    {label}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {traffic.series.length > 1 && (
+              <div className="mt-3">
+                <Spark
+                  series={Object.fromEntries(
+                    traffic.series.map((d) => [d.day, d.visitors]),
+                  )}
+                />
+                <div className="text-[10px] text-slate-600">
+                  daily visitors · {traffic.days_measured} day
+                  {traffic.days_measured === 1 ? "" : "s"} measured
+                </div>
+              </div>
+            )}
+
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-slate-600">
+                  Top pages
+                </div>
+                {Object.keys(traffic.top_paths).length === 0 ? (
+                  <div className="mt-1 text-[11px] text-slate-600">No page loads yet.</div>
+                ) : (
+                  Object.entries(traffic.top_paths).slice(0, 6).map(([p, n]) => (
+                    <div key={p} className="mt-1 flex justify-between text-[11px]">
+                      <span className="truncate text-slate-300">{p}</span>
+                      <span className="font-mono text-slate-500">{n}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-slate-600">
+                  Where they came from
+                </div>
+                {Object.keys(traffic.top_referrers).length === 0 ? (
+                  <div className="mt-1 text-[11px] text-slate-600">
+                    No external referrers yet — every visit was direct.
+                  </div>
+                ) : (
+                  Object.entries(traffic.top_referrers).slice(0, 6).map(([r, n]) => (
+                    <div key={r} className="mt-1 flex justify-between text-[11px]">
+                      <span className="truncate text-slate-300">{r}</span>
+                      <span className="font-mono text-slate-500">{n}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="mt-3 text-[10px] leading-relaxed text-slate-600">
+              {traffic.conversion_note}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Titan's own SEO beside every client's ----------------------------- */}
+      <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
+          <TrendingUp className="h-3.5 w-3.5 text-hud-emerald" /> SEO — Titan and clients
+        </div>
+        {!seo ? (
+          <div className="mt-3 text-[11px] text-slate-500">Not loaded.</div>
+        ) : (
+          <>
+            <div className="mt-3 flex flex-wrap items-end gap-6">
+              <div>
+                <div className={`font-mono text-3xl font-semibold leading-none ${scoreTone(seo.titan.score)}`}>
+                  {seo.titan.score ?? "—"}
+                  {seo.titan.grade && (
+                    <span className="ml-2 text-base text-slate-500">{seo.titan.grade}</span>
+                  )}
+                </div>
+                <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
+                  Titan itself
+                </div>
+              </div>
+              <div>
+                <div className={`font-mono text-xl font-semibold leading-none ${scoreTone(seo.client_average)}`}>
+                  {seo.client_average ?? "—"}
+                </div>
+                <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
+                  Client average
+                </div>
+              </div>
+              {seo.unaudited > 0 && (
+                <div>
+                  <div className="font-mono text-xl font-semibold leading-none text-hud-amber">
+                    {seo.unaudited}
+                  </div>
+                  <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
+                    Never audited
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {!seo.titan.checked && (
+              <div className="mt-2 text-[11px] text-slate-500">
+                Titan has not audited itself yet — the first check runs on the
+                heartbeat shortly after boot.
+              </div>
+            )}
+
+            {seo.clients.length > 0 && (
+              <div className="mt-4 space-y-1.5">
+                {seo.clients.map((c) => (
+                  <div key={c.id} className="flex items-center gap-3 text-[11px]">
+                    <span className="w-44 shrink-0 truncate text-slate-300">
+                      {c.business_name}
+                    </span>
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/5">
+                      {c.score !== null && (
+                        <div
+                          className={`h-full rounded-full ${
+                            c.score >= 80
+                              ? "bg-hud-emerald/70"
+                              : c.score >= 60
+                                ? "bg-hud-amber/70"
+                                : "bg-hud-rose/70"
+                          }`}
+                          style={{ width: `${c.score}%` }}
+                        />
+                      )}
+                    </div>
+                    <span className={`w-24 shrink-0 text-right font-mono ${scoreTone(c.score)}`}>
+                      {c.score === null ? "not audited" : `${c.score} ${c.grade ?? ""}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* A client outscoring the platform selling them SEO is something
+                he needs to find out here, not from the client. */}
+            {seo.titan.score !== null &&
+              seo.clients.some((c) => c.score !== null && c.score > (seo.titan.score ?? 0)) && (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-3 py-2 text-[10px] leading-relaxed text-hud-amber">
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span>
+                    A client site scores higher than Titan&apos;s own. Prospects can
+                    check that score — fix Titan&apos;s findings before selling
+                    against it.
+                  </span>
+                </div>
+              )}
+
+            <div className="mt-3 text-[10px] leading-relaxed text-slate-600">{seo.note}</div>
+          </>
+        )}
       </div>
 
       {/* who signed up, and what they actually did ------------------------ */}

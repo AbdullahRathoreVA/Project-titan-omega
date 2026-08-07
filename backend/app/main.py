@@ -34,7 +34,7 @@ from .api.growth import router as growth_router
 from .api.router import router
 from .api.tts import router as tts_router
 from .connectors import careermind, github
-from .core import auth, demo_data, executive
+from .core import auth, demo_data, executive, traffic
 from .engines import client_watch, opportunity, publisher
 from .engines.evolution import ensure_weights
 from .store import STORE, seed
@@ -292,6 +292,41 @@ async def no_cache_html(request: Request, call_next):
     resp = await call_next(request)
     if "text/html" in resp.headers.get("content-type", ""):
         resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
+
+_ASSET_SUFFIXES = (".js", ".css", ".png", ".jpg", ".jpeg", ".svg", ".ico",
+                   ".webp", ".woff", ".woff2", ".map", ".json", ".txt", ".xml",
+                   ".webmanifest")
+
+
+@app.middleware("http")
+async def count_visitors(request: Request, call_next):
+    """Count HTML page loads so the founder can see who opened the site.
+
+    Only page loads: counting assets and API calls would turn a single visit
+    into thirty and make the number worthless. See core/traffic.py for why no
+    IP is stored.
+    """
+    resp = await call_next(request)
+    try:
+        path = request.url.path
+        if (request.method == "GET" and resp.status_code < 400
+                and not path.startswith(("/api/", "/_next/"))
+                and not path.endswith(_ASSET_SUFFIXES)):
+            client_host = request.client.host if request.client else ""
+            traffic.record(
+                path=path,
+                # Behind the Cloudflare Worker the socket peer is Cloudflare,
+                # not the visitor — the real address is in CF-Connecting-IP.
+                ip=(request.headers.get("cf-connecting-ip")
+                    or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                    or client_host),
+                user_agent=request.headers.get("user-agent", ""),
+                referrer=request.headers.get("referer", ""),
+            )
+    except Exception:
+        pass
     return resp
 
 

@@ -17,7 +17,7 @@ import os
 import tempfile
 
 from .core import (analytics, billing, clients, evidence, learning, reflection,
-                   routing)
+                   routing, traffic)
 from .store import STORE, Store
 
 
@@ -56,6 +56,9 @@ def save(store: Store = STORE) -> None:
             # reset the founder's only view of the funnel to empty, which is
             # indistinguishable from nobody having used the product.
             "analytics": analytics.export_state(),
+            # Visitor counts are the top of the funnel. A restart that zeroes
+            # them makes a launch day look like it never happened.
+            "traffic": traffic.export_state(),
             # Provenance is the whole value of the ledger. Losing it on restart
             # would leave values with no record of where they came from, which
             # is the state this replaced.
@@ -111,6 +114,9 @@ def load(store: Store = STORE) -> None:
         stats = data.get("analytics")
         if isinstance(stats, dict):
             analytics.import_state(stats)
+        visits = data.get("traffic")
+        if isinstance(visits, dict):
+            traffic.import_state(visits)
         ev = data.get("evidence")
         if isinstance(ev, dict):
             evidence.import_state(ev)

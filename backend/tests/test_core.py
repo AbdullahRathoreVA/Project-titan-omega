@@ -2126,3 +2126,118 @@ def test_analytics_log_is_bounded(isolated_billing):
     for i in range(analytics.MAX_EVENTS + 50):
         analytics.record("d@example.com", analytics.SIGNED_IN, n=i)
     assert analytics.report()["activity"]["log_size"] == analytics.MAX_EVENTS
+
+
+# ── visitor analytics ──────────────────────────────────────────────────────
+
+@pytest.fixture
+def isolated_traffic(monkeypatch, tmp_path):
+    from app import persistence
+    from app.core import traffic
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "t.json"))
+    traffic.reset()
+    yield
+    traffic.reset()
+
+
+def test_visitor_ip_is_never_stored(isolated_traffic):
+    """Titan sells legal compliance. Storing visitor IPs while charging clients
+    to fix their GDPR problems would be indefensible, so the raw address must
+    not survive anywhere in exported state."""
+    from app.core import traffic
+    traffic.record("/", ip="203.0.113.77", user_agent="Mozilla/5.0",
+                   referrer="https://news.ycombinator.com/item?id=1&user=bob")
+    blob = json.dumps(traffic.export_state())
+    assert "203.0.113.77" not in blob
+    # The referring URL's query string can carry personal data too.
+    assert "user=bob" not in blob
+    assert "news.ycombinator.com" in blob, "the referring host is still useful"
+
+
+def test_crawlers_are_never_counted_as_people(isolated_traffic):
+    """A bot hit is real traffic but it is not someone who might sign up.
+    Folding the two together makes the funnel lie."""
+    from app.core import traffic
+    traffic.record("/", ip="1.1.1.1", user_agent="Mozilla/5.0 (Windows NT 10.0)")
+    traffic.record("/", ip="2.2.2.2", user_agent="Googlebot/2.1")
+    traffic.record("/", ip="3.3.3.3", user_agent="python-requests/2.31")
+    rep = traffic.report()
+    assert rep["views"] == 1
+    assert rep["bot_views"] == 2
+    assert rep["visitors_today"] == 1
+
+
+def test_same_visitor_is_counted_once_per_day(isolated_traffic):
+    from app.core import traffic
+    for _ in range(5):
+        traffic.record("/", ip="9.9.9.9", user_agent="Mozilla/5.0")
+    rep = traffic.report()
+    assert rep["views"] == 5, "every page load counts"
+    assert rep["visitors_today"] == 1, "but it is one person"
+
+
+def test_no_conversion_percentage_is_invented(isolated_traffic):
+    """The visitor id salt rotates daily, so there is no honest all-time
+    visitor total. Dividing signups by a number that does not exist would be
+    inventing the denominator."""
+    from app.core import traffic
+    rep = traffic.report()
+    assert "conversion_rate" not in rep
+    assert "rotates" in rep["conversion_note"]
+
+
+def test_traffic_survives_a_restart(isolated_traffic):
+    from app.core import traffic
+    traffic.record("/pricing", ip="8.8.8.8", user_agent="Mozilla/5.0")
+    saved = traffic.export_state()
+    traffic.reset()
+    assert traffic.report()["views"] == 0
+    traffic.import_state(saved)
+    assert traffic.report()["views"] == 1
+    assert traffic.report()["top_paths"]["/pricing"] == 1
+
+
+def test_assets_and_api_calls_do_not_count_as_visits(client, isolated_traffic):
+    """One visit must not read as thirty. Exercised through the real
+    middleware, not by calling record() directly."""
+    from app.core import traffic
+    client.get("/api/status")
+    client.get("/manifest.webmanifest")
+    rep = traffic.report()
+    assert rep["views"] == 0, f"non-page requests were counted: {rep['top_paths']}"
+
+
+def test_founder_traffic_and_seo_overview_are_hidden_from_guests(
+        client, monkeypatch):
+    """Both live under /api/founder, which is registered sensitive."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    tok = client.post("/api/demo/enter").json()["token"]
+    h = {"Authorization": f"Bearer {tok}"}
+    assert client.get("/api/founder/traffic", headers=h).status_code == 403
+    assert client.get("/api/founder/seo-overview", headers=h).status_code == 403
+
+
+def test_seo_overview_shows_titan_beside_its_clients(client, isolated_clients):
+    """A client outscoring the platform selling them SEO is something Abdullah
+    needs to see here, not hear from the client."""
+    from app.core import clients as creg
+    rec = creg.create_client(business_name="Triad Thread Studio",
+                             username="seo-ov-1", password="x" * 20,
+                             website="https://triadthread.example",
+                             industry="wholesale", country="Pakistan")
+    creg.update_raw(rec["id"], last_audit={"score": 91, "grade": "A",
+                                           "findings": [{"id": "x"}]})
+    creg.create_client(business_name="Never Audited Ltd",
+                       username="seo-ov-2", password="x" * 20,
+                       website="https://never.example")
+
+    body = client.get("/api/founder/seo-overview").json()
+    assert "titan" in body
+    rows = {r["business_name"]: r for r in body["clients"]}
+    assert rows["Triad Thread Studio"]["score"] == 91
+    # Never audited must be None, not 0 — a 0 reads as "audited, and terrible".
+    assert rows["Never Audited Ltd"]["score"] is None
+    assert rows["Never Audited Ltd"]["audited"] is False
+    assert body["unaudited"] >= 1
+    assert body["client_average"] == 91

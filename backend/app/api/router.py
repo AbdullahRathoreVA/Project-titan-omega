@@ -1119,6 +1119,66 @@ def founder_analytics(days: int = Query(default=30, ge=1, le=365),
     return analytics.report(days=days, recent=recent)
 
 
+@router.get("/founder/traffic", tags=["executive"])
+def founder_traffic(days: int = Query(default=30, ge=1, le=90)) -> dict:
+    """How many people opened the site, measured in-process — no analytics
+    vendor, no cookie, no consent banner, and no IP address stored."""
+    from ..core import traffic
+    return traffic.report(days=days)
+
+
+@router.get("/founder/seo-overview", tags=["executive"])
+def founder_seo_overview() -> dict:
+    """Titan's own SEO score beside every client site it manages.
+
+    Abdullah asked to see these together, and they belong together: Titan
+    audits itself with the same engine it sells, so its own score is the one
+    number a prospect can check. A client scoring above the platform selling
+    them SEO is a thing he needs to find out from this screen, not from them.
+    """
+    from ..engines import self_seo
+
+    own = self_seo.report()
+    rows = []
+    for rec in clients.all_clients():
+        cid = rec.get("id", "")
+        audit = rec.get("last_audit") or {}
+        rows.append({
+            "id": cid,
+            "business_name": rec.get("business_name", ""),
+            "website": rec.get("website", ""),
+            "country": rec.get("country", ""),
+            "industry": rec.get("industry", ""),
+            # None, never 0 — a site that has not been audited has no score,
+            # and a 0 next to a real 58 reads as "audited, and terrible".
+            "score": audit.get("score"),
+            "grade": audit.get("grade"),
+            "findings": len(audit.get("findings", []) or []),
+            "audited": bool(audit),
+        })
+
+    scored = [r["score"] for r in rows if isinstance(r.get("score"), (int, float))]
+    rows.sort(key=lambda r: (r["score"] is None, r["score"] or 0))
+    return {
+        "titan": {
+            "checked": own.get("checked", False),
+            "url": own.get("url", ""),
+            "score": own.get("score"),
+            "grade": own.get("grade"),
+            "open_findings": own.get("open_findings", []),
+            "checked_at": own.get("checked_at"),
+            "note": own.get("note", ""),
+        },
+        "clients": rows,
+        "client_average": round(sum(scored) / len(scored), 1) if scored else None,
+        "unaudited": sum(1 for r in rows if not r["audited"]),
+        "note": ("Client scores come from the last stored audit, not a fresh "
+                 "crawl — opening this screen must not fire a request at every "
+                 "client's website. Sites never audited show no score rather "
+                 "than a zero."),
+    }
+
+
 @router.get("/reflection", tags=["executive"])
 def reflection_report(limit: int = Query(default=20, ge=1, le=100)) -> dict:
     """What Titan learned from finishing things, and what it changed as a result.
