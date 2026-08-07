@@ -267,6 +267,18 @@ def pricing_page_with_schema():
                     media_type="text/html")
 
 
+@app.get("/join", include_in_schema=False)
+def join_page():
+    """Signup → pick a plan → add a business → first audit → PDF, on one screen.
+
+    Static for the same reason /pricing is: this is where a stranger decides
+    whether Titan is worth the trouble, and it must render before a 175 kB
+    dashboard bundle would have finished downloading. It holds no logic — every
+    number and limit comes from the API that enforces them.
+    """
+    return _static_page("join.html")
+
+
 @app.get("/portal", include_in_schema=False)
 def client_portal():
     """The screen a client logs into. Static, no build step."""

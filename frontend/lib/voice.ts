@@ -36,6 +36,19 @@ export function emitSpeech(speaking: boolean) {
   }
 }
 
+// One impulse per spoken word. Browsers do NOT expose synthesized speech to
+// the audio graph, so a visualiser cannot sample the waveform Titan is
+// producing — `onboundary` is the only real speech-timed signal available.
+// VoiceSphere drives its deformation from this; anything that faked a
+// waveform here would be inventing a measurement.
+export function emitSpeechWord() {
+  try {
+    window.dispatchEvent(new CustomEvent("titan-speech-word"));
+  } catch {
+    /* silent */
+  }
+}
+
 export async function loadVoices(): Promise<SpeechSynthesisVoice[]> {
   if (typeof window === "undefined" || !window.speechSynthesis) return [];
   let voices = window.speechSynthesis.getVoices();
@@ -177,6 +190,9 @@ export async function speakText(
     }
     u.rate = lang === "en" ? 1.0 : 0.92;
     u.pitch = 1.0;
+    u.onboundary = (ev) => {
+      if (ev.name === "word" || ev.charLength) emitSpeechWord();
+    };
     u.onend = done;
     u.onerror = done;
     synth.speak(u); // queues after the previous chunk

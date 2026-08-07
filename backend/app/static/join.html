@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get started — Titan Omega</title>
+<link rel="canonical" href="https://titanomega-ai.com/join">
+<link rel="icon" href="/favicon.png">
+<meta name="theme-color" content="#05070d">
+<meta name="description" content="Create an account, add your business, and get your first SEO and legal compliance audit in under a minute. The free tier includes the full legal check.">
+<!--
+  The conversion path, as one screen with three steps.
+
+  Static HTML for the same reason /pricing is: this is where a stranger decides
+  whether to bother, and it must render instantly. It talks only to endpoints
+  that already exist — /api/plans, /api/signup, /api/account/login,
+  /api/account/onboard — and holds no business logic of its own. Plan limits
+  and prices are FETCHED, never hardcoded; a signup page that disagrees with
+  what the server enforces is how people end up billed for something they were
+  never shown.
+
+  The account token lives in sessionStorage, not localStorage: it dies with the
+  tab. This page is often opened on a shared or borrowed machine.
+-->
+<style>
+  :root{--void:#05070d;--panel:#0a0e1a;--panel2:#0d1322;--edge:#16203a;
+        --cyan:#22d3ee;--emerald:#34d399;--amber:#fbbf24;--rose:#fb7185;
+        --violet:#a78bfa;--mut:#64748b;--ink:#e2e8f0}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--void);color:var(--ink);
+       font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:44px 20px 80px}
+  a{color:var(--cyan)}
+  header{margin-bottom:30px}
+  .mark{font-size:12px;letter-spacing:.3em;color:var(--cyan);margin-bottom:12px}
+  h1{font-size:clamp(25px,4.4vw,34px);margin:0 0 10px;font-weight:600;letter-spacing:-.02em;text-wrap:balance}
+  .sub{color:var(--mut);font-size:14.5px;max-width:58ch;margin:0}
+
+  /* Progress: three steps, and the numbering is real — you cannot add a
+     business before you have an account. */
+  .steps{display:flex;gap:8px;margin:26px 0 22px}
+  .step{flex:1;border-top:2px solid var(--edge);padding-top:9px;
+        font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mut)}
+  .step.on{border-top-color:var(--cyan);color:var(--cyan)}
+  .step.done{border-top-color:var(--emerald);color:var(--emerald)}
+
+  .card{background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:24px 22px}
+  .card + .card{margin-top:16px}
+  h2{font-size:17px;margin:0 0 4px;font-weight:600}
+  .hint{color:var(--mut);font-size:12.5px;margin:0 0 18px}
+
+  label{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+        color:var(--mut);margin:0 0 5px}
+  .field{margin-bottom:14px}
+  .row{display:grid;gap:14px;grid-template-columns:1fr 1fr}
+  @media(max-width:560px){.row{grid-template-columns:1fr}}
+  input,select{width:100%;font:inherit;font-size:14px;color:var(--ink);
+        background:var(--panel2);border:1px solid var(--edge);border-radius:9px;padding:10px 12px}
+  input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+  /* Plan picker */
+  .plans{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:16px}
+  .plan{background:var(--panel2);border:1px solid var(--edge);border-radius:11px;
+        padding:14px;cursor:pointer;text-align:left;color:var(--ink);transition:border-color .16s,background .16s}
+  .plan:hover{border-color:rgba(34,211,238,.4)}
+  .plan.sel{border-color:var(--cyan);background:rgba(34,211,238,.08)}
+  .plan .pn{font-size:14px;font-weight:600}
+  .plan .pp{font-size:22px;font-weight:600;letter-spacing:-.02em;margin:2px 0 4px}
+  .plan .pp span{font-size:11px;color:var(--mut);font-weight:400}
+  .plan .pl{font-size:11px;color:var(--mut);line-height:1.45}
+
+  button.go{width:100%;font:inherit;font-size:14.5px;font-weight:600;padding:12px;
+        border-radius:10px;border:1px solid rgba(34,211,238,.45);
+        background:rgba(34,211,238,.12);color:var(--cyan);cursor:pointer}
+  button.go:hover{background:rgba(34,211,238,.2)}
+  button.go[disabled]{opacity:.45;cursor:not-allowed}
+  button.ghost{font:inherit;font-size:13px;padding:9px 16px;border-radius:9px;
+        border:1px solid var(--edge);background:transparent;color:var(--mut);cursor:pointer}
+  button.ghost:hover{color:var(--ink);border-color:var(--cyan)}
+
+  .msg{font-size:13px;border-radius:9px;padding:10px 12px;margin-top:14px;display:none}
+  .msg.err{display:block;background:rgba(251,113,133,.1);border:1px solid rgba(251,113,133,.35);color:var(--rose)}
+  .msg.ok{display:block;background:rgba(52,211,153,.09);border:1px solid rgba(52,211,153,.32);color:var(--emerald)}
+  .msg.warn{display:block;background:rgba(251,191,36,.09);border:1px solid rgba(251,191,36,.32);color:var(--amber)}
+
+  .hidden{display:none}
+
+  /* Result */
+  .score{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
+  .score .n{font-size:46px;font-weight:600;letter-spacing:-.03em;
+        font-variant-numeric:tabular-nums;line-height:1}
+  .score .g{font-size:17px;color:var(--mut)}
+  .good{color:var(--emerald)} .mid{color:var(--amber)} .bad{color:var(--rose)}
+  .finding{border-top:1px solid var(--edge);padding:9px 0;font-size:13px;display:flex;gap:9px}
+  .sev{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;
+       border-radius:4px;height:fit-content;white-space:nowrap}
+  .sev.critical,.sev.high{background:rgba(251,113,133,.15);color:var(--rose)}
+  .sev.medium{background:rgba(251,191,36,.15);color:var(--amber)}
+  .sev.low,.sev.info{background:rgba(100,116,139,.18);color:var(--mut)}
+  .foot{margin-top:26px;font-size:12px;color:var(--mut);text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="mark">TITAN OMEGA</div>
+    <h1>Your first audit, in under a minute</h1>
+    <p class="sub">
+      Create an account, add your business, and Titan runs a full technical, local
+      and legal check on your site — then hands you the report. The free tier
+      includes the legal findings in full.
+    </p>
+  </header>
+
+  <div class="steps">
+    <div class="step on" id="s1">1 · Account</div>
+    <div class="step" id="s2">2 · Your business</div>
+    <div class="step" id="s3">3 · Your report</div>
+  </div>
+
+  <!-- STEP 1 ------------------------------------------------------------ -->
+  <section class="card" id="card1">
+    <h2>Create your account</h2>
+    <p class="hint">Already have one? <a href="#" id="toLogin">Sign in instead</a>.</p>
+
+    <div class="plans" id="plans"><p class="hint">Loading plans…</p></div>
+
+    <div class="row">
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="email" placeholder="you@company.com">
+      </div>
+      <div class="field">
+        <label for="pw">Password</label>
+        <input id="pw" type="password" autocomplete="new-password" placeholder="At least 8 characters">
+      </div>
+    </div>
+
+    <button class="go" id="btnSignup">Create account</button>
+    <div class="msg" id="m1"></div>
+  </section>
+
+  <!-- STEP 2 ------------------------------------------------------------ -->
+  <section class="card hidden" id="card2">
+    <h2>Add your business</h2>
+    <p class="hint">Only the name is required. A website unlocks the audit — without one there is nothing to crawl.</p>
+
+    <div class="row">
+      <div class="field">
+        <label for="bname">Business name</label>
+        <input id="bname" placeholder="Triad Thread Studio">
+      </div>
+      <div class="field">
+        <label for="site">Website</label>
+        <input id="site" placeholder="https://example.com">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="industry">Industry</label>
+        <select id="industry"><option value="">Choose…</option></select>
+      </div>
+      <div class="field">
+        <label for="insta">Instagram (optional)</label>
+        <input id="insta" placeholder="@yourhandle">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="city">City</label>
+        <input id="city" placeholder="Sialkot">
+      </div>
+      <div class="field">
+        <label for="country">Country</label>
+        <input id="country" placeholder="Pakistan">
+      </div>
+    </div>
+
+    <button class="go" id="btnOnboard">Add business and run the audit</button>
+    <div class="msg" id="m2"></div>
+  </section>
+
+  <!-- STEP 3 ------------------------------------------------------------ -->
+  <section class="card hidden" id="card3">
+    <h2 id="r-title">Your audit</h2>
+    <p class="hint" id="r-site"></p>
+    <div id="r-body"></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:20px">
+      <a class="go" id="r-pdf" style="text-decoration:none;text-align:center;flex:1 1 200px" href="#">Download the PDF report</a>
+      <button class="ghost" id="r-another">Add another business</button>
+    </div>
+    <div class="msg" id="m3"></div>
+  </section>
+
+  <p class="foot">
+    <a href="/pricing">Compare plans</a> · <a href="/privacy">Privacy</a> · <a href="/">Dashboard</a>
+  </p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var TOKEN = "";
+  var MODE = "signup";
+  var plan = "free";
+
+  function $(id) { return document.getElementById(id); }
+  function show(el, on) { el.classList.toggle("hidden", !on); }
+  function say(el, text, kind) {
+    el.className = "msg " + (kind || "err");
+    el.textContent = text;
+  }
+  function clear(el) { el.className = "msg"; el.textContent = ""; }
+
+  function step(n) {
+    [1, 2, 3].forEach(function (i) {
+      var s = $("s" + i);
+      s.className = "step" + (i < n ? " done" : i === n ? " on" : "");
+      show($("card" + i), i === n);
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // --- plans: fetched, never hardcoded -----------------------------------
+  fetch("/api/plans").then(function (r) { return r.json(); }).then(function (d) {
+    var box = $("plans");
+    box.innerHTML = "";
+    (d.plans || []).forEach(function (p) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "plan" + (p.key === "free" ? " sel" : "");
+      b.dataset.key = p.key;
+      var lim = p.limits || {};
+      var clients = lim.clients === -1 ? "Unlimited businesses" :
+                    lim.clients + (lim.clients === 1 ? " business" : " businesses");
+      var audits = lim.audits_per_month === -1 ? "unlimited audits" :
+                   lim.audits_per_month + " audits/mo";
+      b.innerHTML =
+        '<div class="pn">' + p.name + '</div>' +
+        '<div class="pp">$' + p.price_usd + '<span>/mo</span></div>' +
+        '<div class="pl">' + clients + '<br>' + audits + '</div>';
+      b.addEventListener("click", function () {
+        plan = p.key;
+        Array.prototype.forEach.call(box.children, function (c) { c.classList.remove("sel"); });
+        b.classList.add("sel");
+        // Honesty: naming the blocker at the moment of choosing beats a dead
+        // button three screens later.
+        if (p.key !== "free" && d.processor === "none") {
+          say($("m1"), "Heads up — no payment processor is connected yet, so a paid " +
+            "plan cannot be completed. Your account will be created on Free and " +
+            "everything below still works.", "warn");
+        } else { clear($("m1")); }
+      });
+      box.appendChild(b);
+    });
+  }).catch(function () {
+    $("plans").innerHTML = '<p class="hint">Could not load plans — you can still create a free account.</p>';
+  });
+
+  // --- industries (drives the audit's vertical rules) ---------------------
+  ["restaurant","cafe","bakery","retail","wholesale","manufacturer","ecommerce",
+   "salon","gym","clinic","dentist","hotel","law firm","real estate",
+   "software","agency"].forEach(function (v) {
+    var o = document.createElement("option");
+    o.value = v; o.textContent = v.charAt(0).toUpperCase() + v.slice(1);
+    $("industry").appendChild(o);
+  });
+
+  // --- toggle signup / login ---------------------------------------------
+  $("toLogin").addEventListener("click", function (e) {
+    e.preventDefault();
+    MODE = MODE === "signup" ? "login" : "signup";
+    var isLogin = MODE === "login";
+    $("btnSignup").textContent = isLogin ? "Sign in" : "Create account";
+    $("toLogin").textContent = isLogin ? "Create one instead" : "Sign in instead";
+    show($("plans"), !isLogin);
+    $("pw").setAttribute("autocomplete", isLogin ? "current-password" : "new-password");
+    clear($("m1"));
+  });
+
+  // --- step 1 -------------------------------------------------------------
+  $("btnSignup").addEventListener("click", async function () {
+    var email = $("email").value.trim();
+    var pw = $("pw").value;
+    var btn = $("btnSignup");
+    clear($("m1"));
+
+    if (!email || email.indexOf("@") < 0) { say($("m1"), "Enter a valid email address."); return; }
+    if (MODE === "signup" && pw.length < 8) { say($("m1"), "Password must be at least 8 characters."); return; }
+
+    btn.disabled = true;
+    btn.textContent = MODE === "login" ? "Signing in…" : "Creating…";
+    try {
+      if (MODE === "signup") {
+        var r = await fetch("/api/signup", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email, password: pw, plan: plan })
+        });
+        if (!r.ok) {
+          var e = await r.json().catch(function () { return {}; });
+          throw new Error(e.detail || "Could not create the account.");
+        }
+      }
+      var lr = await fetch("/api/account/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email, password: pw })
+      });
+      if (!lr.ok) throw new Error("Wrong email or password.");
+      var data = await lr.json();
+      TOKEN = data.token;
+      // sessionStorage, not localStorage — this page gets opened on shared
+      // machines and the token should die with the tab.
+      try { sessionStorage.setItem("titan_account", TOKEN); } catch (e) {}
+      step(2);
+    } catch (err) {
+      say($("m1"), String(err.message || err));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = MODE === "login" ? "Sign in" : "Create account";
+    }
+  });
+
+  // --- step 2 -------------------------------------------------------------
+  $("btnOnboard").addEventListener("click", async function () {
+    var name = $("bname").value.trim();
+    var btn = $("btnOnboard");
+    clear($("m2"));
+    if (!name) { say($("m2"), "Your business needs a name."); return; }
+
+    btn.disabled = true;
+    btn.textContent = "Crawling your site…";
+    try {
+      var r = await fetch("/api/account/onboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Account-Token": TOKEN },
+        body: JSON.stringify({
+          business_name: name,
+          website: $("site").value.trim(),
+          industry: $("industry").value,
+          instagram: $("insta").value.trim(),
+          city: $("city").value.trim(),
+          country: $("country").value.trim(),
+          run_audit: true
+        })
+      });
+      var body = await r.json().catch(function () { return {}; });
+      if (r.status === 402) {
+        // A plan ceiling, not a failure. The server already names the tier
+        // that lifts it, so show that rather than a generic error.
+        var d = body.detail || {};
+        say($("m2"), (d.reason || "Plan limit reached.") + " " + (d.upgrade_gives || ""), "warn");
+        return;
+      }
+      if (!r.ok) throw new Error(body.detail || "Could not add the business.");
+      render(body);
+      step(3);
+    } catch (err) {
+      say($("m2"), String(err.message || err));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Add business and run the audit";
+    }
+  });
+
+  // --- step 3 -------------------------------------------------------------
+  function render(res) {
+    var c = res.client || {};
+    var a = res.audit;
+    $("r-title").textContent = c.business_name || "Your audit";
+    $("r-site").textContent = c.website || "No website given.";
+    $("r-pdf").href = res.report_url || "#";
+
+    var body = $("r-body");
+    body.innerHTML = "";
+
+    if (!a) {
+      body.innerHTML = '<p class="hint">Business added. No audit ran — add a website ' +
+        'to your business and Titan will crawl it. There is nothing to check without one.</p>';
+      return;
+    }
+    if (a.skipped) {
+      body.innerHTML = '<p class="hint">' + (a.reason || "Audit skipped.") + " " +
+        (a.upgrade_gives || "") + '</p>';
+      return;
+    }
+    if (!a.ok) {
+      body.innerHTML = '<p class="hint">Titan could not reach that site: ' +
+        (a.error || "unknown error") + '. Check the address and try again — a ' +
+        'score is not being guessed here.</p>';
+      return;
+    }
+
+    var s = a.score;
+    var tone = s >= 80 ? "good" : s >= 60 ? "mid" : "bad";
+    var head = document.createElement("div");
+    head.className = "score";
+    head.innerHTML = '<span class="n ' + tone + '">' + s + '</span>' +
+                     '<span class="g">grade ' + (a.grade || "—") + '</span>';
+    body.appendChild(head);
+
+    var findings = a.findings || [];
+    if (!findings.length) {
+      var p = document.createElement("p");
+      p.className = "hint";
+      p.textContent = "No issues found. That is unusual — download the PDF for the full detail.";
+      body.appendChild(p);
+    } else {
+      var lead = document.createElement("p");
+      lead.className = "hint";
+      lead.textContent = findings.length + " issue" + (findings.length === 1 ? "" : "s") +
+        " found. The legal findings are included in full on every plan.";
+      body.appendChild(lead);
+      findings.slice(0, 8).forEach(function (f) {
+        var d = document.createElement("div");
+        d.className = "finding";
+        d.innerHTML = '<span class="sev ' + (f.severity || "info") + '">' +
+          (f.severity || "info") + '</span><span>' + (f.title || f.id) + '</span>';
+        body.appendChild(d);
+      });
+      if (findings.length > 8) {
+        var more = document.createElement("p");
+        more.className = "hint";
+        more.style.marginTop = "12px";
+        more.textContent = "…and " + (findings.length - 8) + " more in the PDF.";
+        body.appendChild(more);
+      }
+    }
+  }
+
+  $("r-another").addEventListener("click", function () {
+    ["bname", "site", "insta", "city", "country"].forEach(function (id) { $(id).value = ""; });
+    clear($("m2"));
+    step(2);
+  });
+
+  // The PDF is an authenticated GET and an <a href> cannot set a header, so
+  // fetch it with the token and hand the browser a blob instead.
+  $("r-pdf").addEventListener("click", async function (e) {
+    e.preventDefault();
+    var url = $("r-pdf").getAttribute("href");
+    if (!url || url === "#") return;
+    clear($("m3"));
+    try {
+      var r = await fetch(url, { headers: { "X-Account-Token": TOKEN } });
+      if (!r.ok) throw new Error("The report could not be generated.");
+      var blob = await r.blob();
+      var link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = ($("r-title").textContent || "titan").toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-").slice(0, 40) + "-report.pdf";
+      link.click();
+      setTimeout(function () { URL.revokeObjectURL(link.href); }, 4000);
+      say($("m3"), "Report downloaded.", "ok");
+    } catch (err) {
+      say($("m3"), String(err.message || err));
+    }
+  });
+})();
+</script>
+</body>
+</html>

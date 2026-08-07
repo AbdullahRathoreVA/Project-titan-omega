@@ -199,6 +199,45 @@ def set_lead_status(lead_id: str, req: LeadStatus) -> dict:
     return lead
 
 
+class LeadResearch(BaseModel):
+    lang: str = Field(default="en")
+
+
+@router.post("/leads/{lead_id}/research", tags=["crm"])
+def research_lead(lead_id: str, req: LeadResearch | None = None) -> dict:
+    """Audit this lead's own website, then draft outreach from what was found.
+
+    This is the pitch Titan can make that a generic outreach tool cannot: it
+    had to crawl the site to say anything, so every claim is checkable. If
+    there is no website, or the site cannot be read, it says so and writes
+    nothing — outreach citing a problem the recipient does not have loses the
+    deal on the first reply.
+
+    Returns a DRAFT. Nothing is sent to anyone.
+    """
+    from ..engines import outreach
+
+    lead = STORE.leads.get(lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    lang = (req.lang if req else "en") or "en"
+    res = outreach.research(lead)
+    msg = outreach.draft(lead, res, lang)
+
+    # File it on the lead so the research is not lost when the tab closes.
+    lead["research"] = res
+    lead["draft"] = msg
+    lead["updated_at"] = now().isoformat()
+    STORE.emit("revenue-head", "discovery",
+               (f"Researched {lead['name']}: "
+                + (f"scored {res['score']}/100, {res['total_findings']} findings"
+                   if res.get("ok") else "no site to audit")),
+               "info" if res.get("ok") else "warn")
+    persistence.save(STORE)
+    return {"lead_id": lead_id, "research": res, "draft": msg}
+
+
 @router.delete("/leads/{lead_id}", tags=["crm"])
 def delete_lead(lead_id: str) -> dict:
     if lead_id not in STORE.leads:

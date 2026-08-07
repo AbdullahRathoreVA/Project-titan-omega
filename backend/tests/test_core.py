@@ -2241,3 +2241,138 @@ def test_seo_overview_shows_titan_beside_its_clients(client, isolated_clients):
     assert rows["Never Audited Ltd"]["audited"] is False
     assert body["unaudited"] >= 1
     assert body["client_average"] == 91
+
+
+# ── the signup screen ──────────────────────────────────────────────────────
+
+def test_join_page_is_public_and_self_contained(client):
+    """The conversion page must render for a stranger with no token, and must
+    not hardcode a price — a signup screen that disagrees with what the server
+    enforces is how people get billed for something they were never shown."""
+    r = client.get("/join")
+    assert r.status_code == 200
+    html = r.text
+    assert "/api/plans" in html, "prices must be fetched, not hardcoded"
+    assert "/api/account/onboard" in html
+    # No hardcoded dollar figure for a paid tier anywhere in the markup.
+    for price in ("$4", "$19", "$99"):
+        assert price not in html, f"{price} is hardcoded in join.html"
+
+
+def test_join_is_in_the_sitemap(client):
+    """Titan reports missing pages as a finding on client sites. Leaving its
+    own conversion page out of its own sitemap would be that same mistake."""
+    body = client.get("/sitemap.xml").text
+    assert "/join" in body
+
+
+def test_join_page_is_counted_as_a_visit(client, isolated_traffic):
+    from app.core import traffic
+    client.get("/join")
+    assert traffic.report()["top_paths"].get("/join") == 1
+
+
+# ── lead research and outreach drafting ────────────────────────────────────
+
+def test_outreach_can_never_send_anything(no_ambient_config):
+    """Abdullah's standing rule: nothing reaches a real person without his
+    approval. A platform ban or spam complaint ends the service a client is
+    paying for, so the capability must not exist rather than be switched off."""
+    import inspect
+    from app.engines import outreach
+    src = inspect.getsource(outreach)
+    for forbidden in ("smtplib", "sendmail", "send_message", "requests.post",
+                      "httpx.post", "send_email"):
+        assert forbidden not in src, f"outreach.py can {forbidden}"
+
+
+def test_no_website_means_no_invented_findings():
+    """Outreach citing a problem the recipient does not have is a lie that
+    costs the deal on the first reply."""
+    from app.engines import outreach
+    res = outreach.research({"name": "Nameless Ltd", "contact": "call me",
+                             "note": "met at a trade show"})
+    assert res["ok"] is False
+    assert res["findings"] == []
+    assert "no website" in res["reason"].lower()
+
+    msg = outreach.draft({"name": "Nameless Ltd"}, res)
+    assert msg["ready"] is False
+    assert msg["message"] == ""
+    assert msg["sent"] is False
+
+
+def test_website_is_found_wherever_the_lead_happens_to_carry_it():
+    """Leads arrive from search, manual entry and imports, so the address is
+    as likely to be in the note as in a tidy field."""
+    from app.engines import outreach
+    assert outreach.find_website({"note": "site is https://triadthread.pk/about"}) \
+        == "https://triadthread.pk/about"
+    assert outreach.find_website({"contact": "hello@bellavista.de, bellavista.de"}) \
+        .endswith("bellavista.de")
+    assert outreach.find_website({"note": "no site yet"}) == ""
+
+
+def test_draft_works_with_no_llm_key_at_all(monkeypatch):
+    """A $0 setup must still produce usable outreach. Falling back to nothing
+    would make the whole feature depend on a key Abdullah may not have."""
+    from app.core import llm
+    from app.engines import outreach
+    monkeypatch.setattr(llm, "complete", lambda **kw: "")
+
+    res = {"ok": True, "website": "https://example.com", "score": 41,
+           "grade": "F", "total_findings": 9,
+           "findings": [{"id": "impressum", "severity": "critical",
+                         "title": "No Impressum (required by §5 DDG)",
+                         "detail": "German sites must carry one."}]}
+    msg = outreach.draft({"name": "Bella Vista"}, res)
+    assert msg["ready"] is True
+    assert msg["generated_by"] == "template"
+    assert "Impressum" in msg["message"]
+    assert "41" in msg["message"], "the real score must appear"
+    assert msg["sent"] is False
+
+
+def test_research_endpoint_files_the_draft_on_the_lead(client, isolated_leads,
+                                                       monkeypatch):
+    from app.core import llm
+    monkeypatch.setattr(llm, "complete", lambda **kw: "")
+    lead = client.post("/api/leads", json={
+        "name": "Nameless Ltd", "source": "manual",
+        "contact": "no site", "note": "met at a trade show"}).json()
+
+    r = client.post(f"/api/leads/{lead['id']}/research", json={"lang": "en"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["research"]["ok"] is False
+    assert body["draft"]["sent"] is False
+    # Persisted onto the lead, so closing the tab does not lose it.
+    assert STORE.leads[lead["id"]]["research"]["ok"] is False
+
+    assert client.post("/api/leads/nope/research", json={}).status_code == 404
+
+
+def test_template_does_not_claim_a_legal_finding_that_is_not_there(monkeypatch):
+    """Caught by running it: the draft closed with "the legal ones matter most"
+    beside three purely technical findings. That is an invented claim in the
+    very template written to prevent invented claims."""
+    from app.core import llm
+    from app.engines import outreach
+    monkeypatch.setattr(llm, "complete", lambda **kw: "")
+
+    technical = {"ok": True, "website": "https://example.com", "score": 19,
+                 "grade": "F", "total_findings": 17,
+                 "findings": [
+                     {"id": "title", "severity": "high",
+                      "title": "Missing or weak page title", "detail": ""},
+                     {"id": "schema", "severity": "medium",
+                      "title": "No structured data found", "detail": ""}]}
+    msg = outreach.draft({"name": "Example Trading"}, technical)["message"]
+    assert "legal one" not in msg.lower(), msg
+    assert "legal ones" not in msg.lower(), msg
+
+    legal = dict(technical, findings=[
+        {"id": "impressum", "severity": "critical",
+         "title": "No Impressum (required by §5 DDG)", "detail": ""}])
+    msg2 = outreach.draft({"name": "Bella Vista"}, legal)["message"]
+    assert "legal one matters most" in msg2.lower(), msg2

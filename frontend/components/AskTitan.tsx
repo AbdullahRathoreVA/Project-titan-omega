@@ -6,7 +6,7 @@ import { Mic, MicOff, Send, Sparkles, Volume2 } from "lucide-react";
 import { langTag, speakText } from "@/lib/voice";
 import { speakPremium } from "@/lib/sound";
 import { isGuest } from "@/lib/guest";
-import { HoloFounder } from "./HoloFounder";
+import VoiceSphere from "./VoiceSphere";
 
 // Universal voice: Titan answers and SPEAKS in any of these languages.
 const LANGS: [string, string][] = [
@@ -168,7 +168,10 @@ export function AskTitan() {
         </div>
       </header>
 
-      <HoloFounder />
+      {/* The avatar slot. HoloFounder (R3F) is still in the repo if this is
+          ever reverted — the sphere replaced it because it reacts to the real
+          speech signal and costs no 3D library. */}
+      <VoiceSphere height={240} listening={listening} />
 
       <div className="scroll-thin max-h-60 space-y-2 overflow-y-auto p-3" dir={RTL.has(lang) ? "rtl" : "ltr"}>
         {turns.length === 0 && (

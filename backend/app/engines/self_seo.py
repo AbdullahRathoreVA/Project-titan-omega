@@ -44,6 +44,10 @@ INTERVAL = float(os.getenv("TITAN_SELF_SEO_INTERVAL", str(6 * 3600)))
 PUBLIC_PATHS = (
     ("/", 1.0, "daily"),
     ("/pricing", 0.9, "weekly"),
+    # The conversion page. It is the second most valuable URL on the site
+    # after the homepage — leaving it out of the sitemap while auditing
+    # clients for missing pages would be the same mistake twice.
+    ("/join", 0.9, "weekly"),
     ("/privacy", 0.3, "yearly"),
     ("/portal", 0.4, "monthly"),
 )
