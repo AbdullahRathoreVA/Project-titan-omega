@@ -24,8 +24,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, CheckCircle2, Headphones, Loader2, PhoneForwarded,
-  RefreshCw, ShieldQuestion, Radio,
+  AlertTriangle, Bell, BellOff, CheckCircle2, Headphones, History, Loader2,
+  PhoneForwarded, RefreshCw, ShieldQuestion, Radio,
 } from "lucide-react";
 import VoiceSphere from "./VoiceSphere";
 
@@ -216,6 +216,17 @@ export default function VoiceAgents() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [busy, setBusy] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
+  const [history, setHistory] = useState<SessionRow[] | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [alerts, setAlerts] = useState<NotificationPermission | "unsupported">("default");
+  // Previous counts, so an alert fires on a genuine INCREASE rather than on
+  // every poll while a number simply stays high.
+  const seen = useRef<{ escalated: number; pending: number } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setAlerts("Notification" in window ? Notification.permission : "unsupported");
+  }, []);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -226,9 +237,33 @@ export default function VoiceAgents() {
       ]);
       setLive(l);
       setCaps(c);
+
+      if (l) {
+        const prev = seen.current;
+        if (prev && typeof window !== "undefined" &&
+            "Notification" in window && Notification.permission === "granted") {
+          if (l.escalated > prev.escalated) {
+            new Notification("Titan — a call needs a person", {
+              body: "A voice session escalated to a human.",
+              tag: "titan-escalation",
+            });
+          } else if (l.pending_approvals > prev.pending) {
+            new Notification("Titan — waiting on your approval", {
+              body: `${l.pending_approvals} action${l.pending_approvals === 1 ? "" : "s"} blocked until you approve.`,
+              tag: "titan-approval",
+            });
+          }
+        }
+        seen.current = { escalated: l.escalated, pending: l.pending_approvals };
+      }
     } finally {
       setBusy(false);
     }
+  }, []);
+
+  const loadHistory = useCallback(async () => {
+    const h = await call<{ sessions: SessionRow[] }>("/sessions?limit=60");
+    setHistory(h?.sessions ?? []);
   }, []);
 
   useEffect(() => {
@@ -281,13 +316,65 @@ export default function VoiceAgents() {
             {live ? live.summary : "Loading…"}
           </div>
         </div>
-        <button
-          onClick={() => void load()}
-          className="flex items-center gap-1 rounded-lg border border-white/10 px-3 py-1.5 text-[11px] text-slate-300 transition hover:border-hud-cyan/50 hover:text-hud-cyan"
-        >
-          <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} /> Refresh
-        </button>
+        <div className="flex gap-2">
+          {/* Never auto-prompt for notifications — browsers penalise it and it
+              is a dark pattern. Asked for only on a deliberate click. */}
+          {alerts !== "unsupported" && (
+            <button
+              onClick={async () => {
+                if (alerts === "granted") return;
+                const p = await Notification.requestPermission();
+                setAlerts(p);
+              }}
+              title={
+                alerts === "granted"
+                  ? "Alerts fire while this screen is open. A true background push would need a server that can reach a push service — this one cannot."
+                  : "Get notified when a call escalates or an action needs approval"
+              }
+              className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-[11px] transition ${
+                alerts === "granted"
+                  ? "border-hud-emerald/40 bg-hud-emerald/10 text-hud-emerald"
+                  : alerts === "denied"
+                    ? "border-white/10 text-slate-600"
+                    : "border-white/10 text-slate-300 hover:border-hud-amber/50 hover:text-hud-amber"
+              }`}
+            >
+              {alerts === "granted" ? <Bell className="h-3 w-3" /> : <BellOff className="h-3 w-3" />}
+              {alerts === "granted" ? "Alerts on" : alerts === "denied" ? "Alerts blocked" : "Alert me"}
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setShowHistory((v) => !v);
+              if (!history) void loadHistory();
+            }}
+            className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-[11px] transition ${
+              showHistory
+                ? "border-hud-cyan/50 bg-hud-cyan/10 text-hud-cyan"
+                : "border-white/10 text-slate-300 hover:border-hud-cyan/50 hover:text-hud-cyan"
+            }`}
+          >
+            <History className="h-3 w-3" /> History
+          </button>
+          <button
+            onClick={() => {
+              void load();
+              if (showHistory) void loadHistory();
+            }}
+            className="flex items-center gap-1 rounded-lg border border-white/10 px-3 py-1.5 text-[11px] text-slate-300 transition hover:border-hud-cyan/50 hover:text-hud-cyan"
+          >
+            <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} /> Refresh
+          </button>
+        </div>
       </div>
+
+      {alerts === "granted" && (
+        <div className="text-[10px] text-slate-600">
+          Alerts fire while this screen is open. Titan cannot push to you in the
+          background — the container cannot reach Telegram (verified: SSL
+          handshake timeout) and no push service is configured.
+        </div>
+      )}
 
       {/* headline numbers — each one counted from stored sessions */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -375,6 +462,50 @@ export default function VoiceAgents() {
                   )}
                 </button>
               ))}
+            </div>
+          )}
+
+          {/* finished sessions — replay is first-class, not a live-only view */}
+          {showHistory && (
+            <div className="mt-4 border-t border-white/5 pt-3">
+              <div className="text-[10px] uppercase tracking-widest text-slate-600">
+                Finished sessions
+              </div>
+              {history === null ? (
+                <p className="mt-2 text-[11px] text-slate-600">Loading…</p>
+              ) : history.filter((s) => s.state === "ended").length === 0 ? (
+                <p className="mt-2 text-[11px] text-slate-600">
+                  Nothing has finished yet.
+                </p>
+              ) : (
+                <div className="mt-2 space-y-1">
+                  {history
+                    .filter((s) => s.state === "ended")
+                    .map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => setSelected(s.id === selected ? null : s.id)}
+                        className={`flex w-full items-center gap-3 rounded-lg border px-3 py-1.5 text-left transition ${
+                          selected === s.id
+                            ? "border-hud-cyan/50 bg-hud-cyan/5"
+                            : "border-transparent hover:border-white/10"
+                        }`}
+                      >
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-700" />
+                        <span className="min-w-0 flex-1 truncate text-[11px] text-slate-400">
+                          {s.caller || s.agent}
+                          <span className="ml-2 text-slate-600">{s.channel}</span>
+                        </span>
+                        <span className="shrink-0 font-mono text-[10px] text-slate-600">
+                          {s.turns}t · {Math.round(s.duration_s)}s
+                        </span>
+                        {s.escalated && (
+                          <PhoneForwarded className="h-3 w-3 shrink-0 text-hud-rose" />
+                        )}
+                      </button>
+                    ))}
+                </div>
+              )}
             </div>
           )}
 
