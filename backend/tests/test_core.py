@@ -2809,3 +2809,81 @@ def test_dodo_is_declared_in_requirements():
     import pathlib
     req = pathlib.Path(__file__).resolve().parents[1] / "requirements.txt"
     assert "dodopayments" in req.read_text(encoding="utf-8")
+
+
+# ── audit accuracy ─────────────────────────────────────────────────────────
+
+def test_a_page_with_no_images_is_not_failed_for_alt_text(monkeypatch):
+    """Found on Titan's own homepage, which is CSS and SVG throughout and was
+    losing 6 points for "0 of 0 images have no alt text" — a defect that does
+    not exist, on a site Titan then charges to fix. Worse, the outreach engine
+    would cite it to a prospect."""
+    from app.engines import client_seo
+
+    page = ("<html><head><title>Acme Leather — handmade in Sialkot</title>"
+            "<meta name='description' content='Handmade leather goods "
+            "manufactured in Sialkot for wholesale buyers worldwide.'>"
+            "<meta name='viewport' content='width=device-width'>"
+            "<link rel='canonical' href='https://acme.example/'>"
+            "</head><body><h1>Acme Leather</h1><p>No images here at all.</p>"
+            "</body></html>")
+    monkeypatch.setattr(client_seo, "_fetch", lambda url, **kw: (page, None, 200))
+
+    res = client_seo.audit("https://acme.example", business_name="Acme Leather",
+                           industry="wholesale")
+    assert res["ok"] is True
+    assert "images_alt" in res["not_applicable"]
+    assert "images_alt" not in res["failed"]
+    assert not any(f["id"] == "images_alt" for f in res["findings"]), \
+        "a page with no images must not be told its images lack alt text"
+
+
+def test_a_page_with_unlabelled_images_still_fails(monkeypatch):
+    """The fix must not silence the real defect."""
+    from app.engines import client_seo
+    page = ("<html><head><title>Acme</title></head><body>"
+            "<img src='a.jpg'><img src='b.jpg'><img src='c.jpg'>"
+            "</body></html>")
+    monkeypatch.setattr(client_seo, "_fetch", lambda url, **kw: (page, None, 200))
+    res = client_seo.audit("https://acme.example", business_name="Acme")
+    assert "images_alt" in res["failed"]
+    assert "images_alt" not in res["not_applicable"]
+    assert any(f["id"] == "images_alt" for f in res["findings"])
+
+
+def test_not_applicable_is_scored_better_than_a_failure(monkeypatch):
+    """A not-applicable check leaves the denominator as well as the numerator,
+    so the site is judged only on what could be judged. It earns no credit —
+    that would claim the site did something well it never did — but it must
+    stop being a PENALTY, which is the bug this fixes."""
+    from app.engines import client_seo
+    base = "<html><head><title>T</title></head><body><h1>H</h1>{}</body></html>"
+
+    monkeypatch.setattr(client_seo, "_fetch",
+                        lambda url, **kw: (base.format(""), None, 200))
+    none_at_all = client_seo.audit("https://acme.example", business_name="Acme")
+
+    monkeypatch.setattr(client_seo, "_fetch", lambda url, **kw: (
+        base.format("<img src='a.jpg'><img src='b.jpg'>"), None, 200))
+    unlabelled = client_seo.audit("https://acme.example", business_name="Acme")
+
+    assert "images_alt" in none_at_all["not_applicable"]
+    assert "images_alt" in unlabelled["failed"]
+    assert none_at_all["score"] > unlabelled["score"], (
+        "having no images must score better than having unlabelled ones",
+        none_at_all["score"], unlabelled["score"])
+
+
+def test_a_perfect_page_can_still_reach_100_without_images(monkeypatch):
+    """If the skipped weight stayed in the denominator, 100 would be
+    unreachable for every image-free site."""
+    from app.engines import client_seo
+    weights = set(client_seo.WEIGHTS)
+    monkeypatch.setattr(client_seo, "_fetch",
+                        lambda url, **kw: ("<html></html>", None, 200))
+    res = client_seo.audit("https://acme.example", business_name="Acme")
+    # Every weighted key is accounted for exactly once, in one bucket.
+    seen = set(res["passed"]) | set(res["failed"]) | set(res["not_applicable"])
+    assert weights.issubset(seen), weights - seen
+    assert not (set(res["passed"]) & set(res["failed"]))
+    assert not (set(res["passed"]) & set(res["not_applicable"]))

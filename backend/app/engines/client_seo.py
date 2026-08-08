@@ -99,9 +99,19 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     # deliverable, and this audit is what the client actually pays for.
     vert = verticals.profile(verticals.detect(html, industry))
 
-    def add(fid, severity, title, detail, fix, key=None, ok=False):
+    def add(fid, severity, title, detail, fix, key=None, ok=False, na=False):
+        """Record a check.
+
+        `na` marks a check that does not apply to this page at all — not a
+        pass and not a failure. It is excluded from BOTH sides of the score,
+        because counting it either way is a lie: a pass would claim the site
+        did something well that it never did, and a failure would invent a
+        defect. See the images_alt check for why this exists.
+        """
         if key:
-            earned[key] = ok
+            earned[key] = "na" if na else ok
+        if na:
+            return
         if not ok:
             findings.append({"id": fid, "severity": severity, "title": title,
                              "detail": detail, "fix": fix})
@@ -215,12 +225,19 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     imgs = re.findall(r"<img\b[^>]*>", html, re.I)
     no_alt = [i for i in imgs
               if not re.search(r'\balt\s*=\s*["\'][^"\']+["\']', i, re.I)]
+    # A page with no images cannot have images missing alt text. The old rule
+    # was `ok=bool(imgs) and ...`, which failed every image-free page and
+    # reported "0 of 0 images have no alt text" — a defect that does not
+    # exist, on a site Titan then charges to fix. Found on Titan's own
+    # homepage, which is CSS and SVG throughout and was losing 6 points for it.
     add("images_alt", "medium", "Images missing alt text",
         f"{len(no_alt)} of {len(imgs)} images have no alt text. For a "
         f"{vert.label.lower()} {vert.asset_noun} is the product — unlabelled "
         f"images cannot rank in image search.",
         f"Describe each image in the alt text, e.g. '{vert.alt_example}'.",
-        key="images_alt", ok=bool(imgs) and len(no_alt) <= max(1, len(imgs) // 5))
+        key="images_alt",
+        na=not imgs,
+        ok=bool(imgs) and len(no_alt) <= max(1, len(imgs) // 5))
 
     # ------------------------------------------------------- technical ----
     add("viewport", "high", "No mobile viewport tag",
@@ -303,9 +320,14 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     findings.extend(legal["findings"])
 
     # ----------------------------------------------------------- score ----
-    total = sum(WEIGHTS.values())
-    got = sum(w for k, w in WEIGHTS.items() if earned.get(k))
-    score = round(100 * got / total)
+    # Checks marked not-applicable leave the denominator as well as the
+    # numerator, so a site is scored only on what could actually be judged.
+    # A check that never ran still counts against the score — silence is not
+    # the same as "does not apply".
+    na_keys = {k for k, v in earned.items() if v == "na"}
+    total = sum(w for k, w in WEIGHTS.items() if k not in na_keys)
+    got = sum(w for k, w in WEIGHTS.items() if earned.get(k) is True)
+    score = round(100 * got / total) if total else 0
 
     order = {"legal-critical": 0, "critical": 1, "high": 2,
              "medium": 3, "low": 4}
@@ -318,8 +340,11 @@ def audit(url: str, *, business_name: str = "", city: str = "",
         "score": score,
         "grade": ("A" if score >= 90 else "B" if score >= 75 else
                   "C" if score >= 60 else "D" if score >= 40 else "F"),
-        "passed": [k for k, v in earned.items() if v],
-        "failed": [k for k, v in earned.items() if not v],
+        "passed": [k for k, v in earned.items() if v is True],
+        "failed": [k for k, v in earned.items() if v is False],
+        # Reported separately so a reader can see what was skipped and why the
+        # denominator is smaller, rather than wondering where a check went.
+        "not_applicable": sorted(na_keys),
         "schema_types": sorted(set(types)),
         "findings": findings,
         "legal": legal,
