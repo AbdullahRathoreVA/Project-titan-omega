@@ -268,6 +268,31 @@ def pricing_page_with_schema():
                     media_type="text/html")
 
 
+@app.get("/compliance/{code}", include_in_schema=False)
+def compliance_landing(code: str):
+    """Per-jurisdiction legal requirements, server-rendered.
+
+    Server-rendered on purpose: the dashboard is a client-rendered SPA, and
+    Titan's own audit already caught its homepage serving an empty shell to
+    crawlers. A page written to be found must be readable with JavaScript off.
+    """
+    from .engines import landing
+    page = landing.compliance_page(code)
+    if not page:
+        raise HTTPException(status_code=404, detail="Unknown jurisdiction")
+    return Response(content=page, media_type="text/html")
+
+
+@app.get("/seo/{vertical}", include_in_schema=False)
+def vertical_landing(vertical: str):
+    """Per-vertical ranking factors, server-rendered. Same reasoning."""
+    from .engines import landing
+    page = landing.vertical_page(vertical)
+    if not page:
+        raise HTTPException(status_code=404, detail="Unknown business type")
+    return Response(content=page, media_type="text/html")
+
+
 @app.get("/join", include_in_schema=False)
 def join_page():
     """Signup → pick a plan → add a business → first audit → PDF, on one screen.

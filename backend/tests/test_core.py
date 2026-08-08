@@ -3212,3 +3212,72 @@ def test_the_heading_is_searchable_but_never_quoted(isolated_knowledge,
     assert res["ok"] is True
     assert res["hits"][0]["section"] == "Shipping"
     assert not res["hits"][0]["text"].startswith("Shipping.")
+
+
+# ── landing pages ──────────────────────────────────────────────────────────
+
+def test_every_landing_page_renders_with_real_statute_text(client):
+    """Generated is fine. Thin is not. Each page must carry the actual rule
+    Titan enforces, not a template with a country name swapped in."""
+    from app.engines import compliance, landing
+    for code in landing.compliance_slugs():
+        r = client.get(f"/compliance/{code}")
+        assert r.status_code == 200, code
+        j = compliance.JURISDICTIONS[code.upper()]
+        assert j["name"] in r.text
+        # The governing rule itself, e.g. "§5 Digitale-Dienste-Gesetz".
+        assert j["law"][:18] in r.text, code
+        assert len(r.text) > 2500, f"{code} page is thin"
+
+
+def test_landing_pages_are_readable_without_javascript(client):
+    """Titan's own audit caught its homepage serving an empty shell to
+    crawlers. A page written to be found must not repeat that."""
+    r = client.get("/seo/wholesale")
+    assert r.status_code == 200
+    assert "<h1" in r.text and "Wholesale supplier".lower() in r.text.lower()
+    assert "_next/static" not in r.text, "must not depend on the SPA bundle"
+    assert 'rel="canonical"' in r.text
+
+
+def test_a_b2b_vertical_page_says_local_ranking_does_not_apply(client):
+    """The distinction Titan gets right and generic tools do not: a buyer
+    finds a wholesaler by searching the product, never by proximity."""
+    r = client.get("/seo/wholesale")
+    assert "<strong>not</strong> apply" in r.text
+    assert "proximity" in r.text.lower()
+    assert "map-pack tactics are wasted" in r.text
+
+    local = client.get("/seo/restaurant")
+    assert "Applies." in local.text
+
+
+def test_unknown_slugs_are_404_not_an_empty_page(client):
+    assert client.get("/compliance/zz").status_code == 404
+    assert client.get("/seo/spaceship-repair").status_code == 404
+
+
+def test_landing_pages_are_in_the_sitemap(client):
+    body = client.get("/sitemap.xml").text
+    assert "/compliance/de" in body
+    assert "/seo/wholesale" in body
+
+
+def test_landing_pages_do_not_duplicate_each_other(client):
+    """Two pages that differ only by a noun are the pattern Titan flags on
+    client sites. Selling an SEO product while spamming an index would be
+    indefensible."""
+    a = client.get("/compliance/de").text
+    b = client.get("/compliance/uk").text
+    assert a != b
+    # Bodies must differ substantially, not just in the country name.
+    shared = sum(1 for x, y in zip(a.split(), b.split()) if x == y)
+    assert shared < len(a.split()) * 0.75, "pages are near-duplicates"
+
+
+def test_landing_pages_are_public(client, monkeypatch):
+    """They exist to be crawled. A login wall would defeat the point."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    assert client.get("/compliance/de").status_code == 200
+    assert client.get("/seo/restaurant").status_code == 200

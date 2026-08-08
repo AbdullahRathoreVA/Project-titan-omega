@@ -61,6 +61,14 @@ def sitemap_xml() -> str:
     """A real sitemap. Titan's audit reports a missing one as a medium finding
     on client sites; shipping without one was indefensible."""
     today = time.strftime("%Y-%m-%d", time.gmtime())
+    # The landing pages are the only content Titan has that a search engine
+    # can match a real query against. Leaving them out of its own sitemap
+    # while auditing clients for exactly that would be the same mistake twice.
+    try:
+        from . import landing
+        paths = list(PUBLIC_PATHS) + landing.all_paths()
+    except Exception:
+        paths = list(PUBLIC_PATHS)
     urls = "\n".join(
         f"  <url>\n"
         f"    <loc>{SITE}{path}</loc>\n"
@@ -68,7 +76,7 @@ def sitemap_xml() -> str:
         f"    <changefreq>{freq}</changefreq>\n"
         f"    <priority>{prio}</priority>\n"
         f"  </url>"
-        for path, prio, freq in PUBLIC_PATHS
+        for path, prio, freq in paths
     )
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
