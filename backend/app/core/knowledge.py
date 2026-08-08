@@ -56,6 +56,10 @@ SEMANTIC_TOP_N = 4
 # were indistinguishable and letting semantic lead there changed correct BM25
 # answers into wrong ones. So the bar to take over is deliberately high: this
 # is a strict improvement on BM25, never a coin flip against it.
+# 0.68, not lower. Dropping it to 0.60 was measured and changed nothing — the
+# two questions it would have to rescue score below that anyway — so a lower
+# bar buys no accuracy and only re-enters the band where semantic ranking was
+# observed to overturn correct BM25 answers.
 COS_LEAD = 0.68     # semantic leads the ranking above this
 COS_FLOOR = 0.52    # below this a passage is not a semantic candidate at all
 
@@ -88,6 +92,43 @@ def strip_html(html: str) -> str:
     return _WS.sub(" ", text).strip()
 
 
+_HEADING = re.compile(r"<h([1-4])[^>]*>(.*?)</h\1>", re.I | re.S)
+
+
+def split_sections(html: str) -> list[tuple[str, str]]:
+    """Split a page at its headings into (heading, body) sections.
+
+    Two findings from current RAG practice, both of which this page needed:
+
+    * **A chunk must never span two sections.** Section boundaries are the
+      author's own statement of where one topic ends. The previous splitter
+      ignored headings entirely and merged the H1 into the first paragraph,
+      so "Triad Thread Studio" and "we manufacture leather goods" became one
+      blurred passage that matched everything weakly and nothing strongly.
+    * **Heading-aware splitting beats character counting** on exactly this
+      shape of content — a small site of short, differently-topiced sections.
+
+    Pages with no headings return a single ("", body) section, so nothing
+    regresses for a site built entirely out of divs.
+    """
+    if not html or "<h" not in html.lower():
+        return [("", strip_html(html))]
+
+    sections: list[tuple[str, str]] = []
+    last_end = 0
+    pending_heading = ""
+    for m in _HEADING.finditer(html):
+        body = strip_html(html[last_end:m.start()])
+        if body:
+            sections.append((pending_heading, body))
+        pending_heading = strip_html(m.group(2))[:120]
+        last_end = m.end()
+    tail = strip_html(html[last_end:])
+    if tail:
+        sections.append((pending_heading, tail))
+    return [s for s in sections if s[1].strip()] or [("", strip_html(html))]
+
+
 def _split(text: str) -> list[str]:
     """Sentence-ish chunks. Long runs are cut on whitespace rather than
     mid-word, because a passage read aloud has to be a sentence."""
@@ -111,8 +152,12 @@ def ingest(client_id: str, html_or_text: str, url: str = "") -> dict:
     re-auditing a site updates the knowledge instead of duplicating it."""
     if not client_id:
         return {"ok": False, "reason": "A client id is required.", "passages": 0}
-    text = strip_html(html_or_text) if "<" in (html_or_text or "") else (html_or_text or "")
-    chunks = _split(text)
+    is_html = "<" in (html_or_text or "")
+    sections = (split_sections(html_or_text) if is_html
+                else [("", html_or_text or "")])
+    # (heading, passage) pairs. The heading rides along as retrieval context
+    # without being glued into the quoted text — see _context_text.
+    chunks = [(head, c) for head, body in sections for c in _split(body)]
     if not chunks:
         return {"ok": False, "passages": 0,
                 "reason": ("Nothing readable on that page. A site that is "
@@ -124,8 +169,15 @@ def ingest(client_id: str, html_or_text: str, url: str = "") -> dict:
         rec = _store.setdefault(client_id, {"passages": []})
         if url:
             rec["passages"] = [p for p in rec["passages"] if p["url"] != url]
-        for c in chunks:
-            rec["passages"].append({"text": c, "url": url, "terms": _tokens(c)})
+        for head, c in chunks:
+            rec["passages"].append({
+                "text": c, "url": url, "heading": head,
+                # The heading is indexed as searchable text too: a caller who
+                # asks about "shipping" should reach a passage that sits under
+                # a "Shipping" heading even when the sentence itself never
+                # repeats the word.
+                "terms": _tokens(f"{head} {c}" if head else c),
+            })
         if len(rec["passages"]) > MAX_PASSAGES:
             del rec["passages"][:len(rec["passages"]) - MAX_PASSAGES]
         _reindex(rec)
@@ -144,12 +196,25 @@ def ingest(client_id: str, html_or_text: str, url: str = "") -> dict:
             "retrieval": embeddings.status()}
 
 
+def _context_text(p: dict) -> str:
+    """What actually gets embedded: the heading, then the passage.
+
+    Contextual chunking. A sentence like "Minimum order is 50 pieces" is
+    ambiguous alone; under the heading "Wholesale terms" it is not. The prefix
+    only ever enters the VECTOR — the quoted text stays clean, because a
+    receptionist reading "Wholesale terms. Minimum order is 50 pieces" out
+    loud sounds like a machine reading a web page.
+    """
+    head = (p.get("heading") or "").strip()
+    return f"{head}. {p['text']}" if head else p["text"]
+
+
 def _embed_pending(client_id: str, pending: list[dict]) -> int:
     """Attach vectors to passages that lack them. A no-op when embeddings are
     unavailable — the passages stay searchable by BM25 either way."""
     if not pending:
         return 0
-    vecs = embeddings.encode([p["text"] for p in pending])
+    vecs = embeddings.encode([_context_text(p) for p in pending])
     if not vecs or len(vecs) != len(pending):
         return 0
     with _lock:
@@ -278,6 +343,7 @@ def search(client_id: str, question: str, k: int = 3) -> dict:
                 mode = "semantic-rescue"
 
     hits = [{"text": p["text"], "url": p["url"],
+             "section": p.get("heading", ""),
              "score": round(next((s for s, q in scored if q is p), 0.0), 3)}
             for p in keyword_ranked[:k]]
 
@@ -350,7 +416,8 @@ def stats(client_id: str) -> dict:
 # ------------------------------------------------------------ persistence --
 def export_state() -> dict:
     with _lock:
-        return {"clients": {cid: [{"text": p["text"], "url": p["url"]}
+        return {"clients": {cid: [{"text": p["text"], "url": p["url"],
+                                   "heading": p.get("heading", "")}
                                   for p in rec["passages"]]
                             for cid, rec in _store.items()}}
 
@@ -368,7 +435,8 @@ def import_state(data: dict) -> None:
                 continue
             rec = {"passages": [
                 {"text": p.get("text", ""), "url": p.get("url", ""),
-                 "terms": _tokens(p.get("text", ""))}
+                 "heading": p.get("heading", ""),
+                 "terms": _tokens(f"{p.get('heading', '')} {p.get('text', '')}")}
                 for p in passages[:MAX_PASSAGES]
                 if isinstance(p, dict) and p.get("text")]}
             if rec["passages"]:

@@ -3152,3 +3152,63 @@ def test_retrieval_status_explains_itself():
     assert s["state"] == "not_loaded"
     assert "health check" in s["note"]
     assert s["dimensions"] == 384
+
+
+def test_a_chunk_never_spans_two_headings(isolated_knowledge):
+    """Section boundaries are the author's own statement of where one topic
+    ends. The old splitter ignored headings and merged the H1 into the first
+    paragraph, producing a passage that matched everything weakly and nothing
+    strongly."""
+    from app.core import knowledge
+    page = ("<h1>Acme Leather</h1><p>" + "We make bags in Sialkot. " * 4 +
+            "</p><h2>Shipping</h2><p>" + "We deliver to Germany in five days. " * 4 +
+            "</p>")
+    sections = knowledge.split_sections(page)
+    heads = [h for h, _ in sections]
+    assert "Acme Leather" in heads and "Shipping" in heads
+    for head, body in sections:
+        if head == "Shipping":
+            assert "Sialkot" not in body
+        if head == "Acme Leather":
+            assert "Germany" not in body
+
+
+def test_a_page_with_no_headings_still_indexes(isolated_knowledge):
+    """Plenty of small-business sites are built entirely from divs."""
+    from app.core import knowledge
+    res = knowledge.ingest(
+        "c1",
+        "<div><p>We manufacture leather bags, jackets and gloves in Sialkot "
+        "for wholesale buyers across Europe and North America.</p>"
+        "<p>Minimum order is fifty pieces per style and production runs four "
+        "to six weeks from sample approval.</p></div>",
+        "https://x.example/")
+    assert res["ok"] is True and res["passages"] > 0
+
+
+def test_the_heading_is_searchable_but_never_quoted(isolated_knowledge,
+                                                    monkeypatch):
+    """The heading rides along as retrieval context. It must not be glued into
+    the quote — a receptionist reading "Shipping. We deliver..." out loud
+    sounds like a machine reading a web page."""
+    from app.core import embeddings, knowledge
+    monkeypatch.setattr(embeddings, "encode",
+                        lambda texts, is_query=False: None)
+    monkeypatch.setattr(embeddings, "warm", lambda background=True: {})
+
+    # Several sections, so BM25's IDF is meaningful — a one-passage corpus
+    # gives every term a near-zero score and tests nothing real.
+    knowledge.ingest(
+        "c1",
+        "<h2>Shipping</h2><p>Orders leave the workshop within five working "
+        "days of the deposit clearing, sent by courier.</p>"
+        "<h2>Materials</h2><p>Every hide is vegetable tanned and sourced from "
+        "certified European tanneries with full traceability.</p>"
+        "<h2>Payment</h2><p>Terms are fifty percent deposit with the order and "
+        "the balance before dispatch, by bank transfer.</p>",
+        "https://x.example/")
+    # Findable by the heading word even though the sentence never says it.
+    res = knowledge.search("c1", "shipping")
+    assert res["ok"] is True
+    assert res["hits"][0]["section"] == "Shipping"
+    assert not res["hits"][0]["text"].startswith("Shipping.")
