@@ -17,7 +17,7 @@ import os
 import tempfile
 
 from .core import (analytics, billing, clients, evidence, learning, reflection,
-                   routing, traffic, voice_sessions)
+                   knowledge, routing, traffic, voice_sessions)
 from .store import STORE, Store
 
 
@@ -63,6 +63,9 @@ def save(store: Store = STORE) -> None:
             # on restart would make session replay a feature that only works
             # until the container recycles.
             "voice": voice_sessions.export_state(),
+            # Re-crawling every client on every restart to rebuild this would
+            # be slow and rude to their servers.
+            "knowledge": knowledge.export_state(),
             # Provenance is the whole value of the ledger. Losing it on restart
             # would leave values with no record of where they came from, which
             # is the state this replaced.
@@ -124,6 +127,9 @@ def load(store: Store = STORE) -> None:
         voice = data.get("voice")
         if isinstance(voice, dict):
             voice_sessions.import_state(voice)
+        kb = data.get("knowledge")
+        if isinstance(kb, dict):
+            knowledge.import_state(kb)
         ev = data.get("evidence")
         if isinstance(ev, dict):
             evidence.import_state(ev)

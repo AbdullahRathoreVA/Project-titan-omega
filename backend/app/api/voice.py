@@ -173,6 +173,33 @@ def end_session(sid: str) -> dict:
     return out
 
 
+class KnowledgeAsk(BaseModel):
+    client_id: str
+    question: str = Field(..., min_length=2)
+    lang: str = Field(default="en")
+
+
+@router.post("/knowledge/ask")
+def knowledge_ask(req: KnowledgeAsk) -> dict:
+    """Answer a caller's question from that business's own website.
+
+    This is what turns the voice layer into a receptionist rather than a
+    chatbot: every answer is retrieved from pages Titan actually crawled, and
+    every answer carries the URL it came from. When the site does not cover
+    the question, it says so — inventing an opening time creates a customer
+    who turns up to a closed door and blames the business.
+    """
+    from ..core import knowledge
+    return knowledge.answer(req.client_id, req.question, req.lang)
+
+
+@router.get("/knowledge/{client_id}")
+def knowledge_stats(client_id: str) -> dict:
+    """What Titan actually knows about this business, and from which pages."""
+    from ..core import knowledge
+    return knowledge.stats(client_id)
+
+
 @router.get("/capabilities")
 def capabilities() -> dict:
     """What the voice layer can actually do on this deployment, right now.

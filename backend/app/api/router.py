@@ -1037,6 +1037,12 @@ def account_onboard(req: OnboardIn,
                     page, _e, _s = _cs._fetch(rec["website"])
                     if page:
                         evidence.observe_from_page(rec["id"], page)
+                        # ...and keep the readable text, so the voice agent can
+                        # answer questions about this business from its own
+                        # site instead of guessing. The fetch is already paid
+                        # for; throwing the text away was the waste.
+                        from ..core import knowledge
+                        knowledge.ingest(rec["id"], page, rec["website"])
                 except Exception:
                     pass
 

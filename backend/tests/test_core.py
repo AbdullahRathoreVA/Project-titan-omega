@@ -2960,3 +2960,110 @@ def test_english_is_untouched_by_any_of_this(client, monkeypatch):
                        json={"question": "q", "lang": "en"}).json()
     assert body["answer"] == "Three signups today."
     assert body["spoken"] == "Three signups today."
+
+
+# ── client knowledge retrieval ─────────────────────────────────────────────
+
+@pytest.fixture
+def isolated_knowledge(monkeypatch, tmp_path):
+    from app import persistence
+    from app.core import knowledge
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "k.json"))
+    knowledge.reset()
+    yield
+    knowledge.reset()
+
+
+SITE = """<html><head><style>.x{color:red}</style></head><body>
+<h1>Triad Thread Studio</h1>
+<p>We are a leather goods manufacturer based in Sialkot, Pakistan, producing
+jackets, bags and gloves for wholesale buyers across Europe and North America.</p>
+<p>Our minimum order quantity is 50 pieces per style, and production takes
+four to six weeks from approval of the sample.</p>
+<p>We ship worldwide by DHL and by sea freight for larger orders. Shipping to
+Germany typically takes five working days by air.</p>
+<script>var junk = "should never be indexed";</script>
+</body></html>"""
+
+
+def test_script_and_style_are_never_indexed(isolated_knowledge):
+    from app.core import knowledge
+    knowledge.ingest("c1", SITE, "https://triad.example/")
+    hit = knowledge.search("c1", "junk indexed")
+    assert not hit["ok"], "script contents must not be searchable"
+
+
+def test_a_caller_question_is_answered_from_the_clients_own_page(
+        isolated_knowledge):
+    from app.core import knowledge
+    knowledge.ingest("c1", SITE, "https://triad.example/")
+
+    res = knowledge.search("c1", "how long does shipping to Germany take?")
+    assert res["ok"] is True
+    assert "Germany" in res["hits"][0]["text"]
+    # The URL travels with the answer — an unsourced claim is the thing this
+    # exists to prevent.
+    assert res["hits"][0]["url"] == "https://triad.example/"
+
+    moq = knowledge.search("c1", "what is the minimum order quantity?")
+    assert moq["ok"] is True
+    assert "50 pieces" in moq["hits"][0]["text"]
+
+
+def test_a_question_the_site_does_not_answer_returns_nothing(isolated_knowledge):
+    """A receptionist that invents an opening time creates a customer who
+    turns up to a closed door."""
+    from app.core import knowledge
+    knowledge.ingest("c1", SITE, "https://triad.example/")
+    res = knowledge.search("c1", "do you offer helicopter rides on Tuesdays")
+    assert res["ok"] is False
+    assert res["hits"] == []
+    assert "does not appear to answer" in res["reason"]
+
+
+def test_answering_with_no_llm_quotes_rather_than_invents(isolated_knowledge,
+                                                          monkeypatch):
+    """A $0 deployment must still answer, and a quote cannot hallucinate."""
+    from app.core import llm, knowledge
+    monkeypatch.setattr(llm, "complete", lambda **kw: "")
+    knowledge.ingest("c1", SITE, "https://triad.example/")
+    out = knowledge.answer("c1", "minimum order quantity?")
+    assert out["ok"] is True
+    assert out["generated_by"] == "quoted"
+    assert "50 pieces" in out["answer"]
+    assert out["sources"][0]["url"] == "https://triad.example/"
+
+
+def test_re_auditing_updates_knowledge_instead_of_duplicating_it(
+        isolated_knowledge):
+    from app.core import knowledge
+    knowledge.ingest("c1", SITE, "https://triad.example/")
+    first = knowledge.stats("c1")["passages"]
+    knowledge.ingest("c1", SITE, "https://triad.example/")
+    assert knowledge.stats("c1")["passages"] == first
+
+
+def test_unindexed_client_says_so_rather_than_guessing(isolated_knowledge):
+    from app.core import knowledge
+    res = knowledge.search("never-seen", "anything")
+    assert res["ok"] is False
+    assert "audit" in res["reason"].lower()
+
+
+def test_knowledge_survives_a_restart(isolated_knowledge):
+    from app.core import knowledge
+    knowledge.ingest("c1", SITE, "https://triad.example/")
+    saved = knowledge.export_state()
+    knowledge.reset()
+    assert knowledge.search("c1", "Germany")["ok"] is False
+    knowledge.import_state(saved)
+    assert knowledge.search("c1", "shipping to Germany")["ok"] is True
+
+
+def test_knowledge_endpoints_are_hidden_from_guests(client, isolated_knowledge,
+                                                    monkeypatch):
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    tok = client.post("/api/demo/enter").json()["token"]
+    h = {"Authorization": f"Bearer {tok}"}
+    assert client.get("/api/voice/knowledge/c1", headers=h).status_code == 403
