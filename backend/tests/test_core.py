@@ -2887,3 +2887,76 @@ def test_a_perfect_page_can_still_reach_100_without_images(monkeypatch):
     assert weights.issubset(seen), weights - seen
     assert not (set(res["passed"]) & set(res["failed"]))
     assert not (set(res["passed"]) & set(res["not_applicable"]))
+
+
+# ── Urdu voice ─────────────────────────────────────────────────────────────
+
+URDU = "عبداللہ، آج تین لوگوں نے سائٹ کھولی۔"
+DEVA = "अब्दुल्लाह, आज तीन लोगों ने साइट खोली।"
+
+
+def test_devanagari_is_never_shown_to_an_urdu_reader(client, monkeypatch):
+    """The single most visible way this was broken: when the model dropped the
+    '###' separator, the Devanagari half was rendered on screen. An Urdu
+    speaker saw Hindi script and reasonably concluded Titan speaks Hindi."""
+    from app.core import llm
+    from app.api import router as r
+    monkeypatch.setattr(llm, "complete", lambda **kw: f"{URDU}\n{DEVA}")
+
+    body = client.post("/api/assistant",
+                       json={"question": "how many signups?", "lang": "ur"}).json()
+    assert not r.has_devanagari(body["answer"]), body["answer"]
+    assert r.has_arabic_script(body["answer"])
+    # ...and the spoken line is the Devanagari, which is what a Hindi TTS
+    # voice can actually pronounce.
+    assert r.has_devanagari(body["spoken"])
+
+
+def test_the_separator_path_still_works(client, monkeypatch):
+    from app.core import llm
+    from app.api import router as r
+    monkeypatch.setattr(llm, "complete", lambda **kw: f"{URDU}\n###\n{DEVA}")
+    body = client.post("/api/assistant",
+                       json={"question": "q", "lang": "ur"}).json()
+    assert body["answer"].strip() == URDU
+    assert body["spoken"].strip() == DEVA
+    assert not r.has_devanagari(body["answer"])
+
+
+def test_urdu_only_reply_is_never_left_silent(client, monkeypatch):
+    """If the model returns Urdu and no transliteration at all, speaking must
+    still happen. Inventing a transliteration here would be guessing at
+    pronunciation, so the Urdu itself is spoken."""
+    from app.core import llm
+    monkeypatch.setattr(llm, "complete", lambda **kw: URDU)
+    body = client.post("/api/assistant",
+                       json={"question": "q", "lang": "ur"}).json()
+    assert body["answer"].strip() == URDU
+    assert body["spoken"].strip(), "spoken must never be empty"
+
+
+def test_the_prompt_asks_for_transliteration_not_translation(monkeypatch):
+    """The old prompt said 'write the SAME reply in Hindi', so the model
+    translated into Hindi vocabulary and a Hindi voice read Hindi. Urdu
+    speakers heard Hindi because it WAS Hindi."""
+    captured = {}
+    from app.core import llm
+    from app.api import router as r
+
+    def fake(**kw):
+        captured.update(kw)
+        return URDU
+    monkeypatch.setattr(llm, "complete", fake)
+    r.assistant(r.AssistantRequest(question="q", lang="ur"))
+    sys = captured.get("system", "")
+    assert "TRANSLITERATE" in sys
+    assert "Do NOT translate into Hindi" in sys
+
+
+def test_english_is_untouched_by_any_of_this(client, monkeypatch):
+    from app.core import llm
+    monkeypatch.setattr(llm, "complete", lambda **kw: "Three signups today.")
+    body = client.post("/api/assistant",
+                       json={"question": "q", "lang": "en"}).json()
+    assert body["answer"] == "Three signups today."
+    assert body["spoken"] == "Three signups today."

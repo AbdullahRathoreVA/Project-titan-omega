@@ -7,6 +7,7 @@ All routes are mounted under ``/api``. Responses use the pydantic schemas in
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -773,9 +774,22 @@ def assistant(req: AssistantRequest) -> dict:
     )
 
     if is_urdu:
+        # The old prompt said "write the SAME reply in Hindi (Devanagari)",
+        # which asked the model to TRANSLATE into Hindi. It obliged: Hindi
+        # vocabulary and Hindi register, which a Hindi voice then read as
+        # Hindi. Urdu speakers heard Hindi because it WAS Hindi.
+        #
+        # What is actually wanted is a transliteration: the same Urdu
+        # sentence, letter for letter, written in Devanagari purely so a
+        # Hindi TTS voice pronounces it. Urdu and Hindi share phonetics; they
+        # do not share vocabulary at this register.
         instructions = (
-            "Reply in Urdu (Arabic script). Then output a line containing exactly '###' "
-            "and after it write the SAME reply in Hindi (Devanagari script) for text-to-speech."
+            "Reply in Urdu using Arabic script. Then output a line containing "
+            "exactly '###'. After it, TRANSLITERATE that same Urdu sentence "
+            "into Devanagari script — keep the Urdu words exactly as they are "
+            "and only change the script, so an Urdu speaker hears Urdu. "
+            "Do NOT translate into Hindi and do NOT substitute Hindi "
+            "vocabulary. The '###' line is mandatory."
         )
     else:
         instructions = f"Answer ONLY in {ASSISTANT_LANGS[lang]}."
@@ -794,10 +808,21 @@ def assistant(req: AssistantRequest) -> dict:
 
     answer = raw or ""
     spoken = raw or ""
-    if raw and is_urdu and "###" in raw:
-        parts = raw.split("###", 1)
-        answer = parts[0].strip()
-        spoken = parts[1].strip()
+    if raw and is_urdu:
+        if "###" in raw:
+            parts = raw.split("###", 1)
+            answer = parts[0].strip()
+            spoken = parts[1].strip()
+        else:
+            # The model dropped the separator — common, and it used to mean
+            # the Devanagari half was shown to the reader. An Urdu speaker
+            # then sees Hindi script, which is the single most visible way
+            # this feature was broken.
+            answer, spoken = _split_urdu_scripts(raw)
+        # Belt and braces: whatever happened above, the DISPLAYED answer must
+        # never contain Devanagari, and the SPOKEN line must never be empty.
+        answer = _strip_devanagari(answer) or _strip_devanagari(raw)
+        spoken = spoken.strip() or answer
 
     if not raw:
         if is_urdu:
@@ -819,6 +844,52 @@ def assistant(req: AssistantRequest) -> dict:
 
     STORE.emit("titan-assistant", "command", f'Abdullah asked: "{req.question[:80]}"', "info")
     return {"answer": answer, "spoken": spoken, "lang": lang}
+
+
+# --- Urdu script handling -------------------------------------------------
+# Urdu is written in Arabic script; Hindi in Devanagari. They share phonetics,
+# which is why a Hindi TTS voice can read transliterated Urdu convincingly —
+# and also why the two kept getting mixed up here, with Devanagari reaching
+# the screen. These keep the two apart explicitly instead of trusting the
+# model to emit a separator.
+
+_DEVANAGARI = re.compile(r"[ऀ-ॿ]")
+_ARABIC = re.compile(r"[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]")
+
+
+def has_devanagari(text: str) -> bool:
+    return bool(_DEVANAGARI.search(text or ""))
+
+
+def has_arabic_script(text: str) -> bool:
+    return bool(_ARABIC.search(text or ""))
+
+
+def _strip_devanagari(text: str) -> str:
+    """Drop any line containing Devanagari. Line-wise rather than
+    character-wise: removing individual glyphs would leave shredded words."""
+    kept = [ln for ln in (text or "").splitlines() if not has_devanagari(ln)]
+    return "\n".join(kept).strip()
+
+
+def _split_urdu_scripts(raw: str) -> tuple[str, str]:
+    """Separate an Urdu reply from its Devanagari transliteration by script,
+    for when the model forgets the '###' separator.
+
+    Returns (displayed_urdu, spoken_devanagari). If there is no Devanagari at
+    all the Urdu is used for both — a Hindi voice reading Arabic script is
+    poor, but silence would be worse and inventing a transliteration here
+    would be guessing at pronunciation.
+    """
+    urdu_lines, deva_lines = [], []
+    for ln in (raw or "").splitlines():
+        if has_devanagari(ln):
+            deva_lines.append(ln)
+        elif ln.strip():
+            urdu_lines.append(ln)
+    urdu = "\n".join(urdu_lines).strip()
+    deva = "\n".join(deva_lines).strip()
+    return (urdu or raw.strip()), (deva or urdu or raw.strip())
 
 
 # --- intelligence status --------------------------------------------------

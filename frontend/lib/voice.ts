@@ -27,6 +27,20 @@ export function langTag(lang: string): string {
   return LANG_TAGS[lang] ?? "en-US";
 }
 
+/** True when Urdu was asked for and no Urdu voice exists on this device, so a
+ *  Hindi voice is doing the speaking. Surfaced in the UI: the phonetics carry,
+ *  but the user deserves to know why it does not sound like Urdu. */
+export function usedUrduFallback(
+  voices: SpeechSynthesisVoice[],
+  lang: string,
+): boolean {
+  if (lang !== "ur") return false;
+  const hasUrdu = voices.some(
+    (v) => v.lang.toLowerCase().startsWith("ur") || /urdu/i.test(v.name),
+  );
+  return !hasUrdu;
+}
+
 // Broadcast speaking state so visuals (the holographic Founder) can react.
 export function emitSpeech(speaking: boolean) {
   try {
@@ -101,13 +115,17 @@ export function pickVoice(
   const byName = (v: SpeechSynthesisVoice) => (hint ? hint.test(v.name) : false);
 
   if (code === "ur") {
-    // Urdu first, then Hindi (same phonetics, far more widely installed).
+    // A REAL Urdu voice first — ur-PK or ur-IN. Only if none is installed do
+    // we fall back to Hindi, which shares Urdu's phonetics and is far more
+    // widely shipped. The fallback is why Titan can sound Hindi to an Urdu
+    // speaker, so `usedUrduFallback` reports it rather than leaving the user
+    // to wonder.
+    const real = voices.find((v) => byTag(v) || byName(v));
+    if (real) return real;
     return (
-      voices.find((v) => byTag(v) || byName(v)) ??
       voices.find(
         (v) => v.lang.toLowerCase().startsWith("hi") || /hindi/i.test(v.name),
-      ) ??
-      null
+      ) ?? null
     );
   }
   // Prefer non-local (higher-quality online) voices when several match.

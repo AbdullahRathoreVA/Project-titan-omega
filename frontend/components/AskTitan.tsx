@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Mic, MicOff, Send, Sparkles, Volume2 } from "lucide-react";
-import { langTag, speakText } from "@/lib/voice";
+import { langTag, loadVoices, speakText, usedUrduFallback } from "@/lib/voice";
 import { speakPremium } from "@/lib/sound";
 import { isGuest } from "@/lib/guest";
 import VoiceSphere from "./VoiceSphere";
@@ -47,6 +47,8 @@ export function AskTitan() {
   const [voiceOut, setVoiceOut] = useState(true);
   // Language code whose TTS voice is missing on this device (honest notice).
   const [voiceMissing, setVoiceMissing] = useState<string | null>(null);
+  // Urdu asked for, but only a Hindi voice available on this device.
+  const [urduFallback, setUrduFallback] = useState(false);
   const recRef = useRef<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
   const endRef = useRef<HTMLDivElement | null>(null);
   // One session per mounted panel, so the Voice Agents screen shows a
@@ -118,9 +120,20 @@ export function AskTitan() {
               );
             }).then(done);
           } else {
-            void speakText(spoken, lang === "ur" ? "hi" : lang, done).then((found) =>
+            // Urdu is requested as "ur" so a real ur-PK voice is used when one
+            // exists; pickVoice falls back to Hindi only if none is installed.
+            // Previously this passed "hi" outright, which meant a device WITH
+            // an Urdu voice never used it.
+            void speakText(spoken, lang, done).then((found) =>
               setVoiceMissing(found ? null : lang),
             );
+            if (lang === "ur") {
+              void loadVoices().then((vs2) =>
+                setUrduFallback(usedUrduFallback(vs2, "ur")),
+              );
+            } else {
+              setUrduFallback(false);
+            }
           }
         }
       } catch {
@@ -249,6 +262,23 @@ export function AskTitan() {
         )}
         <div ref={endRef} />
       </div>
+
+      {/* Urdu is written in Arabic script, Hindi in Devanagari, and they share
+          phonetics — so a Hindi voice reading transliterated Urdu is
+          intelligible, and is what most devices fall back to. Saying so beats
+          leaving an Urdu speaker to conclude Titan simply speaks Hindi. */}
+      {urduFallback && !voiceMissing && (
+        <div className="border-t border-hud-violet/20 bg-hud-violet/5 px-3 py-2 text-[10px] leading-relaxed text-hud-violet">
+          کوئی اردو آواز انسٹال نہیں — ہندی آواز اردو الفاظ بول رہی ہے۔
+          <span className="mt-0.5 block text-slate-400">
+            No Urdu voice is installed, so a Hindi voice is speaking the Urdu
+            words — the two share pronunciation, so it stays understandable.
+            For a true Urdu voice, open Titan in{" "}
+            <span className="font-semibold">Microsoft Edge</span>, or add Urdu
+            under Windows Settings → Time &amp; Language → Speech.
+          </span>
+        </div>
+      )}
 
       {voiceMissing && (
         <div className="border-t border-hud-amber/20 bg-hud-amber/5 px-3 py-2 text-[10px] leading-relaxed text-hud-amber">
