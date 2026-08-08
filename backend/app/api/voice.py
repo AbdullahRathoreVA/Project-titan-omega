@@ -200,6 +200,30 @@ def knowledge_stats(client_id: str) -> dict:
     return knowledge.stats(client_id)
 
 
+@router.post("/knowledge/backfill")
+def knowledge_backfill(client_id: str = "") -> dict:
+    """Embed passages indexed before the model finished downloading.
+
+    The first pages are almost always indexed while the ~130 MB model is still
+    arriving, so without this a client would stay keyword-only until its next
+    audit.
+    """
+    from ..core import knowledge
+    return knowledge.backfill(client_id)
+
+
+@router.get("/retrieval")
+def retrieval_status() -> dict:
+    """Which ranking is actually running right now, and why.
+
+    Semantic search is an upgrade, not a dependency — this reports honestly
+    when it is still downloading or could not start, instead of letting the
+    dashboard imply a capability the container does not have.
+    """
+    from ..core import embeddings
+    return embeddings.status()
+
+
 @router.get("/capabilities")
 def capabilities() -> dict:
     """What the voice layer can actually do on this deployment, right now.

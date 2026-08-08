@@ -25,3 +25,10 @@ reportlab==4.4.9
 # so a missing package degrades to an honest "not configured" instead of
 # taking the API down the way reportlab once did.
 dodopayments>=1.0.0
+
+# Local CPU embeddings for hybrid retrieval (core/embeddings.py). ~130 MB of
+# ONNX weights, downloaded once on first search — NEVER at import or boot,
+# because an 18s blocking download during startup fails the Space health
+# check. If it cannot load, retrieval falls back to BM25 and keeps working.
+# Set TITAN_EMBEDDINGS=0 to force BM25 on a memory-tight deployment.
+fastembed>=0.4.0

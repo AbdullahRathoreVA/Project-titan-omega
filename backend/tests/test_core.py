@@ -3067,3 +3067,88 @@ def test_knowledge_endpoints_are_hidden_from_guests(client, isolated_knowledge,
     tok = client.post("/api/demo/enter").json()["token"]
     h = {"Authorization": f"Bearer {tok}"}
     assert client.get("/api/voice/knowledge/c1", headers=h).status_code == 403
+
+
+# ── hybrid retrieval ───────────────────────────────────────────────────────
+
+def test_the_embedding_model_is_never_loaded_at_import():
+    """It downloads ~130 MB and took 18s on first load here. At import that
+    would block boot and fail the Space health check — reportlab took
+    production down in exactly this way."""
+    import inspect
+    from app.core import embeddings
+    head = inspect.getsource(embeddings).split("def _load")[0]
+    assert "from fastembed" not in head
+    assert "import fastembed" not in head
+
+
+def test_retrieval_still_answers_when_embeddings_never_load(
+        isolated_knowledge, monkeypatch):
+    """Semantic search is an upgrade, not a dependency. Titan must keep
+    answering on a container where the model cannot start."""
+    from app.core import embeddings, knowledge
+    monkeypatch.setattr(embeddings, "encode",
+                        lambda texts, is_query=False: None)
+    monkeypatch.setattr(embeddings, "warm", lambda background=True: {})
+
+    knowledge.ingest("c1", SITE, "https://triad.example/")
+    res = knowledge.search("c1", "minimum order quantity")
+    assert res["ok"] is True
+    assert res["mode"] == "bm25"
+    assert "50 pieces" in res["hits"][0]["text"]
+
+
+def test_semantic_only_overrules_keyword_when_it_is_confident(
+        isolated_knowledge, monkeypatch):
+    """Measured: in the 0.52-0.64 cosine band semantic ranking turned correct
+    BM25 answers into wrong ones. It may only lead above COS_LEAD, so this is
+    a strict improvement on BM25 rather than a coin flip against it."""
+    from app.core import embeddings, knowledge
+
+    # Patch BEFORE ingest so passages carry vectors from the start.
+    monkeypatch.setattr(embeddings, "encode",
+                        lambda texts, is_query=False: [[1.0] + [0.0] * (embeddings.DIMS - 1)
+                                                       for _ in texts])
+    monkeypatch.setattr(embeddings, "warm", lambda background=True: {})
+    monkeypatch.setattr(embeddings, "status", lambda: {"state": "ready"})
+
+    knowledge.ingest("c1", SITE, "https://triad.example/")
+    assert knowledge.stats("c1")["embedded"] > 0
+
+    # Confident: identical vectors give cosine 1.0, well above COS_LEAD.
+    confident = knowledge.search("c1", "minimum order quantity")
+    assert confident["mode"] == "hybrid"
+
+    # Not confident: identical vectors but a cosine below the lead bar means
+    # BM25 keeps the ranking.
+    monkeypatch.setattr(embeddings, "cosine", lambda a, b: 0.55)
+    lukewarm = knowledge.search("c1", "minimum order quantity")
+    assert lukewarm["mode"] == "bm25"
+    assert "50 pieces" in lukewarm["hits"][0]["text"]
+
+
+def test_backfill_embeds_what_was_indexed_before_the_model_arrived(
+        isolated_knowledge, monkeypatch):
+    """The first pages are always indexed while the model is still
+    downloading; without backfill a client stays keyword-only forever."""
+    from app.core import embeddings, knowledge
+    monkeypatch.setattr(embeddings, "encode",
+                        lambda texts, is_query=False: None)
+    monkeypatch.setattr(embeddings, "warm", lambda background=True: {})
+    knowledge.ingest("c1", SITE, "https://triad.example/")
+    assert knowledge.stats("c1")["embedded"] == 0
+
+    monkeypatch.setattr(embeddings, "encode",
+                        lambda texts, is_query=False: [[0.5] * embeddings.DIMS
+                                                       for _ in texts])
+    out = knowledge.backfill("c1")
+    assert out["embedded"] > 0 and out["remaining"] == 0
+
+
+def test_retrieval_status_explains_itself():
+    from app.core import embeddings
+    embeddings.reset()
+    s = embeddings.status()
+    assert s["state"] == "not_loaded"
+    assert "health check" in s["note"]
+    assert s["dimensions"] == 384
