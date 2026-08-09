@@ -3389,3 +3389,82 @@ def test_the_report_says_what_it_cannot_collect(isolated_traffic):
     assert "phone" in " ".join(nc).lower() or "phone_number" in nc
     assert "no phone number" in nc["phone_number"].lower()
     assert "Country only" in nc["street_or_city"]
+
+
+# ── demo workspace ─────────────────────────────────────────────────────────
+
+def test_demo_clients_never_count_as_real_businesses(client, isolated_clients,
+                                                     isolated_billing):
+    """Founder analytics exists to answer 'is anybody actually using this?'.
+    Seeding demo records to look busy would destroy the only instrument that
+    can answer it."""
+    from app.core import analytics, billing, clients as creg
+    from app.engines import demo_workspace
+
+    demo_workspace.ensure()
+    assert any(demo_workspace.is_demo_client(c) for c in creg.all_clients())
+
+    # A real subscriber owning a real business, plus a demo record attached.
+    billing.signup("real@example.com", "hunter2hunter2")
+    real = creg.create_client(business_name="Triad Thread Studio",
+                              username="real-1", password="x" * 20,
+                              website="https://triadthread.example")
+    billing.attach_client("real@example.com", real["id"])
+    demo = next(c for c in creg.all_clients() if demo_workspace.is_demo_client(c))
+    billing.attach_client("real@example.com", demo["id"])
+
+    row = analytics.report()["accounts"][0]
+    assert row["business_count"] == 1, "the demo record leaked into the funnel"
+    assert row["businesses"][0]["business_name"] == "Triad Thread Studio"
+
+
+def test_demo_sites_do_not_flatter_the_client_average(client, isolated_clients):
+    """The client average is a claim about Abdullah's book of business."""
+    from app.core import clients as creg
+    from app.engines import demo_workspace
+
+    demo_workspace.ensure()
+    for c in creg.all_clients():
+        if demo_workspace.is_demo_client(c):
+            creg.update_raw(c["id"], last_audit={"score": 100, "grade": "A",
+                                                 "findings": []})
+    poor = creg.create_client(business_name="Real Client", username="rc-1",
+                              password="x" * 20, website="https://real.example")
+    creg.update_raw(poor["id"], last_audit={"score": 40, "grade": "F",
+                                            "findings": [{"id": "x"}]})
+
+    body = client.get("/api/founder/seo-overview").json()
+    assert body["client_average"] == 40, "demo scores inflated the average"
+    assert any(r["is_demo"] for r in body["clients"]), "demos still visible"
+
+
+def test_seeding_is_idempotent(isolated_clients):
+    """It runs on every boot and on every cycle."""
+    from app.core import clients as creg
+    from app.engines import demo_workspace
+    demo_workspace.ensure()
+    first = len(creg.all_clients())
+    demo_workspace.ensure()
+    demo_workspace.ensure()
+    assert len(creg.all_clients()) == first
+
+
+def test_the_demo_workspace_can_be_switched_off(isolated_clients, monkeypatch):
+    """Once real clients arrive, the practice data should go."""
+    from app.core import clients as creg
+    from app.engines import demo_workspace
+    monkeypatch.setenv("TITAN_DEMO_WORKSPACE", "0")
+    out = demo_workspace.ensure()
+    assert out["enabled"] is False
+    assert creg.all_clients() == [] or not any(
+        demo_workspace.is_demo_client(c) for c in creg.all_clients())
+    assert demo_workspace.cycle(force=True) is None
+
+
+def test_demo_workspace_status_is_founder_only(client, monkeypatch):
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    tok = client.post("/api/demo/enter").json()["token"]
+    r = client.get("/api/founder/demo-workspace",
+                   headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 403

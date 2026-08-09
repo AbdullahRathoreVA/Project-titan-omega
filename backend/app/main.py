@@ -78,6 +78,14 @@ async def _heartbeat_loop() -> None:
             with contextlib.suppress(Exception):
                 from .engines import self_seo
                 await asyncio.to_thread(self_seo.cycle)
+
+            # Gives the audit, knowledge and watch engines real sites to work
+            # on instead of spinning against an empty client list. Keeps its
+            # own 6-hour interval, so this is a no-op the rest of the time.
+            with contextlib.suppress(Exception):
+                from .engines import demo_workspace
+                await asyncio.to_thread(demo_workspace.cycle)
+
             # Per-client news watch. Keeps its own 3-hour interval and
             # round-robins a few clients per tick, so a large portfolio never
             # stalls the heartbeat.

@@ -138,11 +138,14 @@ def report(days: int = 30, recent: int = 40) -> dict:
         log = logged.get(email, {})
 
         # Businesses actually still present in the registry. A stale id in the
-        # account is not a business the person can use.
+        # account is not a business the person can use, and a seeded demo site
+        # is not a business at all — counting either would make the funnel
+        # describe something other than real usage.
+        from ..engines import demo_workspace as _demo
         live_clients = []
         for cid in cids:
             row = client_registry.public(cid)
-            if row:
+            if row and not _demo.is_demo_client(row):
                 live_clients.append({
                     "id": cid,
                     "business_name": row.get("business_name", ""),

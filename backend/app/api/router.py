@@ -1281,6 +1281,21 @@ def founder_set_plan(email: str, req: GrantIn) -> dict:
     return {"account": account, "billed": False}
 
 
+@router.get("/founder/demo-workspace", tags=["executive"])
+def founder_demo_workspace() -> dict:
+    """What the 24/7 engines are practising on, and when they last ran."""
+    from ..engines import demo_workspace
+    return demo_workspace.status()
+
+
+@router.post("/founder/demo-workspace/run", tags=["executive"])
+def founder_demo_workspace_run() -> dict:
+    """Force a cycle now instead of waiting for the interval."""
+    from ..engines import demo_workspace
+    return demo_workspace.cycle(force=True) or {"skipped": True,
+                                                "reason": "Demo workspace is disabled."}
+
+
 @router.get("/founder/traffic", tags=["executive"])
 def founder_traffic(days: int = Query(default=30, ge=1, le=90)) -> dict:
     """How many people opened the site, measured in-process — no analytics
@@ -1301,10 +1316,13 @@ def founder_seo_overview() -> dict:
     from ..engines import self_seo
 
     own = self_seo.report()
+    from .. engines import demo_workspace as _demo
+
     rows = []
     for rec in clients.all_clients():
         cid = rec.get("id", "")
         audit = rec.get("last_audit") or {}
+        is_demo = _demo.is_demo_client(rec)
         rows.append({
             "id": cid,
             "business_name": rec.get("business_name", ""),
@@ -1317,9 +1335,13 @@ def founder_seo_overview() -> dict:
             "grade": audit.get("grade"),
             "findings": len(audit.get("findings", []) or []),
             "audited": bool(audit),
+            "is_demo": is_demo,
         })
 
-    scored = [r["score"] for r in rows if isinstance(r.get("score"), (int, float))]
+    # The client average is a claim about Abdullah's book of business. Demo
+    # sites are Titan's own pages and would flatter it.
+    scored = [r["score"] for r in rows
+              if isinstance(r.get("score"), (int, float)) and not r["is_demo"]]
     rows.sort(key=lambda r: (r["score"] is None, r["score"] or 0))
     import time as _t
     checked_at = own.get("checked_at")
