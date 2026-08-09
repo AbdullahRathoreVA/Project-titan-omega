@@ -965,7 +965,7 @@ class OnboardIn(BaseModel):
 
 
 @router.post("/account/onboard", tags=["billing"])
-def account_onboard(req: OnboardIn,
+def account_onboard(req: OnboardIn, request: Request,
                     x_account_token: Optional[str] = Header(None)) -> dict:
     """A subscriber adds their business and gets their first audit immediately.
 
@@ -982,6 +982,14 @@ def account_onboard(req: OnboardIn,
     email = billing.resolve(x_account_token or "")
     if not email:
         raise HTTPException(status_code=401, detail="Sign in first")
+
+    # Onboarding fetches a URL the caller supplies. Unmetered, that makes Titan
+    # a request amplifier aimed at somebody else's server. Keyed on the
+    # account, since the caller is authenticated here.
+    from ..core import ratelimit
+    limited = ratelimit.check("onboard", email)
+    if not limited["allowed"]:
+        raise HTTPException(status_code=429, detail=limited)
 
     verdict = billing.can_add_client(email)
     if not verdict["allowed"]:
@@ -1129,8 +1137,13 @@ def list_plans() -> dict:
 
 
 @router.post("/signup", tags=["billing"])
-def signup(req: SignupIn) -> dict:
-    from ..core import analytics, billing
+def signup(req: SignupIn, request: Request) -> dict:
+    from ..core import analytics, billing, ratelimit
+    verdict = ratelimit.check("signup", ratelimit.identity_for(request))
+    if not verdict["allowed"]:
+        # 429 with the reason and a retry time, not a bare refusal — the same
+        # rule the plan quotas follow.
+        raise HTTPException(status_code=429, detail=verdict)
     try:
         account = billing.signup(req.email, req.password, req.plan)
     except ValueError as e:
@@ -1141,8 +1154,13 @@ def signup(req: SignupIn) -> dict:
 
 
 @router.post("/account/login", tags=["billing"])
-def account_login(req: SignupIn) -> dict:
-    from ..core import billing
+def account_login(req: SignupIn, request: Request) -> dict:
+    from ..core import billing, ratelimit
+    # Slows credential stuffing. Keyed on the caller, not the email, so an
+    # attacker cannot lock a real customer out of their own account.
+    verdict = ratelimit.check("login", ratelimit.identity_for(request))
+    if not verdict["allowed"]:
+        raise HTTPException(status_code=429, detail=verdict)
     token = billing.authenticate(req.email, req.password)
     if not token:
         raise HTTPException(status_code=401, detail="Wrong email or password")

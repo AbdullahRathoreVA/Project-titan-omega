@@ -52,6 +52,12 @@ def fresh_store(monkeypatch):
     STORE.feed.clear()
     STORE.metrics.clear()
     STORE.posts.clear()
+    # Rate-limit buckets are module-level and keyed on "testclient", so every
+    # test in the session shares them. Without this reset one test that
+    # exhausts a bucket makes a later, unrelated test fail with 429 — which is
+    # exactly what happened when limits were introduced.
+    from app.core import ratelimit
+    ratelimit.reset()
     seed(STORE)
     opportunity.discover(STORE)
     evolution.ensure_weights(STORE)
@@ -3468,3 +3474,119 @@ def test_demo_workspace_status_is_founder_only(client, monkeypatch):
     r = client.get("/api/founder/demo-workspace",
                    headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 403
+
+
+# ── SSRF guard ─────────────────────────────────────────────────────────────
+
+def test_private_and_metadata_addresses_are_refused():
+    """Titan crawls whatever a stranger types into signup. Without this,
+    http://169.254.169.254/ is fetched from inside Titan's trust boundary and
+    returned as an audit."""
+    from app.core.safe_fetch import BlockedURL, check
+    for bad in ("http://169.254.169.254/latest/meta-data/",
+                "http://127.0.0.1:7860/api/admin/clients",
+                "http://localhost/admin",
+                "http://[::1]/",
+                "http://10.0.0.5/internal",
+                "http://192.168.1.1/",
+                "http://metadata.google.internal/"):
+        with pytest.raises(BlockedURL):
+            check(bad)
+
+
+def test_non_web_schemes_are_refused():
+    """file:///etc/passwd is a file read dressed as a crawl, and urllib will
+    happily serve it."""
+    from app.core.safe_fetch import BlockedURL, check
+    for bad in ("file:///etc/passwd", "ftp://example.com/x", "gopher://x/"):
+        with pytest.raises(BlockedURL):
+            check(bad)
+
+
+def test_a_hostname_resolving_to_loopback_is_refused(monkeypatch):
+    """Checking the STRING is the classic mistake — evil.com can resolve to
+    127.0.0.1. The address is what must be tested."""
+    import socket as _s
+    from app.core import safe_fetch
+    monkeypatch.setattr(safe_fetch.socket, "getaddrinfo",
+                        lambda *a, **k: [(_s.AF_INET, _s.SOCK_STREAM, 6, "",
+                                          ("127.0.0.1", 80))])
+    with pytest.raises(safe_fetch.BlockedURL) as e:
+        safe_fetch.check("http://totally-legit.example/")
+    assert "private or reserved" in str(e.value)
+
+
+def test_a_real_public_url_passes(monkeypatch):
+    import socket as _s
+    from app.core import safe_fetch
+    monkeypatch.setattr(safe_fetch.socket, "getaddrinfo",
+                        lambda *a, **k: [(_s.AF_INET, _s.SOCK_STREAM, 6, "",
+                                          ("93.184.216.34", 443))])
+    assert safe_fetch.check("https://example.com/") == "https://example.com/"
+
+
+def test_the_audit_engine_refuses_a_private_target():
+    """End to end: the guard is actually wired into the crawler."""
+    from app.engines import client_seo
+    res = client_seo.audit("http://169.254.169.254/", business_name="Evil")
+    assert res["ok"] is False
+    assert "private or reserved" in str(res.get("error", "")) or \
+           "not a public website" in str(res.get("error", ""))
+
+
+# ── rate limiting ──────────────────────────────────────────────────────────
+
+@pytest.fixture
+def limits_on(monkeypatch):
+    from app.core import ratelimit
+    monkeypatch.setattr(ratelimit, "ENABLED", True)
+    ratelimit.reset()
+    yield
+    ratelimit.reset()
+
+
+def test_signup_is_rate_limited(client, isolated_billing, limits_on):
+    """Unauthenticated and creates a permanent record. A loop fills the
+    account table and buries the real first customer."""
+    limit = 5
+    for i in range(limit):
+        r = client.post("/api/signup", json={"email": f"a{i}@example.com",
+                                             "password": "hunter2hunter2"})
+        assert r.status_code == 200, r.text
+    blocked = client.post("/api/signup", json={"email": "toomany@example.com",
+                                               "password": "hunter2hunter2"})
+    assert blocked.status_code == 429
+    detail = blocked.json()["detail"]
+    # A bare 429 teaches the caller nothing and looks like a fault.
+    assert detail["limit"] == limit
+    assert detail["retry_after_seconds"] > 0
+    assert "Too many requests" in detail["reason"]
+
+
+def test_login_attempts_are_throttled(client, isolated_billing, limits_on):
+    from app.core import billing
+    billing.signup("real@example.com", "hunter2hunter2")
+    for _ in range(12):
+        client.post("/api/account/login", json={"email": "real@example.com",
+                                                "password": "wrong-password"})
+    r = client.post("/api/account/login", json={"email": "real@example.com",
+                                                "password": "hunter2hunter2"})
+    assert r.status_code == 429
+
+
+def test_limits_are_on_in_production_and_isolated_per_test(limits_on):
+    """Limits run during the suite rather than being switched off, so their
+    real behaviour is covered. Isolation comes from resetting buckets between
+    tests, not from disabling the feature."""
+    from app.core import ratelimit
+    assert ratelimit.ENABLED is True
+    assert ratelimit.LIMITS["signup"] == (5, 3600)
+    # A fresh bucket really is fresh — this is what stops cross-test bleed.
+    first = ratelimit.check("signup", "someone")
+    assert first["allowed"] is True and first["used"] == 1
+
+
+def test_an_unknown_bucket_never_blocks():
+    """A typo in a bucket name must not silently lock an endpoint shut."""
+    from app.core import ratelimit
+    assert ratelimit.check("not-a-real-bucket", "x")["allowed"] is True

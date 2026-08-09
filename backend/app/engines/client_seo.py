@@ -49,20 +49,16 @@ WEIGHTS = {
 
 
 def _fetch(url: str) -> tuple[Optional[str], Optional[str], int]:
-    """Return (html, error, status)."""
-    try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": UA,
-            "Accept": "text/html,application/xhtml+xml",
-        })
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            raw = r.read(1_500_000)
-            enc = r.headers.get_content_charset() or "utf-8"
-            return raw.decode(enc, errors="replace"), None, r.status
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}", e.code
-    except Exception as e:
-        return None, f"{type(e).__name__}", 0
+    """Return (html, error, status).
+
+    Every URL here came from a stranger typing it into the signup form, so it
+    goes through the SSRF guard rather than straight to urllib. Without that,
+    `http://169.254.169.254/` or `http://127.0.0.1:7860/api/admin/clients`
+    would be fetched from inside Titan's own trust boundary and returned as an
+    "audit". See core/safe_fetch.py.
+    """
+    from ..core import safe_fetch
+    return safe_fetch.fetch(url, user_agent=UA, timeout=TIMEOUT)
 
 
 def _text(pattern: str, html: str, group: int = 1) -> str:
