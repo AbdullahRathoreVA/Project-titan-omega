@@ -1196,6 +1196,91 @@ def founder_analytics(days: int = Query(default=30, ge=1, le=365),
     return analytics.report(days=days, recent=recent)
 
 
+class GrantIn(BaseModel):
+    email: str = Field(..., min_length=5)
+    password: str = Field(default="", min_length=0)
+    plan: str = Field(default="enterprise")
+    note: str = Field(default="")
+
+
+@router.post("/founder/accounts", tags=["executive"])
+def founder_create_account(req: GrantIn) -> dict:
+    """Create a subscriber and put them on any plan, bypassing payment.
+
+    This is how a free Enterprise seat is given to a pilot customer, a friend
+    or a case study — the thing that gets a product its first real users while
+    checkout is still unfinished.
+
+    Founder-only by construction: /api/founder is registered sensitive, so a
+    guest is refused outright and a subscriber's own X-Account-Token is not
+    accepted here at all.
+    """
+    from ..core import analytics, billing
+
+    if req.plan not in billing.PLANS:
+        raise HTTPException(status_code=400,
+                            detail=f"Unknown plan. One of {list(billing.PLANS)}.")
+
+    # A generated password is stronger than one typed in a hurry, and it means
+    # a seat can be granted without inventing a credential for someone else.
+    import secrets as _secrets
+    password = req.password or _secrets.token_urlsafe(12)
+    if len(password) < 8:
+        raise HTTPException(status_code=400,
+                            detail="Password must be at least 8 characters.")
+
+    created = True
+    try:
+        billing.signup(req.email, password, "free")
+        analytics.record(req.email, analytics.SIGNED_UP, plan=req.plan,
+                         granted=True)
+    except ValueError as e:
+        if "already exists" not in str(e):
+            raise HTTPException(status_code=400, detail=str(e))
+        created = False       # existing account: change their plan instead
+
+    account = billing.set_plan(req.email, req.plan,
+                               subscription_id=f"granted:{req.note[:60]}"
+                               if req.note else "granted",
+                               status="active")
+    analytics.record(req.email, analytics.CHANGED_PLAN, plan=req.plan,
+                     granted=True)
+    persistence.save(STORE)
+    return {
+        "account": account,
+        "created": created,
+        # Shown ONCE. It is stored only as a PBKDF2 hash, so nobody — not even
+        # Abdullah — can read it back later.
+        "password": password if created else None,
+        "note": ("Give this password to the user now; it is stored only as a "
+                 "hash and cannot be shown again. They sign in at /join."
+                 if created else
+                 "Account already existed — the plan was changed and the "
+                 "existing password is unchanged."),
+        "billed": False,
+        "warning": ("This grant bypasses payment entirely. It counts as a "
+                    "paying account in the funnel only if the plan is paid "
+                    "AND active, so a pile of free grants will make MRR look "
+                    "real when nothing was charged. The subscription id "
+                    "records it as granted."),
+    }
+
+
+@router.post("/founder/accounts/{email}/plan", tags=["executive"])
+def founder_set_plan(email: str, req: GrantIn) -> dict:
+    """Move an existing subscriber to another plan."""
+    from ..core import analytics, billing
+    if req.plan not in billing.PLANS:
+        raise HTTPException(status_code=400, detail="Unknown plan.")
+    try:
+        account = billing.set_plan(email, req.plan, status="active")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    analytics.record(email, analytics.CHANGED_PLAN, plan=req.plan, granted=True)
+    persistence.save(STORE)
+    return {"account": account, "billed": False}
+
+
 @router.get("/founder/traffic", tags=["executive"])
 def founder_traffic(days: int = Query(default=30, ge=1, le=90)) -> dict:
     """How many people opened the site, measured in-process — no analytics

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import secrets
 import threading
 import time
@@ -75,11 +76,48 @@ def is_bot(user_agent: str) -> bool:
     return any(m in ua for m in BOT_MARKERS)
 
 
+_MOBILE = re.compile(r"iphone|android.*mobile|windows phone|ipod", re.I)
+_TABLET = re.compile(r"ipad|android(?!.*mobile)|tablet", re.I)
+# Order matters twice over. An iPhone announces itself as "like Mac OS X", so
+# iOS must be tested BEFORE macOS or every iPhone is filed as a Mac — caught
+# by a test rather than by wondering why nobody browses on a phone.
+_OS = (("Windows", re.compile(r"windows nt", re.I)),
+       ("iOS", re.compile(r"iphone|ipad|ipod", re.I)),
+       ("Android", re.compile(r"android", re.I)),
+       ("macOS", re.compile(r"mac os x|macintosh", re.I)),
+       ("Linux", re.compile(r"linux|x11", re.I)))
+# Order matters: Edge and Chrome both claim "Chrome", Chrome claims "Safari".
+_BROWSER = (("Edge", re.compile(r"edg[ea]?/", re.I)),
+            ("Opera", re.compile(r"opr/|opera", re.I)),
+            ("Samsung", re.compile(r"samsungbrowser", re.I)),
+            ("Firefox", re.compile(r"firefox/", re.I)),
+            ("Chrome", re.compile(r"chrome/|crios/", re.I)),
+            ("Safari", re.compile(r"safari/", re.I)))
+
+
+def device_of(user_agent: str) -> dict:
+    """Device class, OS and browser from the user agent.
+
+    Deliberately coarse. The user agent is volunteered by the browser and is
+    not personal data at this granularity — "Android phone, Chrome" describes
+    a category, not a person. Anything finer would be fingerprinting, which is
+    exactly what a company selling GDPR compliance must not do.
+    """
+    ua = user_agent or ""
+    kind = ("mobile" if _MOBILE.search(ua) else
+            "tablet" if _TABLET.search(ua) else
+            "desktop" if ua else "unknown")
+    os_name = next((n for n, rx in _OS if rx.search(ua)), "unknown")
+    browser = next((n for n, rx in _BROWSER if rx.search(ua)), "unknown")
+    return {"kind": kind, "os": os_name, "browser": browser}
+
+
 def _bucket(day: str) -> dict:
     b = _days.get(day)
     if b is None:
         b = {"views": 0, "bot_views": 0, "visitors": [], "paths": {},
-             "referrers": {}}
+             "referrers": {}, "devices": {}, "os": {}, "browsers": {},
+             "countries": {}, "hours": {}}
         _days[day] = b
         if len(_days) > MAX_DAYS:
             for stale in sorted(_days)[:len(_days) - MAX_DAYS]:
@@ -88,7 +126,7 @@ def _bucket(day: str) -> dict:
 
 
 def record(path: str, ip: str = "", user_agent: str = "",
-           referrer: str = "") -> None:
+           referrer: str = "", country: str = "") -> None:
     """Count one page load. Never raises — a counter must never be able to
     take down the page it is counting."""
     try:
@@ -110,6 +148,23 @@ def record(path: str, ip: str = "", user_agent: str = "",
             host = _referrer_host(referrer)
             if host:
                 b["referrers"][host] = b["referrers"].get(host, 0) + 1
+
+            d = device_of(user_agent)
+            for key, val in (("devices", d["kind"]), ("os", d["os"]),
+                             ("browsers", d["browser"])):
+                b[key][val] = b[key].get(val, 0) + 1
+
+            # Country only — supplied free by Cloudflare's CF-IPCountry header,
+            # so no IP database and, more importantly, no IP stored. City-level
+            # location would need the address itself, which this refuses to
+            # keep. A country is a market; a city plus a device is a person.
+            cc = (country or "").strip().upper()[:2]
+            if cc and cc.isalpha():
+                b["countries"][cc] = b["countries"].get(cc, 0) + 1
+
+            # Hour of day in UTC, for "when do people actually open it".
+            hour = time.strftime("%H", time.gmtime())
+            b["hours"][hour] = b["hours"].get(hour, 0) + 1
     except Exception:
         pass
 
@@ -146,11 +201,16 @@ def report(days: int = 30) -> dict:
                   for d in wanted]
         paths: dict[str, int] = {}
         referrers: dict[str, int] = {}
+        rolled: dict[str, dict[str, int]] = {
+            "devices": {}, "os": {}, "browsers": {}, "countries": {}, "hours": {}}
         for d in wanted:
             for k, v in _days[d]["paths"].items():
                 paths[k] = paths.get(k, 0) + v
             for k, v in _days[d]["referrers"].items():
                 referrers[k] = referrers.get(k, 0) + v
+            for group in rolled:
+                for k, v in _days[d].get(group, {}).items():
+                    rolled[group][k] = rolled[group].get(k, 0) + v
         today_visitors = len(_days.get(today, {}).get("visitors", []))
 
     views = sum(r["views"] for r in series)
@@ -171,7 +231,27 @@ def report(days: int = 30) -> dict:
         "top_paths": dict(sorted(paths.items(), key=lambda kv: -kv[1])[:12]),
         "top_referrers": dict(sorted(referrers.items(),
                                      key=lambda kv: -kv[1])[:12]),
+        "devices": dict(sorted(rolled["devices"].items(), key=lambda kv: -kv[1])),
+        "operating_systems": dict(sorted(rolled["os"].items(), key=lambda kv: -kv[1])),
+        "browsers": dict(sorted(rolled["browsers"].items(), key=lambda kv: -kv[1])),
+        "countries": dict(sorted(rolled["countries"].items(),
+                                 key=lambda kv: -kv[1])[:20]),
+        "busiest_hours_utc": dict(sorted(rolled["hours"].items())),
         "signups_total": signups,
+        # Said plainly because it was asked for and cannot be delivered.
+        "not_collected": {
+            "phone_number": ("A website visit carries no phone number. "
+                             "Nothing in a browser exposes one, and no "
+                             "analytics product can supply it. The only way "
+                             "to get a phone number is for someone to type "
+                             "it into a form."),
+            "street_or_city": ("Country only. City-level location needs the "
+                               "IP address itself, which Titan does not "
+                               "store — a city plus a device fingerprint "
+                               "identifies a person."),
+            "identity": ("Visitors are counted, never identified. The visitor "
+                         "id is a hash with a salt that rotates every 24h."),
+        },
         # Deliberately NOT a visitors→signups percentage. Unique visitors is a
         # per-day figure (the id salt rotates daily), so there is no honest
         # total to divide by. Publishing a conversion rate here would be
@@ -198,7 +278,12 @@ def export_state() -> dict:
         return {"days": {d: {"views": b["views"], "bot_views": b["bot_views"],
                              "visitors": list(b["visitors"]),
                              "paths": dict(b["paths"]),
-                             "referrers": dict(b["referrers"])}
+                             "referrers": dict(b["referrers"]),
+                             "devices": dict(b.get("devices", {})),
+                             "os": dict(b.get("os", {})),
+                             "browsers": dict(b.get("browsers", {})),
+                             "countries": dict(b.get("countries", {})),
+                             "hours": dict(b.get("hours", {}))}
                          for d, b in _days.items()}}
 
 
@@ -219,6 +304,12 @@ def import_state(data: dict) -> None:
                 "visitors": list(b.get("visitors", []))[:MAX_VISITORS_PER_DAY],
                 "paths": dict(b.get("paths", {})),
                 "referrers": dict(b.get("referrers", {})),
+                # Absent in state files written before device/country tracking.
+                "devices": dict(b.get("devices", {})),
+                "os": dict(b.get("os", {})),
+                "browsers": dict(b.get("browsers", {})),
+                "countries": dict(b.get("countries", {})),
+                "hours": dict(b.get("hours", {})),
             }
 
 

@@ -362,6 +362,9 @@ async def count_visitors(request: Request, call_next):
                     or client_host),
                 user_agent=request.headers.get("user-agent", ""),
                 referrer=request.headers.get("referer", ""),
+                # Cloudflare adds this on every proxied request at no cost and
+                # with no IP database. Country only, deliberately.
+                country=request.headers.get("cf-ipcountry", ""),
             )
     except Exception:
         pass

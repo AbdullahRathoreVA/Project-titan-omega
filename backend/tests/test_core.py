@@ -3281,3 +3281,111 @@ def test_landing_pages_are_public(client, monkeypatch):
     monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
     assert client.get("/compliance/de").status_code == 200
     assert client.get("/seo/restaurant").status_code == 200
+
+
+# ── founder-granted accounts ───────────────────────────────────────────────
+
+def test_founder_can_grant_a_free_enterprise_seat(client, isolated_billing):
+    """How a pilot customer or a case study gets a real seat while checkout is
+    still unfinished."""
+    r = client.post("/api/founder/accounts",
+                    json={"email": "pilot@leatherco.pk", "plan": "enterprise",
+                          "note": "first pilot"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["created"] is True
+    assert body["account"]["plan"] == "enterprise"
+    assert body["account"]["status"] == "active"
+    assert body["billed"] is False
+    # A generated password is returned exactly once.
+    assert body["password"] and len(body["password"]) >= 12
+
+    # It is a real account: the granted password actually signs in.
+    login = client.post("/api/account/login",
+                        json={"email": "pilot@leatherco.pk",
+                              "password": body["password"]})
+    assert login.status_code == 200
+    assert login.json()["account"]["plan"] == "enterprise"
+
+
+def test_granting_twice_changes_the_plan_and_keeps_the_password(
+        client, isolated_billing):
+    first = client.post("/api/founder/accounts",
+                        json={"email": "x@example.com", "plan": "student"}).json()
+    again = client.post("/api/founder/accounts",
+                        json={"email": "x@example.com", "plan": "enterprise"}).json()
+    assert again["created"] is False
+    assert again["password"] is None, "an existing password must never be re-shown"
+    assert again["account"]["plan"] == "enterprise"
+    # The original password still works — the grant did not lock them out.
+    assert client.post("/api/account/login",
+                       json={"email": "x@example.com",
+                             "password": first["password"]}).status_code == 200
+
+
+def test_a_granted_seat_is_marked_as_never_billed(client, isolated_billing):
+    """A pile of free grants must not quietly become fake MRR."""
+    body = client.post("/api/founder/accounts",
+                       json={"email": "free@example.com", "plan": "enterprise",
+                             "note": "case study"}).json()
+    assert body["billed"] is False
+    assert "bypasses payment" in body["warning"]
+    from app.core import billing
+    with billing._lock:
+        assert billing._accounts["free@example.com"]["subscription_id"].startswith("granted")
+
+
+def test_an_unknown_plan_is_refused(client, isolated_billing):
+    r = client.post("/api/founder/accounts",
+                    json={"email": "y@example.com", "plan": "platinum"})
+    assert r.status_code == 400
+    assert "Unknown plan" in r.json()["detail"]
+
+
+def test_account_granting_is_hidden_from_guests(client, isolated_billing,
+                                                monkeypatch):
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    tok = client.post("/api/demo/enter").json()["token"]
+    r = client.post("/api/founder/accounts",
+                    json={"email": "hack@example.com", "plan": "enterprise"},
+                    headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 403
+
+
+# ── visitor insights ───────────────────────────────────────────────────────
+
+def test_device_os_and_browser_are_classified(isolated_traffic):
+    from app.core import traffic
+    iphone = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+              "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+              "Mobile/15E148 Safari/604.1")
+    win_edge = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0 Safari/537.36 Edg/120.0")
+    assert traffic.device_of(iphone) == {"kind": "mobile", "os": "iOS",
+                                         "browser": "Safari"}
+    # Edge claims Chrome AND Safari; order of checks must resolve it.
+    assert traffic.device_of(win_edge)["browser"] == "Edge"
+    assert traffic.device_of(win_edge)["kind"] == "desktop"
+    assert traffic.device_of("")["kind"] == "unknown"
+
+
+def test_country_is_recorded_but_never_the_address(isolated_traffic):
+    from app.core import traffic
+    traffic.record("/", ip="203.0.113.9", user_agent="Mozilla/5.0 (iPhone)",
+                   country="de")
+    rep = traffic.report()
+    assert rep["countries"] == {"DE": 1}
+    assert rep["devices"]["mobile"] == 1
+    blob = json.dumps(traffic.export_state())
+    assert "203.0.113.9" not in blob
+
+
+def test_the_report_says_what_it_cannot_collect(isolated_traffic):
+    """A phone number was asked for. A website visit does not carry one, and
+    saying so beats leaving a blank column that looks like a bug."""
+    from app.core import traffic
+    nc = traffic.report()["not_collected"]
+    assert "phone" in " ".join(nc).lower() or "phone_number" in nc
+    assert "no phone number" in nc["phone_number"].lower()
+    assert "Country only" in nc["street_or_city"]
