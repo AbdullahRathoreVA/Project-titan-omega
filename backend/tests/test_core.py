@@ -3708,3 +3708,120 @@ def test_json_export_still_works_as_a_backup(fresh_db, tmp_path):
     assert persistence.export_json(str(out)) is True
     data = _json.loads(out.read_text(encoding="utf-8"))
     assert "backup@example.com" in data["billing"]["accounts"]
+
+
+# ── sessions: expiring, revocable, restart-proof ───────────────────────────
+
+@pytest.fixture
+def clean_sessions(monkeypatch):
+    from app.core import sessions
+    monkeypatch.setenv("TITAN_SECRET", "session-test-secret")
+    sessions.reset()
+    yield
+    sessions.reset()
+
+
+def test_two_logins_never_produce_the_same_token(clean_sessions):
+    """It used to be hmac(secret, username) — identical every time, so a token
+    copied out of a browser was the account's permanent password."""
+    from app.core import auth
+    a, b = auth.make_token("founder"), auth.make_token("founder")
+    assert a != b
+    assert auth.valid_token(a) and auth.valid_token(b)
+
+
+def test_an_expired_token_is_refused(clean_sessions):
+    from app.core import sessions
+    tok = sessions.issue("founder", kind="founder", ttl=-1)
+    assert sessions.verify(tok) is None
+
+
+def test_a_token_can_actually_be_revoked(clean_sessions):
+    """Previously the only way to invalidate a session was to rotate
+    TITAN_SECRET and sign everyone out at once."""
+    from app.core import auth
+    tok = auth.make_token("founder")
+    assert auth.valid_token(tok) is True
+    assert auth.revoke_token(tok) is True
+    assert auth.valid_token(tok) is False
+
+
+def test_revoking_a_forged_token_is_not_a_success(clean_sessions):
+    from app.core import auth, sessions
+    assert auth.revoke_token("garbage.signature") is False
+    assert sessions.revoked_count() == 0
+
+
+def test_a_tampered_payload_fails_the_signature(clean_sessions):
+    """The classic attack: edit the claims, keep the signature."""
+    import base64, json
+    from app.core import sessions
+    tok = sessions.issue("guest-user", kind="guest")
+    body, _, sig = tok.partition(".")
+    claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    claims["kind"] = "founder"
+    forged = base64.urlsafe_b64encode(
+        json.dumps(claims).encode()).decode().rstrip("=")
+    assert sessions.verify(f"{forged}.{sig}") is None
+
+
+def test_a_guest_token_can_never_pass_as_founder(clean_sessions):
+    from app.core import auth
+    guest = auth.make_guest_token()
+    assert auth.valid_guest_token(guest) is True
+    assert auth.valid_token(guest) is False
+
+
+def test_changing_the_configured_username_invalidates_old_tokens(
+        clean_sessions, monkeypatch):
+    """A signature proves Titan issued it. It must also have been issued for
+    the account configured now."""
+    from app.core import auth
+    monkeypatch.setenv("TITAN_USERNAME", "abdullah")
+    monkeypatch.setenv("TITAN_PASSWORD", "x" * 12)
+    tok = auth.make_token("abdullah")
+    assert auth.valid_token(tok) is True
+    monkeypatch.setenv("TITAN_USERNAME", "someone-else")
+    assert auth.valid_token(tok) is False
+
+
+def test_subscriber_sessions_survive_a_restart(client, isolated_billing,
+                                               clean_sessions):
+    """They were a module-level dict, so every paying customer was silently
+    signed out whenever the container recycled."""
+    from app.core import billing
+    billing.signup("stay@example.com", "hunter2hunter2")
+    tok = billing.authenticate("stay@example.com", "hunter2hunter2")
+    assert billing.resolve(tok) == "stay@example.com"
+
+    # Wipe only the in-memory session store, as a restart would.
+    from app.core import sessions
+    sessions.reset()
+    assert billing.resolve(tok) == "stay@example.com", \
+        "a restart signed the customer out"
+
+
+def test_deleting_an_account_revokes_its_sessions(isolated_billing,
+                                                  clean_sessions):
+    """A valid signature is not enough — the account must still exist."""
+    from app.core import billing
+    billing.signup("gone@example.com", "hunter2hunter2")
+    tok = billing.authenticate("gone@example.com", "hunter2hunter2")
+    assert billing.resolve(tok) == "gone@example.com"
+    billing.reset()
+    assert billing.resolve(tok) is None
+
+
+def test_revocations_survive_a_restart(clean_sessions, fresh_db):
+    """A stateless token is valid until it expires, so a signed-out token
+    would start working again if the revoked list were lost."""
+    from app import persistence
+    from app.core import auth, sessions
+    tok = auth.make_token("founder")
+    auth.revoke_token(tok)
+    persistence.save()
+
+    sessions.reset()
+    assert auth.valid_token(tok) is True, "sanity: the list really was cleared"
+    persistence.load()
+    assert auth.valid_token(tok) is False, "revocation did not survive"

@@ -17,7 +17,8 @@ import os
 import tempfile
 
 from .core import (analytics, billing, clients, db, evidence, learning,
-                   reflection, knowledge, routing, traffic, voice_sessions)
+                   reflection, knowledge, routing, sessions, traffic,
+                   voice_sessions)
 from .store import STORE, Store
 
 
@@ -56,6 +57,11 @@ def save(store: Store = STORE) -> None:
             # reset the founder's only view of the funnel to empty, which is
             # indistinguishable from nobody having used the product.
             "analytics": analytics.export_state(),
+            # Revoked session ids. Stateless tokens are valid until they
+            # expire by definition, so revocation is the one part that needs
+            # storage — and it must survive a restart or a signed-out token
+            # starts working again.
+            "sessions": sessions.export_state(),
             # Visitor counts are the top of the funnel. A restart that zeroes
             # them makes a launch day look like it never happened.
             "traffic": traffic.export_state(),
@@ -170,6 +176,9 @@ def load(store: Store = STORE) -> None:
         stats = data.get("analytics")
         if isinstance(stats, dict):
             analytics.import_state(stats)
+        revoked = data.get("sessions")
+        if isinstance(revoked, dict):
+            sessions.import_state(revoked)
         visits = data.get("traffic")
         if isinstance(visits, dict):
             traffic.import_state(visits)

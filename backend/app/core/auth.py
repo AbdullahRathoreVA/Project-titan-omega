@@ -47,7 +47,15 @@ def _secret() -> bytes:
 
 
 def make_token(username: str) -> str:
-    return hmac.new(_secret(), username.encode(), hashlib.sha256).hexdigest()
+    """Issue a founder session.
+
+    Previously this was hmac(secret, username): the same string on every call,
+    with no expiry and nothing to revoke. A token copied out of a browser was
+    valid forever, and the only way to invalidate it was to rotate
+    TITAN_SECRET and sign out of everything at once.
+    """
+    from . import sessions
+    return sessions.issue(username, kind="founder")
 
 
 def check_login(username: str, password: str) -> bool:
@@ -56,8 +64,21 @@ def check_login(username: str, password: str) -> bool:
 
 
 def valid_token(token: str) -> bool:
+    from . import sessions
+    sub = sessions.subject(token, kind="founder")
+    if not sub:
+        return False
+    # The signature proves Titan issued it; this proves it was issued for the
+    # account that is configured NOW. Changing TITAN_USERNAME must not leave
+    # tokens for the old one working.
     user, _ = credentials()
-    return bool(token) and hmac.compare_digest(token, make_token(user))
+    return hmac.compare_digest(sub, user)
+
+
+def revoke_token(token: str) -> bool:
+    """Sign out. Now actually possible."""
+    from . import sessions
+    return sessions.revoke(token)
 
 
 # --- Guest (public demo) session -------------------------------------------
@@ -70,11 +91,14 @@ GUEST_USER = "__titan_guest__"
 
 
 def make_guest_token() -> str:
-    return hmac.new(_secret(), GUEST_USER.encode(), hashlib.sha256).hexdigest()
+    """A demo session. Read-only, so it expires sooner than a founder's."""
+    from . import sessions
+    return sessions.issue(GUEST_USER, kind="guest", ttl=sessions.GUEST_TTL)
 
 
 def valid_guest_token(token: str) -> bool:
-    return bool(token) and hmac.compare_digest(token, make_guest_token())
+    from . import sessions
+    return sessions.subject(token, kind="guest") == GUEST_USER
 
 
 def guest_enabled() -> bool:

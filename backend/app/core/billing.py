@@ -197,13 +197,28 @@ def authenticate(email: str, password: str) -> Optional[str]:
         if not hmac.compare_digest(_hash(password, acct["_salt"]),
                                    acct["_pwhash"]):
             return None
-        token = secrets.token_urlsafe(32)
-        _sessions[token] = email
-        return token
+    # A signed token rather than a dict entry. The dict meant every paying
+    # customer was silently signed out by a restart, which on a free-tier host
+    # happens often. Verification is stateless, so a restart no longer touches
+    # anyone's session.
+    from . import sessions
+    return sessions.issue(email, kind="account", ttl=sessions.ACCOUNT_TTL)
 
 
 def resolve(token: str) -> Optional[str]:
-    return _sessions.get(token or "")
+    from . import sessions
+    email = sessions.subject(token or "", kind="account")
+    if not email:
+        return None
+    # A valid signature is not enough: the account must still exist. Deleting
+    # someone must actually revoke their access.
+    with _lock:
+        return email if email in _accounts else None
+
+
+def sign_out(token: str) -> bool:
+    from . import sessions
+    return sessions.revoke(token)
 
 
 def public(email: str) -> dict:
