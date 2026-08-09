@@ -171,24 +171,34 @@ def _build_next_post(
     upwork = os.getenv("UPWORK_PROFILE_URL", UPWORK_PROFILE_URL).strip()
     # Set TITAN_PRODUCT_URL (landing/waitlist/demo link) and Titan starts
     # marketing ITSELF in the daily rotation — build-in-public style.
-    titan_url = os.getenv("TITAN_PRODUCT_URL", "").strip()
+    # Titan is the product being sold, and it is live — so it is the default
+    # and needs no configuration. This used to default to Career Mind with
+    # Titan appearing only if TITAN_PRODUCT_URL happened to be set, which it
+    # was not: every generated post pitched a product Abdullah no longer sells.
+    titan_url = (os.getenv("TITAN_PRODUCT_URL", "").strip()
+                 or "https://titanomega-ai.com/join")
     lang_name = "Urdu (اردو)" if lang == "ur" else "English"
 
     t = (target or "auto").lower()
     if t == "auto":
-        pool = ["career_mind"]
+        pool = ["titan"]
         if upwork:
             pool.append("upwork")
-        if titan_url:
-            pool.append("titan")
+        # Career Mind only when it is explicitly configured — it is an older
+        # product and must not be the thing Titan markets by default.
+        if os.getenv("CAREERMIND_URL", "").strip():
+            pool.append("career_mind")
         t = pool[len(store.feed) % len(pool)]
 
     if t == "titan" and titan_url:
         link = titan_url
         pitch = (
-            "Titan Omega — an autonomous AI business command center a solo founder built "
-            "with zero budget: live 3D dashboard, AI agents that research, debate and "
-            "execute, Telegram control, 24/7 automation. Share it build-in-public style."
+            "Titan Omega — SEO, local ranking and legal compliance audited for any "
+            "business in any jurisdiction. The legal check is the differentiator: "
+            "Impressum / §5 DDG, GDPR consent and cookie disclosure across 9 "
+            "countries, scored separately from SEO and never averaged. Free tier "
+            "includes the legal findings in full. Write for a business owner who "
+            "does not know they have a compliance problem yet."
         )
         img_subject = (
             "a glowing holographic 3D business dashboard floating in a dark modern room, "

@@ -105,7 +105,11 @@ export function NextPost({
           </span>
         </div>
 
-        <p className="scroll-thin max-h-16 shrink-0 overflow-y-auto whitespace-pre-line text-[11px] leading-relaxed text-slate-300">
+        {/* No height cap. `max-h-16` was 64px, which clipped a normal caption
+          mid-URL on a 1920px desktop and hid the link the post is FOR — the
+          one part that has to be checked before approving. The page scrolls;
+          the caption does not need its own scrollbar. */}
+      <p className="shrink-0 whitespace-pre-line break-words text-[11px] leading-relaxed text-slate-300">
           {post ? post.caption : "Generating your next post…"}
         </p>
 

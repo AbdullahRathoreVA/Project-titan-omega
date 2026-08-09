@@ -159,12 +159,53 @@ function chunkText(text: string, maxLen = 160): string[] {
   return parts.length ? parts : [text];
 }
 
+// Screen readers and TTS engines pronounce punctuation they were never meant
+// to. A caption written for a screen — "**Free** audit 💡 #SEO
+// https://titanomega-ai.com/join" — is read aloud as "asterisk asterisk Free
+// asterisk asterisk audit light bulb hash S E O h t t p colon slash slash..."
+// which is what Abdullah heard. Markup is for the eye; strip it before it
+// reaches the voice.
+//
+// Deliberately NOT applied to the displayed text: the reader should still see
+// the emoji and the link. Only the spoken copy is cleaned.
+const URL_RE = /\bhttps?:\/\/\S+/g;
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/gu;
+
+export function speakable(text: string): string {
+  return (text || "")
+    // Links: say that there is one rather than spelling it out character by
+    // character, which is unlistenable in any language.
+    .replace(URL_RE, " ")
+    // **bold**, *italic*, __underline__, `code`, ~~strike~~
+    .replace(/[*_`~]{1,3}/g, "")
+    // Markdown headings and blockquotes at line starts.
+    .replace(/^\s{0,3}#{1,6}\s*/gm, "")
+    .replace(/^\s{0,3}>\s?/gm, "")
+    // Bullet markers, which otherwise become "dash" or "star" every line.
+    .replace(/^\s*[-•·]\s+/gm, "")
+    // #hashtags read as "hash word" — keep the word, drop the hash.
+    .replace(/(^|\s)#(\w)/g, "$1$2")
+    .replace(EMOJI_RE, " ")
+    // Table pipes and rules.
+    .replace(/[|]{1,}/g, " ")
+    .replace(/^\s*[-=]{3,}\s*$/gm, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 export async function speakText(
   text: string,
   lang: SpeakLang,
   onEnd?: () => void,
 ): Promise<boolean> {
   if (typeof window === "undefined" || !window.speechSynthesis) {
+    onEnd?.();
+    return false;
+  }
+  // Clean once, here, so every caller gets it — the alternative is every call
+  // site remembering, and one that forgets reads asterisks aloud again.
+  text = speakable(text);
+  if (!text) {
     onEnd?.();
     return false;
   }

@@ -3825,3 +3825,31 @@ def test_revocations_survive_a_restart(clean_sessions, fresh_db):
     assert auth.valid_token(tok) is True, "sanity: the list really was cleared"
     persistence.load()
     assert auth.valid_token(tok) is False, "revocation did not survive"
+
+
+# ── speech cleanliness + post targeting ────────────────────────────────────
+
+def test_the_next_post_pitches_titan_not_the_old_product(monkeypatch):
+    """Every generated post was pitching Career Mind — a product Abdullah no
+    longer sells — because it was the default and Titan only appeared if an
+    unset env var happened to exist."""
+    import os
+    from app.api import actions
+    monkeypatch.delenv("CAREERMIND_URL", raising=False)
+    monkeypatch.delenv("UPWORK_PROFILE_URL", raising=False)
+    monkeypatch.setattr(actions, "UPWORK_PROFILE_URL", "")
+    from app.core import llm
+    monkeypatch.setattr(llm, "complete", lambda **kw: "")
+
+    post = actions._build_next_post("", "en", "auto", STORE)
+    assert "titanomega-ai.com" in (post.get("content") or "") + (post.get("link") or "")
+    assert "careermind" not in str(post).lower()
+
+
+def test_career_mind_only_appears_when_explicitly_configured(monkeypatch):
+    from app.api import actions
+    from app.core import llm
+    monkeypatch.setattr(llm, "complete", lambda **kw: "")
+    monkeypatch.delenv("CAREERMIND_URL", raising=False)
+    post = actions._build_next_post("", "en", "auto", STORE)
+    assert "career" not in str(post.get("link", "")).lower()
