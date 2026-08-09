@@ -16,8 +16,8 @@ import json
 import os
 import tempfile
 
-from .core import (analytics, billing, clients, evidence, learning, reflection,
-                   knowledge, routing, traffic, voice_sessions)
+from .core import (analytics, billing, clients, db, evidence, learning,
+                   reflection, knowledge, routing, traffic, voice_sessions)
 from .store import STORE, Store
 
 
@@ -71,21 +71,70 @@ def save(store: Store = STORE) -> None:
             # is the state this replaced.
             "evidence": evidence.export_state(),
         }
-        tmp = STATE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-        os.replace(tmp, STATE_FILE)
+        # One transaction for all fifteen subsystems. The JSON file could not
+        # offer this: a crash mid-write left a truncated file that failed to
+        # parse, losing accounts, transcripts and evidence together.
+        db.connect(STATE_FILE)
+        db.put_many(data)
     except Exception:
         pass
 
 
-def load(store: Store = STORE) -> None:
-    """Restore saved metrics + revenue ledger if a state file exists. Never raises."""
+def export_json(path: str) -> bool:
+    """Write the whole state to a JSON file, for backup or inspection.
+
+    Kept deliberately after the move to SQLite. A database nobody can read
+    without tooling is worse than a file for a solo operator, and this is the
+    escape hatch if the schema ever needs to be rebuilt from scratch.
+    """
     try:
-        if not os.path.exists(STATE_FILE):
+        db.connect(STATE_FILE)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(db.all_state(), f, indent=2, default=str)
+        return True
+    except Exception:
+        return False
+
+
+def _read_state() -> dict:
+    """Read state, migrating a legacy JSON file on first run.
+
+    Existing deployments have a JSON file at this exact path. Opening it as a
+    SQLite database would fail and silently discard every account, so the file
+    is detected, imported once, and kept alongside as `.json.bak` rather than
+    deleted — a migration that destroys its own source has no way back.
+    """
+    legacy = None
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "rb") as f:
+                head = f.read(16)
+            if not head.startswith(b"SQLite format 3"):
+                with open(STATE_FILE, encoding="utf-8") as f:
+                    legacy = json.load(f)
+        except Exception:
+            legacy = None
+
+    if legacy is not None:
+        backup = STATE_FILE + ".json.bak"
+        try:
+            os.replace(STATE_FILE, backup)
+        except Exception:
+            pass
+        db.connect(STATE_FILE)
+        db.put_many(legacy)
+        return legacy
+
+    db.connect(STATE_FILE)
+    return db.all_state()
+
+
+def load(store: Store = STORE) -> None:
+    """Restore saved state if any exists. Never raises."""
+    try:
+        data = _read_state()
+        if not data:
             return
-        with open(STATE_FILE, encoding="utf-8") as f:
-            data = json.load(f)
         metrics = data.get("metrics")
         if isinstance(metrics, dict):
             store.metrics.update(

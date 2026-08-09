@@ -3590,3 +3590,121 @@ def test_an_unknown_bucket_never_blocks():
     """A typo in a bucket name must not silently lock an endpoint shut."""
     from app.core import ratelimit
     assert ratelimit.check("not-a-real-bucket", "x")["allowed"] is True
+
+
+# ── SQLite persistence ─────────────────────────────────────────────────────
+
+@pytest.fixture
+def fresh_db(monkeypatch, tmp_path):
+    from app import persistence
+    from app.core import db
+    db.close()
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "titan.db"))
+    yield
+    db.close()
+
+
+def test_state_survives_a_restart(fresh_db):
+    """The whole point. A rebuild used to be able to lose every account."""
+    from app import persistence
+    from app.core import billing, db
+    billing.reset()
+    billing.signup("customer@example.com", "hunter2hunter2")
+    billing.set_plan("customer@example.com", "enterprise", status="active")
+    persistence.save()
+
+    billing.reset()
+    db.close()
+    assert billing.public("customer@example.com") == {}
+
+    persistence.load()
+    acct = billing.public("customer@example.com")
+    assert acct["plan"] == "enterprise"
+    assert acct["status"] == "active"
+
+
+def test_each_subsystem_is_its_own_row(fresh_db):
+    """The JSON file rewrote all fifteen subsystems to persist one lead."""
+    from app import persistence
+    from app.core import db
+    persistence.save()
+    keys = {r["key"] for r in db.stats()["subsystems"]}
+    assert {"billing", "clients", "voice", "knowledge", "evidence"} <= keys
+    assert db.stats()["schema_version"] == 1
+
+
+def test_a_multi_subsystem_save_is_one_transaction(fresh_db):
+    """Billing must never be written while the client registry that
+    references it is lost."""
+    from app.core import db
+    db.connect(str(__import__("pathlib").Path(
+        __import__("tempfile").mkdtemp()) / "t.db"))
+    db.put_many({"a": {"n": 1}, "b": {"n": 2}})
+    assert db.get("a")["n"] == 1 and db.get("b")["n"] == 2
+
+
+def test_a_corrupt_row_does_not_take_the_others_down(fresh_db):
+    """One unreadable subsystem must not mean losing accounts too — the
+    failure mode the single JSON file had by construction."""
+    from app.core import db
+    db.connect(str(__import__("pathlib").Path(
+        __import__("tempfile").mkdtemp()) / "c.db"))
+    db.put("billing", {"accounts": {"a@b.c": {}}})
+    conn = db._require()
+    with conn:
+        conn.execute("UPDATE state SET value='{not json' WHERE key='billing'")
+    db.put("clients", {"clients": {"c1": {}}})
+    assert db.get("billing", "fallback") == "fallback"
+    assert db.get("clients")["clients"] == {"c1": {}}   # unaffected
+
+
+def test_a_legacy_json_file_is_imported_and_kept(fresh_db):
+    """Existing deploys have a JSON file at this exact path. Opening it as a
+    database would fail and silently discard every account, so it is detected,
+    imported, and preserved as .json.bak — a migration that destroys its own
+    source has no way back."""
+    import json as _json
+    import os as _os
+    from app import persistence
+    from app.core import billing, db
+
+    with open(persistence.STATE_FILE, "w", encoding="utf-8") as f:
+        _json.dump({"billing": {"accounts": {"old@example.com": {
+            "email": "old@example.com", "_pwhash": "x", "_salt": "y",
+            "plan": "individual", "status": "active",
+            "usage": {}, "client_ids": []}}}}, f)
+
+    billing.reset()
+    db.close()
+    persistence.load()
+
+    assert billing.public("old@example.com")["plan"] == "individual"
+    with open(persistence.STATE_FILE, "rb") as f:
+        assert f.read(15).startswith(b"SQLite format")
+    assert _os.path.exists(persistence.STATE_FILE + ".json.bak")
+
+
+def test_migrations_run_once_and_are_recorded(fresh_db):
+    from app import persistence
+    from app.core import db
+    db.connect(persistence.STATE_FILE)
+    assert db.version() == 1
+    db.close()
+    db.connect(persistence.STATE_FILE)          # reopen must not re-run
+    assert db.version() == 1
+
+
+def test_json_export_still_works_as_a_backup(fresh_db, tmp_path):
+    """A database nobody can read without tooling is worse than a file for a
+    solo operator."""
+    import json as _json
+    from app import persistence
+    from app.core import billing
+    billing.reset()
+    billing.signup("backup@example.com", "hunter2hunter2")
+    persistence.save()
+
+    out = tmp_path / "backup.json"
+    assert persistence.export_json(str(out)) is True
+    data = _json.loads(out.read_text(encoding="utf-8"))
+    assert "backup@example.com" in data["billing"]["accounts"]
