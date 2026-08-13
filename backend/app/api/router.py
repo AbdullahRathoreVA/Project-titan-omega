@@ -1507,6 +1507,45 @@ def founder_demo_workspace_run() -> dict:
                                                 "reason": "Demo workspace is disabled."}
 
 
+@router.get("/founder/fix-cycle", tags=["executive"])
+def founder_fix_cycle() -> dict:
+    """What the 24/7 fix loop is responsible for, and what it has actually done.
+
+    Under /api/founder because it names the client ids Titan holds keys to.
+    """
+    from ..engines import fix_cycle
+    return fix_cycle.status()
+
+
+@router.post("/founder/fix-cycle/run", tags=["executive"])
+def founder_fix_cycle_run() -> dict:
+    """Enqueue a re-audit of every connected site now.
+
+    This enqueues; it does not apply. Nothing in the cycle can change a
+    customer's site without a named human approval.
+    """
+    from ..engines import fix_cycle
+    return fix_cycle.cycle(force=True) or {"skipped": True,
+                                           "reason": "The cycle errored."}
+
+
+@router.get("/founder/queue", tags=["executive"])
+def founder_queue(limit: int = Query(default=50, ge=1, le=200),
+                  kind: str = Query(default=""),
+                  status: str = Query(default="")) -> dict:
+    """The durable work queue — what is pending, what ran, and how long it took."""
+    from ..core import queue
+    return {"stats": queue.stats(),
+            "jobs": queue.recent(limit=limit, kind=kind, status=status)}
+
+
+@router.post("/founder/queue/drain", tags=["executive"])
+def founder_queue_drain(limit: int = Query(default=5, ge=1, le=50)) -> dict:
+    """Run pending jobs now instead of waiting for the heartbeat."""
+    from ..core import queue
+    return queue.drain(limit=limit, worker="founder")
+
+
 @router.get("/founder/traffic", tags=["executive"])
 def founder_traffic(days: int = Query(default=30, ge=1, le=90)) -> dict:
     """How many people opened the site, measured in-process — no analytics

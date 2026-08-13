@@ -3635,7 +3635,9 @@ def test_each_subsystem_is_its_own_row(fresh_db):
     persistence.save()
     keys = {r["key"] for r in db.stats()["subsystems"]}
     assert {"billing", "clients", "voice", "knowledge", "evidence"} <= keys
-    assert db.stats()["schema_version"] == 1
+    # Against the constant, not a literal — every new migration would
+    # otherwise fail this test for no reason.
+    assert db.stats()["schema_version"] == db.SCHEMA_VERSION
 
 
 def test_a_multi_subsystem_save_is_one_transaction(fresh_db):
@@ -3693,10 +3695,26 @@ def test_migrations_run_once_and_are_recorded(fresh_db):
     from app import persistence
     from app.core import db
     db.connect(persistence.STATE_FILE)
-    assert db.version() == 1
+    assert db.version() == db.SCHEMA_VERSION
     db.close()
     db.connect(persistence.STATE_FILE)          # reopen must not re-run
-    assert db.version() == 1
+    assert db.version() == db.SCHEMA_VERSION
+    # Every migration in the list must actually have been applied, and the
+    # constant must not drift below them — a version that says 1 while
+    # migration 2 has run is how a later migration gets skipped forever.
+    assert db.SCHEMA_VERSION == max(v for v, _ in db.MIGRATIONS)
+
+
+def test_the_jobs_table_exists_after_migrating_an_existing_database(fresh_db):
+    """Migration 2 runs against databases that already have migration 1 —
+    an existing deployment, not a fresh file."""
+    from app import persistence
+    from app.core import db
+
+    conn = db.connect(persistence.STATE_FILE)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+    assert {"id", "kind", "status", "attempts", "lease_until",
+            "dedupe_key", "duration_ms"} <= cols
 
 
 def test_json_export_still_works_as_a_backup(fresh_db, tmp_path):
@@ -4476,6 +4494,182 @@ def test_the_marked_up_price_cannot_drift_from_the_price_charged():
     marked_up = sorted(o["price"] for o in app_node["offers"])
     real = sorted(f"{billing.PLANS[k].price_usd:.2f}" for k in billing.ORDER)
     assert marked_up == real, "the marked-up price drifted from the plan table"
+
+
+# ── durable work queue (blueprint 007) ─────────────────────────────────────
+
+@pytest.fixture
+def jobs(monkeypatch, tmp_path):
+    """A queue on its own database file, so tests never share rows."""
+    from app import persistence
+    from app.core import db, queue as q
+
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "jobs.db"))
+    db.connect(persistence.STATE_FILE)
+    q.reset()
+    yield q
+    q.reset()
+
+
+def test_the_queue_survives_a_worker_dying_mid_job(jobs):
+    """The whole reason this exists. A free Space recycles the container
+    without warning; a job left in `running` forever is a queue that is
+    durable in name only."""
+    import time as _t
+
+    jobs.register("t.work", lambda p: {"ok": True})
+    jobs.enqueue("t.work", {"n": 1})
+
+    claimed = jobs.claim("worker-that-dies")
+    assert claimed["status"] == "running"
+    assert jobs.claim("another-worker") is None, "two workers took one job"
+
+    # The container is killed here: nothing ever completes or fails the job.
+    # Expire the lease rather than sleeping five minutes.
+    conn = jobs._conn()
+    with conn:
+        conn.execute("UPDATE jobs SET lease_until=? WHERE id=?",
+                     (_t.time() - 1, claimed["id"]))
+
+    assert jobs.reclaim_expired() == 1
+    again = jobs.claim("fresh-worker")
+    assert again is not None and again["id"] == claimed["id"]
+    assert again["attempts"] == 2, "the retry was not counted"
+    assert "lease expired" in (again["error"] or "")
+
+
+def test_a_failing_job_backs_off_and_is_eventually_buried(jobs):
+    """Retrying a crawl of a site that just 500'd, four times a second, is
+    abuse rather than resilience."""
+    import time
+
+    calls = []
+
+    def boom(payload):
+        calls.append(1)
+        raise RuntimeError("site returned 500")
+
+    jobs.register("t.boom", boom)
+    job = jobs.enqueue("t.boom", {}, max_attempts=2)
+
+    out = jobs.run_one()
+    assert out["status"] == "queued", "a retryable failure should requeue"
+    assert out["run_at"] > time.time(), "the retry was not delayed"
+    assert "500" in out["error"]
+
+    # Second and final attempt.
+    conn = jobs._conn()
+    with conn:
+        conn.execute("UPDATE jobs SET run_at=? WHERE id=?",
+                     (time.time() - 1, job["id"]))
+    out = jobs.run_one()
+    assert out["status"] == "dead", "a job that keeps failing must be buried"
+    assert len(calls) == 2, "it ran more times than max_attempts allows"
+
+
+def test_the_same_work_cannot_be_queued_twice_at_once(jobs):
+    jobs.register("t.audit", lambda p: {})
+    a = jobs.enqueue("t.audit", {"c": "c1"}, dedupe_key="audit:c1")
+    b = jobs.enqueue("t.audit", {"c": "c1"}, dedupe_key="audit:c1")
+    assert b["deduped"] is True and b["id"] == a["id"]
+
+    # ...but once it is finished the same work can be queued again tomorrow.
+    jobs.run_one()
+    c = jobs.enqueue("t.audit", {"c": "c1"}, dedupe_key="audit:c1")
+    assert c["deduped"] is False and c["id"] != a["id"]
+
+
+def test_a_job_with_no_handler_waits_instead_of_burning_its_attempts(jobs):
+    """The handler may arrive in the next deploy. Failing the job would throw
+    away work that a restart could have completed."""
+    job = jobs.enqueue("t.not_registered_yet", {})
+    out = jobs.run_one()
+    assert out["status"] == "queued"
+    assert jobs.get(job["id"])["attempts"] == 0
+    assert "No handler" in jobs.get(job["id"])["error"]
+
+
+def test_queue_duration_is_measured_and_is_none_until_something_finishes(jobs):
+    """An unfinished job has no duration. Averaging it in as zero would
+    understate every number on the screen."""
+    jobs.register("t.work", lambda p: {"ok": True})
+
+    empty = jobs.stats()
+    assert empty["measured_runs"] == 0
+    assert empty["avg_duration_ms"] is None, "0.0 would read as 'instant'"
+    assert empty["max_duration_ms"] is None
+
+    jobs.enqueue("t.work", {})
+    jobs.run_one()
+    after = jobs.stats()
+    assert after["measured_runs"] == 1
+    assert after["avg_duration_ms"] is not None
+    assert after["counts"]["done"] == 1
+    assert after["pending"] == 0
+
+
+# ── the 24/7 fix cycle ─────────────────────────────────────────────────────
+
+def test_the_cycle_proposes_and_never_applies(jobs, monkeypatch, wp,
+                                              isolated_clients):
+    """There is no auto-apply flag in site_fix and the cycle must not become
+    one. A model editing a stranger's homepage at 3am with nobody watching is
+    the fastest way to destroy a customer's business."""
+    from app.core import clients as creg, site_access, site_fix
+    from app.engines import client_seo, fix_cycle
+
+    rec = creg.create_client(business_name="Triad Thread Studio",
+                             username="fc-1", password="x" * 20,
+                             website="https://shop.example", city="Sialkot",
+                             country="Pakistan", industry="leather manufacturer")
+    # site_access is keyed by client id; the `wp` fixture connected "c1".
+    site_access._store[rec["id"]] = site_access._store["c1"]
+    monkeypatch.setattr(client_seo, "audit", lambda *a, **k: dict(AUDIT))
+
+    fix_cycle.register_handlers()
+    out = fix_cycle.cycle(force=True)
+    assert out["enqueued_audits"] >= 1
+
+    drained = jobs.drain(limit=10)
+    assert drained["done"] >= 1, "the audit job did not run"
+
+    proposals = site_fix.for_client(rec["id"])
+    assert proposals, "the cycle produced no proposals"
+    assert {p["status"] for p in proposals} == {"proposed"}, \
+        "the 24/7 cycle applied something without a human approval"
+    assert wp.writes == [], "the cycle wrote to a live site on its own"
+    assert fix_cycle.status()["applies_automatically"] is False
+
+
+def test_a_change_someone_reverted_is_reported_not_reinstated(jobs, wp,
+                                                              monkeypatch):
+    """The owner is allowed to disagree with a change. A tool that silently
+    puts its own edit back has no business holding a credential."""
+    from app.core import site_fix
+    from app.engines import fix_cycle
+
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = [f for f in out["proposed"] if f["kind"] == "title"][0]
+    site_fix.approve(fix["id"], "Abdullah")
+    site_fix.apply(fix["id"])
+    assert site_fix.get(fix["id"])["status"] == "applied"
+
+    # The owner edits the title back in their own admin.
+    wp.pages[12]["title"] = {"raw": "Home"}
+    wp.writes.clear()
+
+    result = fix_cycle.verify_applied({"client_id": "c1"})
+    assert result["checked"] == 1
+    assert result["drifted"] == 1
+
+    rec = site_fix.get(fix["id"])
+    assert rec["status"] == "drifted"
+    assert rec["verified"] is False
+    assert wp.pages[12]["title"]["raw"] == "Home", "Titan reinstated its edit"
+    assert wp.writes == [], "the verify pass wrote to the site"
+
+    # And it cannot quietly be pushed back through the state machine.
+    assert site_fix.approve(fix["id"], "Abdullah")["ok"] is False
 
 
 def test_a_cdn_beacon_is_not_a_phone_number_and_prose_is_not_an_address():

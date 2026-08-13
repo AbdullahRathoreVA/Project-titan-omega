@@ -65,8 +65,15 @@ APPLIED = "applied"
 FAILED = "failed"
 ROLLED_BACK = "rolled_back"
 REJECTED = "rejected"
+# Titan applied it, verified it, and later found the site no longer holds it.
+# Somebody edited the page back, or a plugin overwrote it. This is a REPORT,
+# not a problem to correct: the owner is allowed to disagree with a change,
+# and a tool that silently reinstates its own edit after a human removed it
+# has no business holding a credential.
+DRIFTED = "drifted"
 
-STATUSES = (PROPOSED, APPROVED, APPLIED, FAILED, ROLLED_BACK, REJECTED)
+STATUSES = (PROPOSED, APPROVED, APPLIED, FAILED, ROLLED_BACK, REJECTED,
+            DRIFTED)
 
 # A failed fix may be approved again — the cause is usually on the site (a
 # plugin stripped the markup, the page moved) and is worth another attempt once
@@ -76,10 +83,13 @@ STATUSES = (PROPOSED, APPROVED, APPLIED, FAILED, ROLLED_BACK, REJECTED)
 TRANSITIONS: dict[str, tuple[str, ...]] = {
     PROPOSED:    (APPROVED, REJECTED),
     APPROVED:    (APPLIED, FAILED, REJECTED),
-    APPLIED:     (ROLLED_BACK,),
+    APPLIED:     (ROLLED_BACK, DRIFTED),
     FAILED:      (APPROVED, REJECTED),
     ROLLED_BACK: (),
     REJECTED:    (),
+    # Nothing leaves `drifted` either. Re-applying needs a NEW proposal
+    # against what the page says now, approved again by a human.
+    DRIFTED:     (),
 }
 
 # ------------------------------------------------------------------- kinds --
@@ -771,6 +781,31 @@ def _fail(fix: dict, message: str, *, stale: bool = False,
                  "kind": fix["kind"], "reason": message[:200]},
                 actor="system", severity="error")
     return {"ok": False, "error": message, "fix": public(fix["id"])}
+
+
+def mark_drifted(fix_id: str, live_value: str) -> dict:
+    """Record that an applied fix is no longer live. Changes nothing on the site.
+
+    Called by the 24/7 verify pass. It deliberately has no counterpart that
+    puts the value back: the owner editing Titan's change is a legitimate
+    decision, and reversing it automatically would be Titan overruling the
+    person who owns the site.
+    """
+    with _lock:
+        fix = _fixes.get(fix_id)
+        if not fix:
+            return {"ok": False, "error": "No such fix."}
+        err = _transition(fix, DRIFTED)
+        if err:
+            return {"ok": False, "error": err}
+        fix["live_value"] = live_value
+        fix["verified"] = False
+        fix["drifted_at"] = time.time()
+        fix["verify_note"] = (
+            "Titan applied and verified this, and the site no longer holds it. "
+            "Somebody edited the page or a plugin overwrote it. Nothing was "
+            "changed back — re-propose it if it should be reinstated.")
+    return {"ok": True, "fix": public(fix_id)}
 
 
 def rollback(fix_id: str) -> dict:

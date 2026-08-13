@@ -268,6 +268,16 @@ def status(client_id: str) -> dict:
     }
 
 
+def connected_ids() -> list[str]:
+    """Clients whose site Titan currently holds a key to.
+
+    The 24/7 cycle needs this to know what it is responsible for. It returns
+    ids only — never the record, and never the secret.
+    """
+    with _lock:
+        return sorted(_store)
+
+
 def disconnect(client_id: str) -> dict:
     with _lock:
         existed = _store.pop(client_id, None) is not None

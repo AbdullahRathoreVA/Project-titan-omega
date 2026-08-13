@@ -38,7 +38,7 @@ import threading
 import time
 from typing import Any, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _lock = threading.RLock()
 _conn: Optional[sqlite3.Connection] = None
@@ -59,6 +59,40 @@ MIGRATIONS: list[tuple[int, str]] = [
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+    """),
+    # The durable work queue. A real table rather than another JSON blob in
+    # `state`, because a queue needs exactly what a blob cannot give: an atomic
+    # claim, an index on what is due, and a row that survives the container
+    # being killed halfway through the work.
+    (2, """
+        CREATE TABLE IF NOT EXISTS jobs (
+            id           TEXT PRIMARY KEY,
+            kind         TEXT NOT NULL,
+            payload      TEXT NOT NULL,
+            status       TEXT NOT NULL,
+            attempts     INTEGER NOT NULL DEFAULT 0,
+            max_attempts INTEGER NOT NULL DEFAULT 3,
+            priority     INTEGER NOT NULL DEFAULT 5,
+            run_at       REAL NOT NULL,
+            lease_until  REAL,
+            worker       TEXT,
+            dedupe_key   TEXT,
+            created_at   REAL NOT NULL,
+            started_at   REAL,
+            finished_at  REAL,
+            duration_ms  REAL,
+            result       TEXT,
+            error        TEXT
+        );
+        CREATE INDEX IF NOT EXISTS jobs_due
+            ON jobs (status, run_at, priority);
+        CREATE INDEX IF NOT EXISTS jobs_lease
+            ON jobs (status, lease_until);
+        -- Uniqueness only among work not yet finished, so the same audit can
+        -- be queued again tomorrow but never twice at once.
+        CREATE UNIQUE INDEX IF NOT EXISTS jobs_dedupe_open
+            ON jobs (dedupe_key)
+            WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running');
     """),
 ]
 

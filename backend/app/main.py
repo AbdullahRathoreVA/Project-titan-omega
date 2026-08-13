@@ -61,6 +61,13 @@ async def _heartbeat_loop() -> None:
             executive.heartbeat(STORE)
         with contextlib.suppress(Exception):
             await asyncio.to_thread(publisher.run_due, STORE)
+        # The durable queue. Bounded per tick so a deep backlog can never
+        # monopolise the heartbeat, and it is what takes crawls off the
+        # request path — a container recycled mid-audit retries instead of
+        # losing the work silently.
+        with contextlib.suppress(Exception):
+            from .core import queue
+            await asyncio.to_thread(queue.drain, 3)
         # Answer any waiting Telegram commands (no-op with no token).
         with contextlib.suppress(Exception):
             from .engines import telegram_bot
@@ -93,6 +100,17 @@ async def _heartbeat_loop() -> None:
                 from .engines import client_news
                 await asyncio.to_thread(client_news.cycle)
 
+            # The 24/7 half of the fix loop. Enqueues re-audits for every
+            # connected site; it never applies anything. Keeps its own 6-hour
+            # interval, so this is a cheap no-op the rest of the time.
+            with contextlib.suppress(Exception):
+                from .engines import fix_cycle
+                await asyncio.to_thread(fix_cycle.cycle)
+
+            with contextlib.suppress(Exception):
+                from .core import queue
+                await asyncio.to_thread(queue.trim)
+
         # Run the live research engine on its own slow cadence.
         if time.monotonic() - _last_growth >= GROWTH_INTERVAL:
             _last_growth = time.monotonic()
@@ -112,6 +130,12 @@ async def lifespan(app: FastAPI):
     # reports what it needs.
     from .engines import adapters
     adapters.register_all()
+    # Bind job kinds to their handlers BEFORE the heartbeat drains anything,
+    # so work already sitting in the queue from a previous container is picked
+    # up on this boot rather than parked as unhandled.
+    with contextlib.suppress(Exception):
+        from .engines import fix_cycle
+        fix_cycle.register_handlers()
 
     async def _initial_sync() -> None:
         with contextlib.suppress(Exception):
