@@ -4537,6 +4537,41 @@ def test_a_real_page_is_not_mistaken_for_a_shell():
     assert out["visible_text_chars"] > 250
 
 
+def test_the_stated_reasons_never_contradict_the_verdict():
+    """Measured on Titan's own homepage: 312 characters of visible text and
+    15 script tags produced the reason "15 script tags with almost no text"
+    beside a verdict of False. An explanation nobody can trust is worse than
+    no explanation."""
+    from app.core import render
+
+    script_heavy_but_real = (
+        "<html><body><h1>Wholesale leather</h1><p>"
+        + ("Full-grain jackets made to order for trade buyers. " * 12)
+        + "</p>" + '<script src="/a.js"></script>' * 15 + "</body></html>")
+
+    out = render.inspect(script_heavy_but_real)
+    assert out["client_rendered"] is False
+    assert out["script_tags"] == 15
+    assert out["reasons"] == [], \
+        "evidence was given for a verdict that was not reached"
+
+    # And when the verdict IS reached, the evidence must be there.
+    assert render.inspect(SPA_SHELL)["reasons"]
+
+
+def test_a_next_app_router_page_is_detected():
+    """Next 13+ streams into self.__next_f and emits no __NEXT_DATA__, so a
+    check that only looked for the old marker missed every modern Next site."""
+    from app.core import render
+
+    app_router_shell = (
+        '<html><body><div id="__next"></div>'
+        '<script>self.__next_f.push([1,"data"])</script></body></html>')
+    out = render.inspect(app_router_shell)
+    assert out["client_rendered"] is True
+    assert "Next.js" in out["frameworks"]
+
+
 def test_a_short_page_with_no_javascript_is_thin_content_not_a_shell():
     """A genuinely short page that ships no JS is a different finding with a
     different fix. Calling it client-rendered would send the wrong advice."""

@@ -55,6 +55,10 @@ _EMPTY_MOUNT = re.compile(
 
 _FRAMEWORK_MARKERS = (
     ("__NEXT_DATA__", "Next.js"),
+    # The App Router does not emit __NEXT_DATA__ — it streams into
+    # self.__next_f instead, so a Next 13+ site was invisible to the check
+    # that only looked for the old marker.
+    ("__next_f", "Next.js"),
     ("data-reactroot", "React"),
     ("__NUXT__", "Nuxt"),
     ("ng-version", "Angular"),
@@ -97,18 +101,25 @@ def inspect(html: str) -> dict:
     client_rendered = bool(
         empty_mount or noscript or (thin and (frameworks or scripts >= 3)))
 
+    # Reasons must support the VERDICT, not just list signals. Emitting
+    # "15 script tags with almost no text" for a page carrying 312 characters
+    # is a self-contradicting explanation, and an explanation nobody can trust
+    # is worse than none — measured on Titan's own homepage.
     reasons = []
-    if empty_mount:
-        reasons.append("the framework's mount element is empty in the HTML")
-    if noscript:
-        reasons.append("the page carries a <noscript> notice telling visitors "
-                       "to enable JavaScript")
-    if thin:
-        reasons.append(f"only {len(text)} characters of visible text were served")
-    if frameworks:
-        reasons.append(f"framework markers present: {', '.join(frameworks)}")
-    if scripts >= 3 and not frameworks:
-        reasons.append(f"{scripts} script tags with almost no text")
+    if client_rendered:
+        if empty_mount:
+            reasons.append("the framework's mount element is empty in the HTML")
+        if noscript:
+            reasons.append("the page carries a <noscript> notice telling "
+                           "visitors to enable JavaScript")
+        if thin:
+            reasons.append(f"only {len(text)} characters of visible text "
+                           f"were served")
+            if frameworks:
+                reasons.append(f"framework markers present: "
+                               f"{', '.join(frameworks)}")
+            elif scripts >= 3:
+                reasons.append(f"{scripts} script tags and almost no text")
 
     return {
         "client_rendered": client_rendered,
