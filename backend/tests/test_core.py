@@ -4393,3 +4393,107 @@ def test_one_subscriber_cannot_apply_anothers_fix(client, isolated_billing,
                     headers={"X-Account-Token": tok_b})
     assert r.status_code == 404
     assert site_fix.get(mine["id"])["status"] == "proposed"
+
+
+# ── the landing pages must pass the audit Titan sells ──────────────────────
+#
+# Measured on the live site before this: /compliance/de scored 60/C and
+# /seo/restaurant 70/C against Titan's own engine, both failing `schema`. A
+# product that sells SEO while its own marketing pages score C is the easiest
+# objection in the world to raise.
+
+def _landing_pages():
+    from app.engines import landing
+    pages = {f"/compliance/{c}": landing.compliance_page(c)
+             for c in landing.compliance_slugs()}
+    pages.update({f"/seo/{s}": landing.vertical_page(s)
+                  for s in landing.vertical_slugs()})
+    return pages
+
+
+def test_every_landing_page_title_fits_the_limit_titan_enforces_on_clients():
+    """Measured on the ESCAPED title, because that is what the audit reads.
+    '&' is one character in Python and five in the HTML a crawler parses, which
+    is how two of these measured 64 locally and 68 to Titan's own engine."""
+    import re
+    from app.engines import landing
+
+    too_long = []
+    for path, html in _landing_pages().items():
+        title = re.search(r"<title[^>]*>(.*?)</title>", html, re.S).group(1)
+        if not (landing.TITLE_MIN <= len(title) <= landing.TITLE_MAX):
+            too_long.append((path, len(title), title))
+    assert not too_long, f"titles Titan would fail on a client: {too_long}"
+
+
+def test_every_landing_page_publishes_valid_structured_data():
+    import json
+    import re
+
+    missing, invalid = [], []
+    for path, html in _landing_pages().items():
+        blocks = re.findall(
+            r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>', html, re.S)
+        if not blocks:
+            missing.append(path)
+            continue
+        for b in blocks:
+            try:
+                data = json.loads(b.replace("<\\/", "</"))
+            except Exception as e:
+                invalid.append((path, str(e)))
+                continue
+            types = {n.get("@type") for n in data.get("@graph", [])}
+            assert "Article" in types, f"{path} has no Article node"
+            assert "BreadcrumbList" in types, f"{path} has no breadcrumb"
+    assert not missing, f"landing pages with no schema: {missing}"
+    assert not invalid, f"landing pages with invalid JSON-LD: {invalid}"
+
+
+def test_landing_schema_invents_no_date_and_no_rating():
+    """Google's Article guidance asks for datePublished and every SEO
+    checklist says to add it. Nothing records when these pages last changed,
+    so a date here would be a fabricated fact published as structured data."""
+    for path, html in _landing_pages().items():
+        for forbidden in ("datePublished", "dateModified", "aggregateRating",
+                          "ratingValue", "reviewCount"):
+            assert forbidden not in html, f"{path} publishes an invented {forbidden}"
+
+
+def test_the_marked_up_price_cannot_drift_from_the_price_charged():
+    """The schema price comes from the real plan table, not a second copy."""
+    import json
+    import re
+    from app.core import billing
+    from app.engines import landing
+
+    html = landing.compliance_page("de")
+    block = re.search(
+        r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>', html, re.S)
+    data = json.loads(block.group(1).replace("<\\/", "</"))
+    app_node = [n for n in data["@graph"]
+                if n.get("@type") == "SoftwareApplication"][0]
+    marked_up = sorted(o["price"] for o in app_node["offers"])
+    real = sorted(f"{billing.PLANS[k].price_usd:.2f}" for k in billing.ORDER)
+    assert marked_up == real, "the marked-up price drifted from the plan table"
+
+
+def test_a_landing_page_still_renders_if_the_plan_table_is_unavailable():
+    """Fewer schema nodes is a smaller claim, not a broken page."""
+    import json
+    import re
+    from app.engines import landing, self_seo
+
+    original = self_seo.structured_data
+    self_seo.structured_data = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        html = landing.vertical_page("restaurant")
+    finally:
+        self_seo.structured_data = original
+
+    assert html and "<h1>" in html
+    block = re.search(
+        r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>', html, re.S)
+    data = json.loads(block.group(1).replace("<\\/", "</"))
+    types = {n.get("@type") for n in data["@graph"]}
+    assert types == {"Article", "BreadcrumbList"}

@@ -27,6 +27,7 @@ Two deliberate limits, both to stay on the right side of thin-content:
 from __future__ import annotations
 
 import html as _html
+from typing import Optional
 
 from . import compliance, verticals
 
@@ -71,7 +72,101 @@ def _e(s) -> str:
     return _html.escape(str(s or ""))
 
 
-def _page(title: str, desc: str, canonical: str, body: str) -> str:
+# The audit's own limit. A title outside this range is a finding Titan raises
+# against paying clients, so shipping one on its own pages is indefensible —
+# and it is exactly what /compliance/{code} did at 70 characters.
+TITLE_MAX = 65
+TITLE_MIN = 15
+
+
+def _fit_title(base: str, suffixes: tuple[str, ...]) -> str:
+    """The longest suffix that still fits inside the audit's own limit.
+
+    Truncating mid-word would produce a title Titan would flag, so the
+    alternatives are written out and the best one that fits is used.
+
+    **Measured on the ESCAPED string**, because that is what the audit reads.
+    An "&" is one character here and five (`&amp;`) in the HTML the crawler
+    parses, which is how "…Switzerland — Impressum & GDPR rules" measured 64
+    in Python and 68 to Titan's own engine. Written suffixes therefore avoid
+    ampersands, and the check no longer trusts the unescaped length.
+    """
+    for suffix in suffixes:
+        if len(_e(base + suffix)) <= TITLE_MAX:
+            return base + suffix
+    return base[:TITLE_MAX].rstrip(" -—·,")
+
+
+def _schema_graph(title: str, desc: str, canonical: str,
+                  breadcrumb: list[tuple[str, str]]) -> str:
+    """JSON-LD for a landing page. One source of truth with the product schema.
+
+    Titan's audit tells clients that only ~17% of sites publish schema and that
+    it is how AI answer engines decide what to quote. These 25 pages published
+    none and scored 60-70/C against Titan's own engine — the single loudest
+    "physician, heal thyself" left in the product.
+
+    The SoftwareApplication and Organization nodes come from
+    `self_seo.structured_data()` rather than being written again here, so the
+    marked-up price can never drift from the price actually charged. The
+    `Article` node describes this page.
+
+    **No datePublished or dateModified.** Google's Article guidance asks for
+    them and every SEO checklist says to add them, but these pages are rendered
+    from live data and nothing records when their content last changed. A
+    plausible date would be a fabricated fact published as structured data,
+    which is the one thing this codebase does not do. Omitted rather than
+    invented.
+
+    **No aggregateRating.** There are no reviews.
+    """
+    import json
+
+    graph: list[dict] = []
+    try:
+        from . import self_seo
+        product = self_seo.structured_data()
+        graph.extend(n for n in product.get("@graph", [])
+                     if isinstance(n, dict))
+    except Exception:
+        # A landing page must still render if the plan table is unavailable.
+        # Fewer nodes is a smaller claim, not a false one.
+        pass
+
+    graph.append({
+        "@type": "Article",
+        "headline": title,
+        "description": desc,
+        "url": canonical,
+        "mainEntityOfPage": {"@type": "WebPage", "@id": canonical},
+        "inLanguage": "en",
+        "isAccessibleForFree": True,
+        "author": {"@type": "Organization", "name": "Titan Omega",
+                   "url": SITE},
+        "publisher": {"@type": "Organization", "name": "Titan Omega",
+                      "url": SITE, "logo": f"{SITE}/icons/icon-512.png"},
+    })
+    graph.append({
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": i, "name": name, "item": url}
+            for i, (name, url) in enumerate(breadcrumb, start=1)
+        ],
+    })
+    blob = json.dumps({"@context": "https://schema.org", "@graph": graph},
+                      ensure_ascii=False, indent=1)
+    # The page is server-rendered and every value is either escaped text or a
+    # value Titan generated, but "</script" inside a JSON string would still
+    # end the block early. Escaping the slash is the standard defence and stays
+    # valid JSON.
+    return ('<script type="application/ld+json">'
+            + blob.replace("</", "<\\/") + "</script>")
+
+
+def _page(title: str, desc: str, canonical: str, body: str,
+          breadcrumb: Optional[list[tuple[str, str]]] = None) -> str:
+    schema = _schema_graph(title, desc, canonical,
+                           breadcrumb or [("Titan Omega", SITE)])
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -86,6 +181,7 @@ def _page(title: str, desc: str, canonical: str, body: str) -> str:
 <meta property="og:description" content="{_e(desc)}">
 <meta property="og:url" content="{_e(canonical)}">
 <meta property="og:type" content="article">
+{schema}
 <style>{_CSS}</style>
 </head>
 <body><div class="wrap">
@@ -112,7 +208,15 @@ def compliance_page(code: str) -> str | None:
         return None
     name = j["name"]
     canonical = f"{SITE}/compliance/{code.lower()}"
-    title = f"Website legal compliance in {name} — what regulators actually require"
+    # Was "…— what regulators actually require": 70 characters for Germany,
+    # which Titan's own audit fails as a critical finding. Measured at 60/C on
+    # the live page before this.
+    title = _fit_title(f"Website legal compliance in {name}", (
+        " — Impressum, GDPR and cookie rules",
+        " — Impressum and GDPR rules",
+        " — what regulators require",
+        " — the legal rules",
+        " — the rules"))
     desc = (f"The imprint, privacy and cookie-consent rules that apply to a "
             f"business website in {name}, with the statute and the penalty "
             f"range. Checked automatically by Titan Omega.")
@@ -170,7 +274,10 @@ def compliance_page(code: str) -> str | None:
         f'<a href="/compliance/{c}">{_e(compliance.JURISDICTIONS[c.upper()]["name"])}</a>'
         for c in others)
     body.append(f"<h2>Other jurisdictions Titan checks</h2><p>{links}</p>")
-    return _page(title, desc, canonical, "\n".join(body))
+    return _page(title, desc, canonical, "\n".join(body),
+                 breadcrumb=[("Titan Omega", SITE),
+                             ("Compliance", f"{SITE}/compliance/{code.lower()}"),
+                             (name, canonical)])
 
 
 # -------------------------------------------------------------- verticals --
@@ -184,7 +291,10 @@ def vertical_page(key: str) -> str | None:
         return None
     label = v.label
     canonical = f"{SITE}/seo/{key.lower()}"
-    title = f"SEO for a {label.lower()} — what actually moves the ranking"
+    title = _fit_title(f"SEO for a {label.lower()}", (
+        " — what actually moves the ranking",
+        " — what moves the ranking",
+        " — the ranking factors"))
     local = getattr(v, "local_business", False)
     desc = (f"The structured data, ranking signals and content checks that "
             f"matter for a {label.lower()}, and the ones that do not. Audited "
@@ -239,7 +349,10 @@ def vertical_page(key: str) -> str | None:
         f'<a href="/seo/{s}">{_e(verticals.VERTICALS[s].label)}</a>'
         for s in others)
     body.append(f"<h2>Other business types Titan audits</h2><p>{links}</p>")
-    return _page(title, desc, canonical, "\n".join(body))
+    return _page(title, desc, canonical, "\n".join(body),
+                 breadcrumb=[("Titan Omega", SITE),
+                             ("SEO by business type", f"{SITE}/seo/{key.lower()}"),
+                             (label, canonical)])
 
 
 def all_paths() -> list[tuple[str, float, str]]:
