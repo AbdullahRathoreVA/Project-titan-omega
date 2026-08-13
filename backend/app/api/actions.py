@@ -275,12 +275,34 @@ def content_daily(
 
 # --- HUD "Next Post" card (preview + approve/regenerate) -------------------
 
+def publish_readiness() -> dict:
+    """Can a post actually reach a platform right now?
+
+    The card used to print "Posts to: linkedin, instagram, facebook" whether or
+    not any of them were reachable. Nothing was connected, so approving a post
+    did exactly nothing and the interface said otherwise — which is the one
+    thing this codebase is not allowed to do.
+    """
+    hook = os.getenv("TITAN_PUBLISH_WEBHOOK", "").strip()
+    return {
+        "ready": bool(hook),
+        "route": "webhook" if hook else None,
+        "reason": "" if hook else (
+            "No publishing route is connected, so approving a post queues it "
+            "and sends nothing. Titan posts through an automation webhook "
+            "(Make.com, Zapier or Buffer): create a scenario there, connect "
+            "your accounts to it, and set its catch-hook URL as "
+            "TITAN_PUBLISH_WEBHOOK. Nothing is lost meanwhile — approved "
+            "posts wait in the queue with their captions and images."),
+    }
+
+
 @router.get("/next-post", tags=["system"])
 def next_post(lang: str = Query(default="en")) -> dict:
     """The current next post the founder can approve. Generated lazily, cached."""
     if not STORE.next_post:
         STORE.next_post = _build_next_post("", lang, "auto", STORE)
-    return STORE.next_post
+    return {**STORE.next_post, "publish": publish_readiness()}
 
 
 class RegenRequest(BaseModel):
@@ -304,15 +326,23 @@ def next_post_approve() -> dict:
     scheduled = publisher.schedule(
         post["caption"], post.get("channels", ["linkedin"]), post.get("image_url"), None, store=STORE
     )
+    ready = publish_readiness()
     STORE.emit(
         "content-studio", "publish",
-        f"✅ Approved next post — scheduled to {', '.join(scheduled['channels'])}.",
-        "success",
+        (f"Approved next post — scheduled to {', '.join(scheduled['channels'])}."
+         if ready["ready"] else
+         "Approved next post — QUEUED only. No publishing route is connected, "
+         "so nothing was sent."),
+        "success" if ready["ready"] else "warn",
     )
     STORE.next_post = _build_next_post("", "en", "auto", STORE)
     return {
         "scheduled_id": scheduled["id"],
         "channels": scheduled["channels"],
+        # The caller must be able to tell "sent" from "saved". Returning the
+        # same shape for both is how a button appears to work and does not.
+        "sent": ready["ready"],
+        "publish": ready,
         "next_post": STORE.next_post,
     }
 

@@ -3853,3 +3853,26 @@ def test_career_mind_only_appears_when_explicitly_configured(monkeypatch):
     monkeypatch.delenv("CAREERMIND_URL", raising=False)
     post = actions._build_next_post("", "en", "auto", STORE)
     assert "career" not in str(post.get("link", "")).lower()
+
+
+def test_the_card_never_claims_it_will_post_when_it_cannot(client, monkeypatch):
+    """It printed "Posts to: linkedin, instagram, facebook" regardless of
+    whether any of them were reachable. Nothing was connected, so approving
+    sent nothing while the interface said it would."""
+    monkeypatch.delenv("TITAN_PUBLISH_WEBHOOK", raising=False)
+    body = client.get("/api/next-post").json()
+    assert body["publish"]["ready"] is False
+    assert "TITAN_PUBLISH_WEBHOOK" in body["publish"]["reason"]
+    assert "queues it" in body["publish"]["reason"]
+
+
+def test_approving_reports_saved_versus_sent(client, monkeypatch):
+    """A button that appears to work and does not is worse than one that is
+    plainly disabled."""
+    monkeypatch.delenv("TITAN_PUBLISH_WEBHOOK", raising=False)
+    r = client.post("/api/next-post/approve").json()
+    assert r["sent"] is False
+    assert r["scheduled_id"], "the post is still saved, not lost"
+
+    monkeypatch.setenv("TITAN_PUBLISH_WEBHOOK", "https://hook.example/catch")
+    assert client.get("/api/next-post").json()["publish"]["ready"] is True

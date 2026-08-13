@@ -5,6 +5,8 @@ import { CheckCircle2, ImageOff, RefreshCw, Send } from "lucide-react";
 import type { NextPost as NextPostType } from "@/lib/types";
 import { api } from "@/lib/api";
 
+type ApproveResult = { sent?: boolean; channels?: string[] };
+
 // The HUD "Next Post" card: shows the next AI-generated image + caption and lets
 // the founder approve (schedule it) or regenerate, in one click. Fresh AI images
 // can take 30-60s to generate server-side, so a failed load auto-retries with
@@ -17,6 +19,7 @@ export function NextPost({
   onChange: () => Promise<void> | void;
 }) {
   const [busy, setBusy] = useState<"approve" | "regen" | null>(null);
+  const [result, setResult] = useState<{ sent: boolean; channels: string[] } | null>(null);
   const [imgError, setImgError] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -47,8 +50,16 @@ export function NextPost({
   const run = async (key: "approve" | "regen", fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(key);
+    setResult(null);
     try {
-      await fn();
+      const out = await fn();
+      // Approving must report what actually happened. Clicking a button and
+      // seeing nothing change is why this looked broken.
+      if (key === "approve") {
+        const r = out as ApproveResult | null;
+        setResult(r ? { sent: Boolean(r.sent), channels: r.channels ?? [] }
+                    : { sent: false, channels: [] });
+      }
       setImgError(false);
       setAttempt(0);
       await onChange();
@@ -113,9 +124,36 @@ export function NextPost({
           {post ? post.caption : "Generating your next post…"}
         </p>
 
+        {/* This used to read "Posts to: linkedin, instagram, facebook"
+            regardless of whether any of them could be reached. Nothing was
+            connected, so approving sent nothing while the card said it would
+            — a button that appears to work and does not is worse than one
+            that is plainly disabled. */}
         {post && (
-          <div className="shrink-0 text-[10px] text-slate-600">
-            Posts to: <span className="text-slate-400">{post.channels.join(", ")}</span>
+          post.publish?.ready ? (
+            <div className="shrink-0 text-[10px] text-slate-600">
+              Posts to: <span className="text-slate-400">{post.channels.join(", ")}</span>
+            </div>
+          ) : (
+            <div className="shrink-0 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-2.5 py-2 text-[10px] leading-relaxed text-hud-amber">
+              <span className="font-semibold">Nothing will be sent yet.</span>{" "}
+              {post.publish?.reason ??
+                "No publishing route is connected — approving saves the post to the queue."}
+            </div>
+          )
+        )}
+
+        {result && (
+          <div
+            className={`shrink-0 rounded-lg border px-2.5 py-2 text-[10px] leading-relaxed ${
+              result.sent
+                ? "border-hud-emerald/30 bg-hud-emerald/5 text-hud-emerald"
+                : "border-hud-amber/30 bg-hud-amber/5 text-hud-amber"
+            }`}
+          >
+            {result.sent
+              ? `Sent to ${result.channels.join(", ")}.`
+              : "Saved to the queue with its caption and image. It was not sent — connect a publishing route first."}
           </div>
         )}
 

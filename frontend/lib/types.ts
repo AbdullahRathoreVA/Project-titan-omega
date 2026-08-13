@@ -174,6 +174,8 @@ export interface NextPost {
   link: string;
   channels: string[];
   created_at: string;
+  /** Whether a post can actually reach a platform right now, and why not. */
+  publish?: { ready: boolean; route: string | null; reason: string };
 }
 
 // Autonomous Growth Engine research (GET /api/growth/intel).
