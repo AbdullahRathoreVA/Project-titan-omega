@@ -62,7 +62,7 @@ URLs, grep them for a new string. `/health` returning 200 proves nothing.
 
 ## 3. Where Titan is now
 
-**LIVE: https://titanomega-ai.com** · **287 tests pass**
+**LIVE: https://titanomega-ai.com** · **304 tests pass**
 
 26 commits shipped 2026-08-07→09, `5b5eca1..0688949`. Tests went 130 → 264.
 Every commit was verified live in production before being called done.
@@ -103,6 +103,25 @@ Every commit was verified live in production before being called done.
     pages changed and there are no reviews. Asserted by a test so a future
     "SEO improvement" cannot quietly add them.
 - **Fixed a false pass in the NAP check** (found by the above, see §5).
+- **Durable work queue (item 007 DONE)** — `core/queue.py`, migration 2, a real
+  `jobs` table. Atomic claim, a **lease** (not a lock) so a container killed
+  mid-job returns the work to the queue instead of stranding it in `running`,
+  capped attempts, exponential backoff, dedupe on open work only. A job whose
+  handler is not registered **waits** rather than failing — the handler may
+  arrive in the next deploy. Durations are measured; `avg`/`max` are `None`
+  until something finishes. Drained 3-at-a-time on the heartbeat.
+  **Single-process. Durable against restarts, not distributed.**
+- **The 24/7 fix cycle (priority 1 COMPLETE)** — `engines/fix_cycle.py`.
+  Re-audits every connected site on a 6-hour cadence and proposes fixes,
+  through the queue. **It never applies anything**, and a new `drifted` state
+  records an applied fix the site no longer holds — reported, never
+  re-applied, and terminal in the state machine.
+- **JS-rendering blind spot (item 011, detection half DONE)** —
+  `core/render.py`. A shell is detected from counted evidence and the audit
+  sets `reliable: False` with a critical finding that sorts above everything,
+  instead of publishing a confident F on a `<div id="root">`.
+  `services/renderer/` is the Playwright service, complete and tested, and
+  **unset in production** — it needs a host (see §4).
 
 ### Shipped this session
 - **Founder analytics** — who signed up, plan, what they did. Funnel steps
@@ -146,7 +165,10 @@ Every commit was verified live in production before being called done.
 7. **A real WordPress site + application password.** The fix loop is proven
    against a fake WordPress in 17 tests. Nothing proves it writes to a real
    WordPress install except a real one. Triad Thread Studio is not WordPress.
-8. **A host for the Playwright crawler** (blueprint 011) — see §8.
+8. **A host for the Playwright crawler.** `services/renderer/` is finished —
+   Dockerfile, SSRF guard, token auth, README. It needs a container host with
+   ~1GB RAM (Chromium OOMs below that), then two env vars on the Space.
+   Nothing else is missing. See `services/renderer/README.md`.
 9. **A phone number and postal address Titan can publish.** Caps its own
    pages at 89/B and is the last failing check on all 25.
 
@@ -227,21 +249,21 @@ Full forensic audit with scored baseline, verified research and a 25-item
 checklist:
 **https://claude.ai/code/artifact/18979618-2a79-45a4-b740-d08206669c70**
 
-Items **001–004, 006, 012 are DONE**. Remaining, in order:
-- **007** durable task queue (crawls run on the request path today)
-- **011** Playwright crawler service (the JS-rendering blind spot).
-  **BLOCKED ON A DECISION, not on code** — browser binaries break the free
-  Space build, so it must be a separate service, and a separate service needs
-  a host that can run Chromium. Free tiers either sleep or are gone. Ask
-  Abdullah what he will pay for or accept before building any of it.
+Items **001–004, 006, 007, 012 are DONE**, and **011 is half done**.
+Remaining:
+- **011 (rendering half)** — `services/renderer/` is written, tested and
+  documented. It only needs deploying to a host that can run a container with
+  ~1GB RAM, then `TITAN_RENDER_URL` + `TITAN_RENDER_TOKEN` set on the Space.
+  Detection already ships, so Titan is honest about the gap meanwhile.
 - **013** verifier layer before customer-facing output
 
-### Next on the fix loop (priority 1 continues)
-`site_fix` is the loop; the **24/7 cycle on top of it is not built**. When
-building it: there is deliberately no auto-apply flag in `site_fix`, and the
-cycle must not add one — it should propose continuously and leave approval to
-a human. The honest gap to close first is that rollback snapshots die with a
-free-tier rebuild (`durable: false` on every fix record).
+### Standing rules for anyone continuing the fix loop
+- **Never add an auto-apply flag.** `site_fix` deliberately has none and
+  `fix_cycle` deliberately does not apply. A model editing a stranger's live
+  homepage at 3am is how this product dies.
+- **Never auto-reinstate a `drifted` fix.** The owner is allowed to disagree.
+- The remaining honest gap is durability: rollback snapshots die with a
+  free-tier rebuild (`durable: false` on every fix record and in queue stats).
 
 ---
 
