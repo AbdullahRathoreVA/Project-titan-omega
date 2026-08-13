@@ -62,10 +62,47 @@ URLs, grep them for a new string. `/health` returning 200 proves nothing.
 
 ## 3. Where Titan is now
 
-**LIVE: https://titanomega-ai.com** · **264 tests pass** · self-audit **100/100 A**
+**LIVE: https://titanomega-ai.com** · **287 tests pass**
 
 26 commits shipped 2026-08-07→09, `5b5eca1..0688949`. Tests went 130 → 264.
 Every commit was verified live in production before being called done.
+
+### Shipped 2026-08-13 (`79b9eeb..52a5f04`, 3 commits, 264 → 287 tests)
+
+- **Titan now FIXES websites** — `core/site_fix.py`, the propose → approve →
+  apply → verify → rollback loop, plus 7 endpoints under
+  `/api/account/clients/{cid}/fixes`. Verified live in production.
+  - **A write that returned 200 is not a change that happened.** Every write
+    is read back off the site and compared; a mismatch is `failed`, never
+    `applied`. This catches WordPress's `wp_kses_post` silently stripping
+    `<script>` from content for users without `unfiltered_html` — which is
+    exactly what would make a schema fix look successful and do nothing.
+  - Approval must carry a name. A stale proposal (page edited since it was
+    proposed) is refused rather than overwriting the owner. The exact prior
+    value is snapshotted before the write so rollback restores rather than
+    reconstructs. A rolled-back fix cannot re-apply itself.
+  - Only 3 fix kinds, because only 3 are things core WordPress accepts over
+    REST and hands back on a read: page title, media alt text, JSON-LD into
+    content. **Meta description is NOT fixable** — core WP has no such field;
+    it lives in SEO-plugin post meta that is only writable if the plugin
+    registered it. `propose` returns everything it cannot fix under `skipped`
+    with the reason.
+  - Alt text is proposed only where the file name actually describes the
+    image. `IMG_4821.jpg` is handed to a human — Titan has not seen it.
+  - **All 6 guards are mutation-tested**: each one was removed and the
+    corresponding test confirmed to go red. Script at
+    `scratchpad/mutate.py` pattern if you want to repeat it.
+- **The 25 landing pages: 60-70/C → 89/B**, measured live before and after.
+  Article + BreadcrumbList + the SoftwareApplication/Organization/WebSite
+  nodes reused from `self_seo.structured_data()`, so the marked-up price
+  cannot drift from the price charged (there is a test). Compliance titles
+  were 70 chars — over Titan's own 65 limit — now fitted.
+  - Title length must be measured on the **escaped** string. `&` is 1 char in
+    Python and 5 as `&amp;` in the HTML the audit parses.
+  - **No `datePublished`, no `aggregateRating`** — nothing records when these
+    pages changed and there are no reviews. Asserted by a test so a future
+    "SEO improvement" cannot quietly add them.
+- **Fixed a false pass in the NAP check** (found by the above, see §5).
 
 ### Shipped this session
 - **Founder analytics** — who signed up, plan, what they did. Funnel steps
@@ -106,10 +143,34 @@ Every commit was verified live in production before being called done.
 4. **Telephony** — paid, his name, no free path.
 5. Rotate the exposed Firecrawl + Groq keys.
 6. Cloudflare managed robots.txt overrides Titan's at the edge.
+7. **A real WordPress site + application password.** The fix loop is proven
+   against a fake WordPress in 17 tests. Nothing proves it writes to a real
+   WordPress install except a real one. Triad Thread Studio is not WordPress.
+8. **A host for the Playwright crawler** (blueprint 011) — see §8.
+9. **A phone number and postal address Titan can publish.** Caps its own
+   pages at 89/B and is the last failing check on all 25.
 
 ---
 
 ## 5. Known real defects — measured, not guessed
+
+- **FIXED 2026-08-13 — the NAP check reported a pass it never observed.**
+  Both halves read raw HTML. `has_phone` matched `1781791509496`, the token
+  inside the **Cloudflare analytics beacon URL injected at the edge** — so
+  every site behind Cloudflare "had a phone number". `has_addr` matched the
+  word "block" in prose. Titan's own `/compliance/de` scored **100/A with no
+  phone number and no address on it**, and the same false passes were served
+  to paying clients. Now runs on visible text (script/style/comments/
+  attributes stripped), phone bounded to 7-15 digits, address word must stand
+  next to a number. **This lowers the score of sites already audited — those
+  passes were not real.** Found only because a live score (100) disagreed with
+  a local one (89); chase that kind of disagreement, it is where the lies are.
+- **`/compliance/pk` is a 404 — Pakistan is not in `compliance.JURISDICTIONS`.**
+  Abdullah's own country. Needs real statute research before it ships; do not
+  generate plausible-sounding law.
+- **Titan publishes no phone number or address**, so its own pages cap at
+  89/B. Blocked on Abdullah choosing contact details he will stand behind —
+  do not invent them.
 
 - **Retrieval is 2/4** on natural questions. Semantic only leads above 0.68
   cosine; lowering to 0.60 was tested and changed nothing. Next lever is
@@ -166,11 +227,21 @@ Full forensic audit with scored baseline, verified research and a 25-item
 checklist:
 **https://claude.ai/code/artifact/18979618-2a79-45a4-b740-d08206669c70**
 
-Items **001–004, 006 are DONE**. Remaining, in order:
+Items **001–004, 006, 012 are DONE**. Remaining, in order:
 - **007** durable task queue (crawls run on the request path today)
-- **011** Playwright crawler service (the JS-rendering blind spot)
-- **012** schema markup on the landing pages
+- **011** Playwright crawler service (the JS-rendering blind spot).
+  **BLOCKED ON A DECISION, not on code** — browser binaries break the free
+  Space build, so it must be a separate service, and a separate service needs
+  a host that can run Chromium. Free tiers either sleep or are gone. Ask
+  Abdullah what he will pay for or accept before building any of it.
 - **013** verifier layer before customer-facing output
+
+### Next on the fix loop (priority 1 continues)
+`site_fix` is the loop; the **24/7 cycle on top of it is not built**. When
+building it: there is deliberately no auto-apply flag in `site_fix`, and the
+cycle must not add one — it should propose continuously and leave approval to
+a human. The honest gap to close first is that rollback snapshots die with a
+free-tier rebuild (`durable: false` on every fix record).
 
 ---
 
