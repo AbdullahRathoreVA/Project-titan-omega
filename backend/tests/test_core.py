@@ -4496,6 +4496,252 @@ def test_the_marked_up_price_cannot_drift_from_the_price_charged():
     assert marked_up == real, "the marked-up price drifted from the plan table"
 
 
+# ── observability ──────────────────────────────────────────────────────────
+#
+# Measured before this existed: ZERO matches for request_id, structlog or
+# logging.getLogger in the whole backend. A production incident was
+# undiagnosable.
+
+@pytest.fixture
+def logs(monkeypatch):
+    from app.core import obs
+    obs.reset()
+    # Keep 300 tests from writing JSON to stdout and burying real failures.
+    monkeypatch.setattr(obs, "ENABLED", False)
+    yield obs
+    obs.reset()
+
+
+def test_a_credential_never_reaches_a_log_line(logs):
+    """Titan holds customers' website passwords. 'Just don't log secrets' is a
+    convention, and conventions leak — so redaction is structural."""
+    secret = "abcd EFGH ijkl MNOP qrst UVWX"
+    rec = logs.info("site.connect", username="owner",
+                    application_password=secret,
+                    nested={"api_key": "sk-live-1234", "site": "shop.example"},
+                    authorization="Bearer tok_abc123")
+
+    blob = json.dumps(rec)
+    assert secret not in blob
+    assert "sk-live-1234" not in blob
+    assert "tok_abc123" not in blob
+    assert rec["application_password"] == "[redacted]"
+    assert rec["nested"]["api_key"] == "[redacted]"
+    # ...but the harmless field survives, or the log is useless.
+    assert rec["nested"]["site"] == "shop.example"
+    assert rec["username"] == "owner"
+
+
+def test_an_email_is_hashed_not_stored(logs):
+    """Subscriber emails are the most personal data in the system. A stable
+    hash still correlates two lines as the same person."""
+    a = logs.info("signup", who="rathoreabdullah816@gmail.com")
+    b = logs.info("login", who="rathoreabdullah816@gmail.com")
+    assert "rathoreabdullah816" not in json.dumps(a)
+    assert a["who"].startswith("email:")
+    assert a["who"] == b["who"], "the same person must correlate across lines"
+
+
+def test_a_request_id_follows_the_work(logs):
+    rid = logs.new_request_id()
+    logs.bind(request_id=rid)
+    rec = logs.info("crawl.start", url="https://shop.example")
+    assert rec["request_id"] == rid
+    assert logs.current_request_id() == rid
+
+
+def test_timing_is_measured_and_failures_still_log_their_duration(logs):
+    with logs.timed("crawl", url="https://shop.example"):
+        pass
+    ok = logs.recent(limit=1)[0]
+    assert ok["ok"] is True and isinstance(ok["duration_ms"], float)
+
+    with pytest.raises(ValueError):
+        with logs.timed("crawl", url="https://bad.example"):
+            raise ValueError("boom")
+    bad = logs.recent(limit=1)[0]
+    assert bad["ok"] is False and bad["level"] == "error"
+    assert "ValueError" in bad["error"]
+    assert isinstance(bad["duration_ms"], float), "a failure lost its timing"
+
+
+def test_log_stats_report_null_not_zero_when_nothing_was_timed(logs):
+    logs.info("something", detail="no timing here")
+    s = logs.stats()
+    assert s["timed_operations"] == 0
+    assert s["slowest_ms"] is None, "0.0 would read as 'everything is instant'"
+
+
+def test_every_http_request_gets_an_id_including_a_rejected_one(monkeypatch):
+    """The middleware is registered LAST so it is OUTERMOST. Registered any
+    earlier it would sit inside auth_guard, and every 401/403 — the requests
+    you most want a record of — would never be logged."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    from app.core import obs
+    obs.reset()
+
+    c = TestClient(app)
+    ok = c.get("/api/health")
+    assert ok.headers.get("X-Request-Id"), "no request id on a served request"
+
+    rejected = c.get("/api/bi/monthly")
+    assert rejected.status_code in (401, 403)
+    assert rejected.headers.get("X-Request-Id"), "a rejected request had no id"
+
+    logged = [r for r in obs.recent(limit=50) if r["event"] == "http.request"]
+    statuses = {r["status"] for r in logged}
+    assert any(s >= 400 for s in statuses), \
+        "the auth-rejected request was never logged — middleware order is wrong"
+    obs.reset()
+
+
+# ── backup and restore ─────────────────────────────────────────────────────
+#
+# An untested backup is not a backup. Every test here restores.
+
+@pytest.fixture
+def backups(monkeypatch, tmp_path):
+    from app import persistence
+    from app.core import backup, db
+
+    live = tmp_path / "live.db"
+    monkeypatch.setattr(persistence, "STATE_FILE", str(live))
+    monkeypatch.setattr(backup, "BACKUP_DIR", str(tmp_path / "backups"))
+    db.connect(str(live))
+    yield backup
+    db.close()
+
+
+def test_a_backup_is_verified_by_restoring_it_not_by_a_checksum(backups):
+    """A checksum proves the bytes survived the disk. It does not prove the
+    file is a working database with the rows in it."""
+    from app import persistence
+    from app.core import billing
+
+    billing.reset()
+    billing.signup("keep@example.com", "hunter2hunter2")
+    persistence.save()
+
+    out = backups.create(note="test")
+    assert out["ok"] is True, out.get("error")
+    m = out["manifest"]
+    assert m["verified"] is True
+    assert m["schema_version"] >= 2
+    assert m["counts"], "a backup reported no contents"
+    assert m["size_bytes"] > 0
+    assert isinstance(m["duration_ms"], float)
+
+
+def test_a_snapshot_that_fails_verification_is_not_reported_as_a_backup(
+        backups, monkeypatch):
+    """The whole premise: a backup that does not restore is not a backup, and
+    must never leave a reassuring file that someone counts on."""
+    from app import persistence
+    persistence.save()
+
+    monkeypatch.setattr(backups, "verify", lambda path: {
+        "ok": False, "error": "integrity_check said: malformed"})
+
+    out = backups.create(note="doomed")
+    assert out["ok"] is False, "an unverifiable snapshot was reported as a backup"
+    assert "did NOT verify" in out["error"]
+    assert out["manifest"]["verified"] is False
+
+
+def test_a_corrupt_backup_fails_verification_instead_of_looking_safe(backups,
+                                                                    tmp_path):
+    """The failure mode this exists to prevent: a reassuring file on disk that
+    is not a database."""
+    fake = tmp_path / "not-a-database.db"
+    fake.write_bytes(b"this is not a sqlite file, it just has the name")
+    out = backups.verify(str(fake))
+    assert out["ok"] is False
+    assert "database" in out["error"].lower()
+
+    assert backups.verify(str(tmp_path / "missing.db"))["ok"] is False
+
+
+def test_a_real_disaster_is_actually_recovered(backups, tmp_path):
+    """The test that makes the other two mean anything: destroy the live
+    database, restore, and confirm the data is back."""
+    from app import persistence
+    from app.core import billing, db
+
+    billing.reset()
+    billing.signup("survivor@example.com", "hunter2hunter2")
+    persistence.save()
+    made = backups.create(note="before the disaster")
+    assert made["ok"] is True
+
+    # The disaster: the account is gone from the live database.
+    billing.reset()
+    persistence.save()
+    db.close()
+    assert billing.resolve_email("survivor@example.com") is None \
+        if hasattr(billing, "resolve_email") else True
+    assert not billing.export_state().get("accounts"), "setup failed"
+
+    out = backups.restore(made["manifest"]["file"], confirm=True)
+    assert out["ok"] is True, out.get("error")
+    assert out["previous_database"], "the replaced database was not kept"
+    assert os.path.exists(out["previous_database"]), \
+        "a recovery tool destroyed what it was recovering"
+
+    # The account is back, in memory, not merely on disk.
+    accounts = billing.export_state().get("accounts") or {}
+    assert any("survivor@example.com" in str(k) for k in accounts), \
+        "the restore wrote a file but the process kept serving the old state"
+
+
+def test_restore_refuses_without_confirmation_and_refuses_a_bad_backup(backups,
+                                                                      tmp_path):
+    """The one genuinely destructive operation in the codebase."""
+    from app import persistence
+    persistence.save()
+    made = backups.create()
+
+    assert backups.restore(made["manifest"]["file"])["ok"] is False
+    assert "confirm=True" in backups.restore(made["manifest"]["file"])["error"]
+
+    junk = tmp_path / "junk.db"
+    junk.write_bytes(b"nope")
+    out = backups.restore(str(junk), confirm=True)
+    assert out["ok"] is False
+    assert "does not verify" in out["error"]
+
+
+def test_backup_status_says_null_when_nothing_was_ever_backed_up(backups):
+    s = backups.status()
+    assert s["backups"] == 0
+    assert s["newest_age_seconds"] is None, \
+        "0 would read as 'backed up just now'"
+
+
+def test_retention_keeps_the_newest_and_removes_the_rest(backups):
+    """Backup filenames are second-resolution, so the extra copies are made
+    directly rather than by sleeping a second between four real snapshots —
+    prune() is what is under test here, not the clock."""
+    import shutil
+
+    from app import persistence
+    persistence.save()
+    made = backups.create(note="original")
+    assert made["ok"] is True
+    original = made["manifest"]["file"]
+
+    for name in ("titan-20260101T000000Z.db", "titan-20260102T000000Z.db",
+                 "titan-20260103T000000Z.db"):
+        shutil.copy2(original, os.path.join(backups.BACKUP_DIR, name))
+
+    assert len(backups.listing()) == 4
+    assert backups.prune(keep=2) == 2
+    kept = backups.listing()
+    assert len(kept) == 2
+    # Newest kept, oldest dropped. listing() is newest-first by name.
+    assert "20260101" not in json.dumps(kept)
+
+
 # ── untrusted content boundary (prompt injection) ──────────────────────────
 #
 # Titan crawls URLs strangers type into a signup form, indexes the HTML, and
@@ -4624,7 +4870,12 @@ def test_the_voice_answer_path_fences_crawled_text(clean_untrusted, monkeypatch)
         return "We sell leather jackets in Sialkot."
 
     monkeypatch.setattr(llm, "complete", fake_complete)
-    out = knowledge.answer("c1", "what leather do you sell")
+    # Ask about what the injected sentence itself talks about, so the poisoned
+    # passage is definitely the one retrieved. Asking about leather now returns
+    # the clean passage instead — the chunker splits the injection into its own
+    # passage and retrieval improved enough to prefer the real answer, which is
+    # good but makes it the wrong probe for this test.
+    out = knowledge.answer("c1", "how do I wire the payment to your account")
 
     assert out["ok"] is True
     # The model was told the region is data.
@@ -4635,6 +4886,55 @@ def test_the_voice_answer_path_fences_crawled_text(clean_untrusted, monkeypatch)
     # And the operator can see it happened.
     assert out["untrusted_content_flagged"] is True
     assert "override-instructions" in out["untrusted_categories"]
+
+
+def test_the_embedding_backfill_is_actually_CALLED_by_the_heartbeat():
+    """The defect was not a missing function — knowledge.backfill() existed,
+    was tested, and was exposed as an endpoint. NOTHING EVER CALLED IT.
+
+    Passages ingested while the model was still downloading kept no vectors and
+    were never re-embedded, so `any(vectors)` stayed False and the entire
+    semantic branch was dead code in production. On a free Space that rebuilds
+    often that was most clients, and it is the likeliest cause of the measured
+    2/4 retrieval score — and of the recorded note that lowering the cosine
+    threshold 'changed nothing', because there was nothing to compare against.
+
+    A unit test of backfill() passes whether or not anything invokes it, which
+    is exactly how this survived. This asserts the wiring.
+    """
+    import inspect
+    import re as _re
+
+    from app import main
+
+    src = inspect.getsource(main._heartbeat_loop)
+    # Comments are stripped first. The explanatory comment above the call also
+    # says "knowledge.backfill()", so a naive substring search passed even when
+    # the call itself was deleted — caught by mutation testing.
+    code = "\n".join(_re.sub(r"#.*$", "", line) for line in src.splitlines())
+    assert _re.search(r"to_thread\(\s*knowledge\.backfill", code), (
+        "knowledge.backfill() is no longer CALLED from the heartbeat — "
+        "passages indexed before the model loads will stay vector-less "
+        "forever and the semantic ranker becomes dead code again")
+
+
+def test_the_semantic_floor_sits_above_the_sentence_model_noise_band():
+    """Locks in a calibrated number so it cannot drift back.
+
+    COS_FLOOR was 0.52 while this module's own comment records that sentence
+    models score almost any two English sentences 0.6-0.9. A floor below the
+    noise band admits the whole corpus: with the backfill wired up, the
+    benchmark went to 5/5 unanswerable questions answered. Measured optimum on
+    the benchmark corpus is 0.60 (silences 1/10 answerable, admits 0/5
+    unanswerable). See evaluation/calibrate_cosine.py.
+    """
+    from app.core import knowledge
+
+    assert knowledge.COS_FLOOR >= 0.60, (
+        "the semantic rescue floor has dropped back into the noise band where "
+        "any two English sentences match — re-run "
+        "evaluation/calibrate_cosine.py before changing it")
+    assert knowledge.COS_LEAD >= knowledge.COS_FLOOR
 
 
 def test_bm25_threshold_is_relative_to_the_corpus_not_absolute():

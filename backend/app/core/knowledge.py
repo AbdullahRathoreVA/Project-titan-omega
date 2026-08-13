@@ -61,7 +61,27 @@ SEMANTIC_TOP_N = 4
 # bar buys no accuracy and only re-enters the band where semantic ranking was
 # observed to overturn correct BM25 answers.
 COS_LEAD = 0.68     # semantic leads the ranking above this
-COS_FLOOR = 0.52    # below this a passage is not a semantic candidate at all
+# Raised from 0.52 on 2026-08-13, from measurement rather than intuition.
+#
+# 0.52 sat BELOW the noise band this file's own comment describes — sentence
+# models score almost any two English sentences 0.6-0.9 — so the
+# semantic-rescue branch admitted essentially the whole corpus. It went
+# unnoticed because the branch was DEAD in production: passages indexed while
+# the model was still downloading never received vectors and nothing ever
+# called backfill(), so `any(vectors)` was False and none of this ran. Wiring
+# backfill to the heartbeat brought the branch to life and the benchmark
+# immediately showed 5/5 unanswerable questions being answered.
+#
+# Calibrated on evaluation/calibrate_cosine.py against the benchmark corpus.
+# Top cosine per question, answerable vs unanswerable:
+#     floor 0.55 -> silences 1/10 answerable, admits 2/5 unanswerable
+#     floor 0.60 -> silences 1/10 answerable, admits 0/5 unanswerable  <- chosen
+#     floor 0.65 -> silences 4/10 answerable, admits 0/5 unanswerable
+# The two classes overlap (lowest answerable 0.494, highest unanswerable
+# 0.580), so no floor is free. 0.60 is the measured optimum, and the residual
+# error is biased toward silence — a receptionist who says "let me check" is
+# recoverable, one who invents an opening time is not.
+COS_FLOOR = 0.60    # below this a passage is not a semantic candidate at all
 
 _STOP = frozenset("""
 a an and are as at be but by for from has have he her his i if in is it its of

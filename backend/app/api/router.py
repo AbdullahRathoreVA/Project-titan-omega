@@ -1507,6 +1507,45 @@ def founder_demo_workspace_run() -> dict:
                                                 "reason": "Demo workspace is disabled."}
 
 
+@router.get("/founder/logs", tags=["executive"])
+def founder_logs(limit: int = Query(default=100, ge=1, le=300),
+                 level: str = Query(default=""),
+                 event: str = Query(default="")) -> dict:
+    """Recent structured log lines, for when no log shipper is attached.
+
+    Under /api/founder because log lines carry paths, statuses and tenant ids.
+    Credentials and emails are redacted before a line is ever written — see
+    core/obs.py.
+    """
+    from ..core import obs
+    return {"stats": obs.stats(),
+            "lines": obs.recent(limit=limit, level=level, event=event)}
+
+
+@router.get("/founder/backups", tags=["executive"])
+def founder_backups() -> dict:
+    """What backup protection actually exists, and whether it was verified."""
+    from ..core import backup
+    return {"status": backup.status(), "backups": backup.listing()}
+
+
+@router.post("/founder/backups", tags=["executive"])
+def founder_backup_create(note: str = Query(default="")) -> dict:
+    """Take a snapshot now. It is verified by restoring it before it counts."""
+    from ..core import backup
+    out = backup.create(note=note)
+    if not out["ok"]:
+        raise HTTPException(status_code=500, detail=out["error"])
+    return out
+
+
+@router.post("/founder/backups/verify", tags=["executive"])
+def founder_backup_verify(file: str = Query(...)) -> dict:
+    """Open a backup and prove it is a working database with rows in it."""
+    from ..core import backup
+    return backup.verify(file)
+
+
 @router.get("/founder/rendering", tags=["executive"])
 def founder_rendering() -> dict:
     """Whether Titan can see JavaScript-built pages, stated plainly.

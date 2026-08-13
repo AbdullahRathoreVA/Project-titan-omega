@@ -51,6 +51,12 @@ _last_growth = 0.0
 WATCH_INTERVAL = float(os.getenv("TITAN_WATCH_INTERVAL", "1800"))
 _last_watch = 0.0
 
+# Six hours. Frequent enough that a rebuild loses at most one window of work,
+# rare enough that snapshotting is never a meaningful share of what this
+# container is doing.
+BACKUP_INTERVAL = float(os.getenv("TITAN_BACKUP_INTERVAL", str(6 * 3600)))
+_last_backup = 0.0
+
 
 async def _heartbeat_loop() -> None:
     """Drive autonomous activity on a fixed cadence until cancelled."""
@@ -107,9 +113,36 @@ async def _heartbeat_loop() -> None:
                 from .engines import fix_cycle
                 await asyncio.to_thread(fix_cycle.cycle)
 
+            # Embed anything indexed while the model was still downloading.
+            # THIS WAS THE BUG: knowledge.backfill() existed, was tested, and
+            # was exposed as a manual endpoint that nothing ever called — so
+            # in production it never ran. Pages ingested in the first minutes
+            # after a rebuild kept no vectors and were never re-embedded, and
+            # that client stayed keyword-only forever. On a free Space that
+            # rebuilds often, that was most clients, and it is the likeliest
+            # cause of the measured 2/4 retrieval score.
+            #
+            # On the heartbeat rather than the queue deliberately: it is
+            # idempotent, bounded by MAX_PASSAGES, and a no-op when nothing is
+            # pending — durability buys nothing here and a job row per tick
+            # would be noise.
+            with contextlib.suppress(Exception):
+                from .core import knowledge
+                await asyncio.to_thread(knowledge.backfill)
+
             with contextlib.suppress(Exception):
                 from .core import queue
                 await asyncio.to_thread(queue.trim)
+
+            # A scheduled, self-verifying backup. Keeps its own interval.
+            # Titan holds the only copy of the previous value of pages it has
+            # changed on customers' live websites; losing that store loses the
+            # ability to undo those changes.
+            if time.monotonic() - _last_backup >= BACKUP_INTERVAL:
+                globals()["_last_backup"] = time.monotonic()
+                with contextlib.suppress(Exception):
+                    from .core import backup
+                    await asyncio.to_thread(backup.create, "scheduled")
 
         # Run the live research engine on its own slow cadence.
         if time.monotonic() - _last_growth >= GROWTH_INTERVAL:
@@ -443,6 +476,45 @@ async def auth_guard(request: Request, call_next):
             if not (expected and secret == expected):
                 return JSONResponse({"detail": "Authentication required"}, status_code=401)
     return await call_next(request)
+
+
+# Registered LAST, and that is load-bearing. Starlette's `add_middleware`
+# inserts at the FRONT of the list, so the last one registered is the
+# OUTERMOST and runs first. Declared any earlier in this file, this would sit
+# inside `auth_guard` and every 401/403 — the requests you most want a record
+# of — would never be logged at all.
+@app.middleware("http")
+async def request_log(request: Request, call_next):
+    """One structured line per request, with an id that follows the work.
+
+    The id is returned in `X-Request-Id`, so a customer reporting a problem can
+    quote a number that finds the exact request. An inbound `X-Request-Id` is
+    honoured (truncated) so a trace survives a proxy hop.
+    """
+    from .core import obs
+
+    rid = (request.headers.get("x-request-id") or "").strip()[:32] or obs.new_request_id()
+    obs.bind(request_id=rid)
+    started = time.monotonic()
+    path = request.url.path
+    try:
+        resp = await call_next(request)
+    except Exception as exc:
+        obs.error("http.request", method=request.method, path=path,
+                  duration_ms=round((time.monotonic() - started) * 1000, 1),
+                  error=f"{type(exc).__name__}: {str(exc)[:200]}")
+        raise
+    ms = round((time.monotonic() - started) * 1000, 1)
+    # Assets are most of the traffic and none of the signal. Logging every
+    # chunk would bury the API calls that matter.
+    if not path.endswith(_ASSET_SUFFIXES) and not path.startswith("/_next/"):
+        obs.log("http.request",
+                "error" if resp.status_code >= 500
+                else "warn" if resp.status_code >= 400 else "info",
+                method=request.method, path=path,
+                status=resp.status_code, duration_ms=ms)
+    resp.headers["X-Request-Id"] = rid
+    return resp
 
 
 app.include_router(router)
