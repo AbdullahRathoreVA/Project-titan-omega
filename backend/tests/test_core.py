@@ -993,6 +993,11 @@ def test_every_founder_endpoint_is_hidden_from_guests(monkeypatch):
         "/api/content/daily", "/api/intel/news", "/api/inbox/auto-reply",
         "/api/plans",            # pricing must be readable to sell anything
         "/api/signup", "/api/account/login", "/api/account",
+        # Instructions only — how to create a WordPress application password.
+        # Contains no customer data, and someone deciding whether to sign up
+        # should be able to see exactly what will be asked of them BEFORE
+        # handing anything over.
+        "/api/account/site/guide",
         # Marketing assets, deliberately crawlable: Titan's own audit score and
         # its product schema. Both describe Titan itself, not any client.
         "/api/self-seo", "/api/structured-data",
@@ -3876,3 +3881,119 @@ def test_approving_reports_saved_versus_sent(client, monkeypatch):
 
     monkeypatch.setenv("TITAN_PUBLISH_WEBHOOK", "https://hook.example/catch")
     assert client.get("/api/next-post").json()["publish"]["ready"] is True
+
+
+# ── client website credentials ─────────────────────────────────────────────
+
+@pytest.fixture
+def clean_sites(monkeypatch):
+    from app.core import site_access
+    monkeypatch.setenv("TITAN_SECRET", "site-access-test-secret")
+    site_access.reset()
+    yield
+    site_access.reset()
+
+
+def test_a_credential_is_never_stored_in_plaintext(clean_sites, monkeypatch):
+    """This is the one place Titan holds a key to somebody else's business.
+    A leaked state file must not be a leaked password."""
+    from app.core import site_access
+    monkeypatch.setattr(site_access, "verify", lambda *a, **k: {
+        "ok": True, "user": "Owner", "capabilities": ["edit_posts"]})
+
+    secret = "abcd EFGH ijkl MNOP qrst UVWX"
+    out = site_access.connect("c1", "wordpress", "https://shop.example",
+                              "owner", secret)
+    assert out["ok"] is True
+    blob = json.dumps(site_access.export_state())
+    assert secret not in blob, "the application password was stored in the clear"
+    # ...but it round-trips for internal use.
+    assert site_access.credential("c1")["secret"] == secret
+
+
+def test_the_secret_is_never_returned_by_any_status_call(clean_sites, monkeypatch):
+    from app.core import site_access
+    monkeypatch.setattr(site_access, "verify", lambda *a, **k: {
+        "ok": True, "user": "Owner", "capabilities": ["edit_pages"]})
+    site_access.connect("c1", "wordpress", "https://shop.example", "owner",
+                        "super secret key")
+    blob = json.dumps(site_access.status("c1"))
+    assert "super secret key" not in blob
+    assert "secret" not in site_access.status("c1")
+
+
+def test_plain_http_is_refused_before_anything_is_sent(clean_sites):
+    """WordPress disables application passwords over http, so a connection
+    would fail on the first request anyway — say so up front."""
+    from app.core import site_access
+    out = site_access.connect("c1", "wordpress", "http://shop.example",
+                              "owner", "x" * 12)
+    assert out["ok"] is False
+    assert "https://" in out["error"]
+
+
+def test_a_credential_that_cannot_edit_is_rejected(clean_sites, monkeypatch):
+    """A Subscriber-role login connects happily and can fix nothing. Better to
+    fail now than to discover it when a fix silently does nothing."""
+    from app.core import site_access
+    import httpx
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"name": "Reader", "capabilities": {"read": True}}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get(self, *a, **k): return FakeResp()
+
+    # The SSRF guard runs first and correctly refuses a domain that does not
+    # resolve, so it has to be satisfied before the capability check is
+    # reachable at all.
+    from app.core import safe_fetch
+    monkeypatch.setattr(safe_fetch, "check", lambda url: url)
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    out = site_access.verify("wordpress", "https://shop.example", "reader", "x" * 12)
+    assert out["ok"] is False
+    assert "Editor or Administrator" in out["error"]
+
+
+def test_connecting_refuses_rather_than_storing_plaintext(clean_sites, monkeypatch):
+    """If encryption is unavailable the answer is no — not 'store it anyway'."""
+    from app.core import site_access
+    monkeypatch.setattr(site_access, "encryption_available", lambda: False)
+    out = site_access.connect("c1", "wordpress", "https://shop.example",
+                              "owner", "x" * 12)
+    assert out["ok"] is False
+    assert "will not store" in out["error"]
+
+
+def test_the_setup_guide_asks_for_an_app_password_not_the_real_one(client):
+    """Asking a client for their actual admin password would be
+    indefensible."""
+    body = client.get("/api/account/site/guide").json()
+    assert body["supported"] is True
+    assert "never asks for your real WordPress password" in body["why_not_your_password"]
+    assert any("Application Passwords" in s for s in body["steps"])
+    assert "Revoke" in body["to_revoke"]
+    # It must promise only what it will actually do.
+    assert any("only after it is approved" in w for w in body["what_titan_will_do"])
+
+
+def test_one_subscriber_cannot_connect_anothers_site(client, isolated_billing,
+                                                     isolated_clients, clean_sites):
+    from app.core import billing, clients as creg
+    billing.signup("a@example.com", "hunter2hunter2")
+    billing.signup("b@example.com", "hunter2hunter2")
+    rec = creg.create_client(business_name="A Ltd", username="sa-1",
+                             password="x" * 20, website="https://a.example")
+    billing.attach_client("a@example.com", rec["id"])
+    tok_b = billing.authenticate("b@example.com", "hunter2hunter2")
+
+    r = client.post(f"/api/account/clients/{rec['id']}/site",
+                    json={"site_url": "https://a.example", "username": "x",
+                          "application_password": "y" * 12},
+                    headers={"X-Account-Token": tok_b})
+    assert r.status_code == 404

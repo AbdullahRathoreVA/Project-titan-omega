@@ -17,8 +17,8 @@ import os
 import tempfile
 
 from .core import (analytics, billing, clients, db, evidence, learning,
-                   reflection, knowledge, routing, sessions, traffic,
-                   voice_sessions)
+                   reflection, knowledge, routing, sessions, site_access,
+                   traffic, voice_sessions)
 from .store import STORE, Store
 
 
@@ -62,6 +62,10 @@ def save(store: Store = STORE) -> None:
             # storage — and it must survive a restart or a signed-out token
             # starts working again.
             "sessions": sessions.export_state(),
+            # Encrypted website credentials. The blob is useless without
+            # TITAN_CREDENTIAL_KEY, which is why it is safe to store here at
+            # all — but losing it would silently disconnect every client.
+            "site_access": site_access.export_state(),
             # Visitor counts are the top of the funnel. A restart that zeroes
             # them makes a launch day look like it never happened.
             "traffic": traffic.export_state(),
@@ -179,6 +183,9 @@ def load(store: Store = STORE) -> None:
         revoked = data.get("sessions")
         if isinstance(revoked, dict):
             sessions.import_state(revoked)
+        sites = data.get("site_access")
+        if isinstance(sites, dict):
+            site_access.import_state(sites)
         visits = data.get("traffic")
         if isinstance(visits, dict):
             traffic.import_state(visits)

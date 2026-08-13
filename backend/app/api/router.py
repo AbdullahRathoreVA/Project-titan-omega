@@ -1065,6 +1065,70 @@ def account_onboard(req: OnboardIn, request: Request,
     }
 
 
+class SiteConnectIn(BaseModel):
+    provider: str = Field(default="wordpress")
+    site_url: str = Field(..., min_length=8)
+    username: str = Field(..., min_length=1)
+    application_password: str = Field(..., min_length=8)
+
+
+@router.get("/account/site/guide", tags=["billing"])
+def site_setup_guide(provider: str = Query(default="wordpress")) -> dict:
+    """How a non-technical owner produces the credential Titan needs.
+
+    Public: someone deciding whether to sign up should be able to see exactly
+    what will be asked of them before they hand over anything.
+    """
+    from ..core import site_access
+    return site_access.setup_guide(provider)
+
+
+@router.post("/account/clients/{cid}/site", tags=["billing"])
+def connect_site(cid: str, req: SiteConnectIn,
+                 x_account_token: Optional[str] = Header(None)) -> dict:
+    """Give Titan write access to a business's own website.
+
+    The credential is verified against the live site before anything is
+    stored, encrypted at rest, and never returned by any endpoint. Ownership
+    is checked first — a token for one subscriber must never connect another
+    subscriber's site.
+    """
+    from ..core import billing, site_access
+    email = billing.resolve(x_account_token or "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in first")
+    if cid not in billing.owned_clients(email):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    out = site_access.connect(cid, req.provider, req.site_url, req.username,
+                              req.application_password)
+    if not out["ok"]:
+        raise HTTPException(status_code=400, detail=out["error"])
+    persistence.save(STORE)
+    return out
+
+
+@router.get("/account/clients/{cid}/site", tags=["billing"])
+def site_status(cid: str, x_account_token: Optional[str] = Header(None)) -> dict:
+    from ..core import billing, site_access
+    email = billing.resolve(x_account_token or "")
+    if not email or cid not in billing.owned_clients(email):
+        raise HTTPException(status_code=404, detail="Not found")
+    return site_access.status(cid)
+
+
+@router.delete("/account/clients/{cid}/site", tags=["billing"])
+def disconnect_site(cid: str,
+                    x_account_token: Optional[str] = Header(None)) -> dict:
+    from ..core import billing, site_access
+    email = billing.resolve(x_account_token or "")
+    if not email or cid not in billing.owned_clients(email):
+        raise HTTPException(status_code=404, detail="Not found")
+    out = site_access.disconnect(cid)
+    persistence.save(STORE)
+    return out
+
+
 @router.get("/account/clients", tags=["billing"])
 def account_clients(x_account_token: Optional[str] = Header(None)) -> dict:
     """The businesses THIS subscriber owns. Never anyone else's."""

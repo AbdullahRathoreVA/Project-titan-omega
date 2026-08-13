@@ -32,3 +32,9 @@ dodopayments>=1.0.0
 # check. If it cannot load, retrieval falls back to BM25 and keeps working.
 # Set TITAN_EMBEDDINGS=0 to force BM25 on a memory-tight deployment.
 fastembed>=0.4.0
+
+# Encrypts a CLIENT'S website credential at rest (core/site_access.py). This is
+# the one place Titan holds a key to somebody else's business, so a leaked
+# state file must not be a leaked password. Imported inside the function: if it
+# is missing, connecting REFUSES rather than falling back to plaintext.
+cryptography>=42.0.0
