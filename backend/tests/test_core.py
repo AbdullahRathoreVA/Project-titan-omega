@@ -4478,6 +4478,39 @@ def test_the_marked_up_price_cannot_drift_from_the_price_charged():
     assert marked_up == real, "the marked-up price drifted from the plan table"
 
 
+def test_a_cdn_beacon_is_not_a_phone_number_and_prose_is_not_an_address():
+    """Found by auditing Titan's own /compliance/de, which scored 100/A with
+    neither a phone number nor an address on the page. `has_phone` matched the
+    13-digit token inside Cloudflare's injected analytics beacon URL, so every
+    site behind Cloudflare "had a phone number"; `has_addr` matched the word
+    "block" in ordinary prose. Both were told to paying clients as a pass."""
+    from app.engines.client_seo import _has_address, _has_phone
+
+    cloudflare = (
+        '<p>Some prose that mentions a block of text.</p>'
+        '<script type="module" src="https://static.cloudflareinsights.com/'
+        'beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e" '
+        'data-cf-beacon=\'{"token":"1781791509496"}\'></script>')
+    assert _has_phone(cloudflare) is False
+    assert _has_address(cloudflare) is False
+
+    # A number that is not a phone number.
+    assert _has_phone("<p>Founded in 2019 and still trading.</p>") is False
+    assert _has_phone('<div data-id="998877665544332211">hi</div>') is False
+
+    # Real contact details must still be found, in the forms this market uses.
+    assert _has_phone('<a href="tel:+924212345678">Call</a>') is True
+    assert _has_phone("<p>Call us on +92 42 3712 3456 today</p>") is True
+    assert _has_phone("<footer>Tel: 030 12345678</footer>") is True
+
+    assert _has_address("<address>Somewhere</address>") is True
+    assert _has_address("<p>Shop 4, Block 5, Gulberg, Lahore</p>") is True
+    assert _has_address("<p>12 Main Street, Manchester</p>") is True
+    assert _has_address("<p>Musterweg 3, 10115 Berlin</p>") is True
+    assert _has_address("<p>We will address your concerns.</p>") is False
+    assert _has_address("<p>the public sector generally</p>") is False
+
+
 def test_a_landing_page_still_renders_if_the_plan_table_is_unavailable():
     """Fewer schema nodes is a smaller claim, not a broken page."""
     import json

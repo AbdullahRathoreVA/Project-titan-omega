@@ -66,6 +66,83 @@ def _text(pattern: str, html: str, group: int = 1) -> str:
     return (m.group(group) or "").strip() if m else ""
 
 
+# --------------------------------------------------------------------- NAP --
+# These two checks used to run against the raw HTML, and both produced passes
+# that had never been observed. Measured on Titan's own /compliance/de:
+#
+#   phone   matched "1781791509496" inside the Cloudflare analytics beacon URL
+#           that Cloudflare injects at the edge. Every site behind Cloudflare
+#           therefore "had a phone number".
+#   address matched the word "block" in ordinary prose.
+#
+# So the page scored 100/A with neither a phone number nor an address on it.
+# That is the exact failure this codebase exists to avoid — a reported pass
+# nobody measured — and it was being served to paying clients, telling them
+# their contact details were fine when the page had none.
+#
+# The root cause of both is reading markup instead of what a human sees. The
+# checks now run on visible text, with script, style, comments and every tag
+# attribute removed first.
+
+_ADDRESS_WORDS = (r"address|street|str\.|straße|strasse|road|avenue|lane|"
+                  r"block|sector|plaza|suite|floor|building|p\.?o\.? box")
+
+
+def _visible_text(html: str) -> str:
+    """What a reader actually sees: no script, style, comments or attributes.
+
+    A URL in a src attribute is not page content, and treating it as such is
+    how a CDN's cache-busting hash became a phone number.
+    """
+    out = re.sub(r"<(script|style|template)\b.*?</\1>", " ", html,
+                 flags=re.I | re.S)
+    out = re.sub(r"<!--.*?-->", " ", out, flags=re.S)
+    out = re.sub(r"<[^>]+>", " ", out)
+    return re.sub(r"\s+", " ", out)
+
+
+def _has_phone(html: str) -> bool:
+    """A tel: link, or something in the visible text shaped like a phone number.
+
+    Length is bounded at both ends: a real number carries 7 to 15 digits (E.164
+    caps at 15), which excludes both a 4-digit year and a 13-digit cache hash.
+    """
+    if re.search(r'href=["\']tel:\s*[+\d]', html, re.I):
+        return True
+    for m in re.finditer(r"\+?\d[\d\s\-().]{5,}\d", _visible_text(html)):
+        if 7 <= sum(c.isdigit() for c in m.group()) <= 15:
+            return True
+    return False
+
+
+def _has_address(html: str) -> bool:
+    """An <address> element, or an address word standing next to a number.
+
+    The bare word test is what let "block" pass. A real street address pairs
+    the word with a number — "Block 5", "12 Main Street", "Sector G-9" — and
+    requiring that pairing removes the prose match without losing the South
+    Asian and German forms the wording was chosen to catch.
+    """
+    if re.search(r"<address\b", html, re.I):
+        return True
+    text = _visible_text(html)
+    # "Block 5", "Sector G-9" — the word, then a house/plot number, optionally
+    # letter-prefixed as Islamabad sectors are.
+    word_then_number = rf"(?:{_ADDRESS_WORDS})[\s,.\-]*[A-Za-z]?[\s\-]?\d"
+    # "12 Main Street", "3 Musterweg" — the number, then at most two words,
+    # then the address word. The number must be followed by whitespace, so
+    # "Founded 2019. We will address that" does not match: the full stop breaks
+    # it before the window opens.
+    number_then_word = (rf"\b\d{{1,5}}\s+(?:[A-Za-zÄÖÜäöüß'.-]+\s+){{0,2}}"
+                        rf"(?:{_ADDRESS_WORDS})")
+    if re.search(word_then_number, text, re.I) or \
+            re.search(number_then_word, text, re.I):
+        return True
+    # A postcode immediately before a place name — "10115 Berlin", "54000
+    # Lahore" — is an address even with none of the words above.
+    return bool(re.search(r"\b\d{4,6}\s+[A-ZÄÖÜ][a-zäöüß]{2,}", text))
+
+
 def audit(url: str, *, business_name: str = "", city: str = "",
           country: str = "", industry: str = "") -> dict:
     """Full audit of one page. Never raises."""
@@ -193,10 +270,8 @@ def audit(url: str, *, business_name: str = "", city: str = "",
             ok=bool({vert.schema_type} & set(types)))
 
     # ------------------------------------------------------------- NAP ----
-    has_phone = bool(re.search(r'href=["\']tel:', html, re.I)) or bool(
-        re.search(r"\+?\d[\d\s\-()]{8,}\d", html))
-    has_addr = bool(re.search(
-        r"address|street|road|avenue|block|sector|plaza", html, re.I))
+    has_phone = _has_phone(html)
+    has_addr = _has_address(html)
     # Contact details matter for every business, but WHY differs. Telling a
     # wholesaler to match its Google Business Profile is advice for a shop, and
     # a B2B buyer is not standing outside the building.
