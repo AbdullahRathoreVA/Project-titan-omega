@@ -1,271 +1,221 @@
-# Continuation brief — Titan Omega / Aether / Career Mind
+# Continuation brief — Titan Omega
 
 **Paste the "PROMPT FOR NEXT SESSION" block at the bottom into a fresh session.**
 Everything above it is the state that prompt refers to.
 
-Rewritten 2026-08-06. Supersedes the 2026-08-01 version.
+Rewritten 2026-08-09. Supersedes the 2026-08-06 version.
 
 ---
 
 ## 1. Machine — read this first
 
-**There are TWO drives.** Always `Get-PSDrive -PSProvider FileSystem`, never
-`Get-PSDrive C` alone.
+**There are TWO drives.** Always `Get-PSDrive -PSProvider FileSystem`.
 
 | Drive | State |
 |---|---|
 | C: | 133.9 GB total, ~8 GB free, chronically tight |
 | D: | 103.7 GB, ~84 GB free — **use this for everything** |
 
-- All projects live on `D:\projects\`.
-- **Podman VM is on D:** (`D:\wsl\podman-machine-default`), moved 2026-08-02.
-  It was on C: despite the old doc claiming otherwise. To move it again:
-  `podman machine stop` → `wsl --shutdown` (terminate alone is NOT enough) →
-  `wsl --manage podman-machine-default --move "D:\..."`.
-  The `2 GiB` in `podman machine inspect` is **not enforced** under WSL; the VM
-  actually gets ~7 GB.
-- Hardware: i5-1135G7, 15.8 GB RAM, **Intel Iris Xe only — no CUDA**.
-- **His connection drops large downloads.** Use resumable loops.
-- PowerShell is **5.1**: no `&&`, no `??`, no ternary.
-- **His router (192.168.1.1) negative-caches DNS.** `titanomega-ai.com` failed
-  from his machine for hours while resolving fine on 1.1.1.1 and 8.8.8.8.
-  Always check a public resolver before debugging an app.
+- All projects on `D:\projects\`. Titan: `D:\projects\project-titan-omega`.
+- PowerShell is **5.1**: no `&&`, no `??`, no ternary. Here-strings break on
+  inline quotes — **write long commit messages to a file and use `git commit -F`.**
+- Podman replaced Docker (Docker is unfixable on this machine).
+- His router negative-caches DNS — check a public resolver before debugging.
+- Hardware: i5-1135G7, 15.8 GB RAM, **Intel Iris Xe, no CUDA**.
 
 ---
 
-## 2. Projects
+## 2. Git and deploy — THIS CHANGED, the old notes were wrong
 
-```
-D:\projects\project-titan-omega     flagship — FastAPI + Next.js 14, LIVE
-D:\projects\triad-thread-studio     CURRENT CLIENT's site (leather) — Next 16
-D:\projects\aether-engine           SEO/traffic engine, stdlib only
-D:\projects\career-mind             school platform (FastAPI + Streamlit)
-D:\projects\AI-Job-Search-Toolkit   the $14 product (10 uncommitted changes)
-D:\stacks\                          container compose files
-```
+**`gh` IS authenticated** (`AbdullahRathoreVA`, scopes repo/workflow).
+`git credential fill` **HANGS** a non-interactive session — never use it.
+`credential.helper` is `manager`, which needs a GUI and fails headless.
 
-**Git:** `gh` is NOT authenticated. Use the cached credential:
 ```bash
-printf "protocol=https\nhost=github.com\n\n" | git credential fill
+git -c credential.helper="!gh auth git-credential" push github main
 ```
-Push Titan to the `github` remote, NOT `origin` (origin is the HF Space).
+A `fatal: Cannot prompt` line still prints first — **harmless noise**. Check the
+last lines for `main -> main`.
+
+**Push to `github`, never `origin`** (origin is the stale HF Space).
+
+Deploy: push → Action `Sync to Hugging Face Hub` (~8s) → HF rebuild → live,
+about 2 min total. **Always read the Action conclusion**, not the push output:
+```bash
+gh run watch $(gh run list --limit 1 --json databaseId --jq '.[0].databaseId') --exit-status
+```
+
+### Two traps that cost real time
+1. **HF rejects `short_description` over 60 chars** in README front matter. The
+   whole push is declined at the pre-receive hook, GitHub still shows success,
+   and the Space serves old code. Cost two silent deploys.
+2. **`npm run build` does NOT produce `out/`.** It needs `TITAN_STATIC=1`,
+   otherwise it builds the dev variant, prints "✓ Compiled successfully", and
+   leaves a **stale `out/`**. Always:
+   `cd frontend; $env:TITAN_STATIC="1"; npm run build`
+   then grep `out/_next/static/chunks/*.js` for a string you just added.
+
+**Verifying a deploy:** cache-bust (`?cb=<random>`), fetch `/` , extract chunk
+URLs, grep them for a new string. `/health` returning 200 proves nothing.
 
 ---
 
-## 3. CLIENT STATUS — CHANGED
+## 3. Where Titan is now
 
-**The German restaurant client is LOST.** The current client is his **cousin's
-leather wholesale / manufacturing business**, and he is building their site at
-`D:\projects\triad-thread-studio` ("leather goods and sublimated apparel
-manufacturer", Next 16 + R3F + Prisma, local only, not deployed).
+**LIVE: https://titanomega-ai.com** · **264 tests pass** · self-audit **100/100 A**
 
-Consequences:
-- Do **not** assume restaurant anywhere. Titan now has 16 verticals; `wholesale`
-  and `manufacturer` are `local_business=False` because a B2B buyer finds a
-  supplier by searching the product, never by proximity.
-- The German Impressum / §5 DDG check is still the sharpest differentiator for
-  any EU client and still leads the demo — it is just not this client's need.
+26 commits shipped 2026-08-07→09, `5b5eca1..0688949`. Tests went 130 → 264.
+Every commit was verified live in production before being called done.
 
----
-
-## 4. Titan is LIVE
-
-**https://titanomega-ai.com** — Cloudflare Worker reverse-proxy → HF Space.
-HF's own custom domain is PRO-only ($9/mo ≈ 2× the annual budget), so the
-Worker does it on the free plan. Source: `deploy/cloudflare-worker.js`,
-config `wrangler.toml` at repo root. Pushing to `github` main auto-deploys the
-Worker AND triggers the HF sync.
-
-Verified live: HTTPS forced (http 301s), HSTS/CSP/nosniff set, SSE streams
-through the proxy, PWA installs, `/pricing`, `/privacy`, `/sitemap.xml` all 200.
-
-**www does not exist and Abdullah has said he does not want it.** A Worker
-*Route* does not create DNS.
+### Shipped this session
+- **Founder analytics** — who signed up, plan, what they did. Funnel steps
+  labelled by SOURCE (account state = true for all accounts; activity log =
+  only since it shipped, so a zero means *not observed*).
+- **Visitor analytics** — in-process, no GA, no cookie, no consent banner.
+  **IP is never stored**, only a hash with a 24h-rotating salt. Device/OS/
+  browser/country (Cloudflare `CF-IPCountry`) /hour.
+- **`/join`** — real signup → plan → business → audit → PDF.
+- **Front door rewritten** — the login screen had NO signup link; `/join`
+  existed and nothing pointed at it. Plans+prices now first.
+- **Voice Agent OS** — validated state machine (409 on illegal transitions),
+  enforced approval gate (403 without approver), session replay, transcripts.
+- **VoiceSphere** — particle avatar, NO 3D library, plain canvas.
+- **Knowledge retrieval** — BM25 + heading-aware chunking + optional fastembed.
+- **Lead discovery** — search → drop directories/dupes → CRM → audit → draft.
+- **25 landing pages** — `/compliance/{9}` and `/seo/{16}`, in the sitemap.
+- **SQLite** replaced the single JSON file. **Signed expiring revocable sessions.**
+  **SSRF guard.** **Rate limiting.** **Website credential vault (WordPress).**
 
 ---
 
-## 5. BLOCKED — needs Abdullah, not engineering
+## 4. BLOCKED — needs Abdullah, not engineering
 
-1. **HF write token.** GitHub Actions free minutes are EXHAUSTED (private repo,
-   2,000/mo). Runs now queue ~15 min and die. Two commits deployed late because
-   of this. Fix: huggingface.co → Settings → Access Tokens → **Write** token.
-   Then push straight to `origin` (the Space) and bypass Actions. The stored HF
-   credential is a **password**, which HF no longer accepts.
-2. **Rotate the Firecrawl key** — `fc-8beba…` was pasted into a chat log.
-   Also still open: rotate the Groq key from the earlier session.
-3. **Payment processor.** He insists on **PayPal** (told twice; do not re-argue).
-   PayPal does not support receiving payments in Pakistan — his call, noted.
-   `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_PLAN_ID_{STUDENT,
-   INDIVIDUAL,ENTERPRISE}` are unset, so checkout degrades honestly.
-4. **Telephony** (Twilio/Vapi/Retell) for the calling agent — paid, his name.
-5. **Cloudflare managed robots.txt** overrides Titan's at the edge and declares
-   no sitemap. Disable it in the dashboard.
-
----
-
-## 6. What this session built (19 commits, 8a9f297 → 44dcc67)
-
-**130 tests pass. 124 endpoints. 27 engines.**
-
-| Area | What |
-|---|---|
-| P6 | Measured model routing — ranks providers on evidence, never drops one, reliability beats latency |
-| P2 | Typed event bus; planning engine (plan before execute); **reflection loop that genuinely closes** — 6 slow tasks moved the next plan's estimate 3.5s → 10.5s |
-| P4C | BI reports + forecasting that **refuses** to project on thin data |
-| P5B | Free/Student/Individual/Enterprise, `/pricing`, signup, quota refusals that name the upgrade |
-| P8 | Tool layer + adapters + licence gate for all 11 named repos |
-| P3 | PWA (installs on Android/iOS/Windows, $0 vs Apple's $99/yr); HTTPS + security headers |
-| — | Self-serve onboarding: add business → first audit → PDF, plan-limited, ownership-checked |
-| — | 24/7 per-client news watch (brand / industry / local), Google News RSS, no key |
-| — | Evidence ledger — the trycompai/crm pattern |
-| — | Titan audits ITSELF every 6h and publishes the score |
-
-### Two real security bugs found and fixed
-- **The public demo served real client data.** `/api/admin/clients` exposed his
-  clients' names, websites and contacts to anyone clicking "View the live demo".
-  The guard fails OPEN — anything not on a list leaks. There is now a test
-  (`test_every_founder_endpoint_is_hidden_from_guests`) that walks the REAL
-  route table and fails on any endpoint serving real data to a guest. **That
-  test found `/api/admin`**, and has caught three more since. Never delete it.
-- **Over-correction.** Fixing that, seven tabs were hidden when only three were
-  broken — which removed the sales pitch. Only **Executive** is founder-only
-  now; Clients and SEO show `[SAMPLE]` German businesses with the full
-  Impressum finding, because those screens ARE the pitch.
-
-### Titan's own audit: 58/100, grade D
-Self-auditing found three real defects: no privacy policy (legal-critical, and
-he now collects emails from EU users), it told **itself** to publish opening
-hours (a SaaS is not a local business), and its homepage was an **empty shell**
-to crawlers — `out/index.html` had zero `<h1>` because the app is fully
-client-rendered.
+1. **Payment. Nothing can be sold.** `PADDLE_API_KEY` +
+   `PADDLE_PRICE_ID_{STUDENT,INDIVIDUAL,ENTERPRISE}`.
+   - **Dodo is NOT available in Pakistan** (he confirmed) — adapter exists, demoted.
+   - **PayPal cannot RECEIVE in Pakistan.** Told him repeatedly; do not re-argue.
+   - **Paddle IS available** — verified against Paddle's own unsupported list
+     2026-08-08. Pays out via Payoneer. See `docs/PAYMENTS.md`.
+   - He asked about using **his brother's Canadian PayPal**. Answer is **no** —
+     breaks every processor's ToS, fraud systems detect it, 180-day freeze, the
+     money becomes the brother's taxable income. **Do not help wire this up.**
+2. **`TITAN_PUBLISH_WEBHOOK`** — no social posting without it. The CONNECT
+   buttons are placeholders; there is no OAuth behind them.
+3. **HF persistent storage (paid)** — SQLite fixed corruption, NOT ephemerality.
+   A rebuild still wipes `/tmp`. `db.stats()` reports `durable: false`.
+4. **Telephony** — paid, his name, no free path.
+5. Rotate the exposed Firecrawl + Groq keys.
+6. Cloudflare managed robots.txt overrides Titan's at the edge.
 
 ---
 
-## 7. Research already done — do NOT redo
+## 5. Known real defects — measured, not guessed
 
-**Licences measured from the GitHub API, not assumed:**
-
-| Repo | Licence | Verdict |
-|---|---|---|
-| firecrawl | **AGPL-3.0** | **Wrap over HTTP only.** Embedding forces Titan's own source open — Titan is SOLD. Test enforces this. |
-| PraisonAI, OpenWA, voicebox, floci, trycompai/crm | MIT | Safe |
-| livekit/agents, OpenJarvis | Apache-2.0 | Safe, needs NOTICE |
-| TencentDB-Agent-Memory | **NOASSERTION** | **Blocked.** Re-checked 2026-08-06, still no licence. |
-| **multica-ai/multica** | **NOASSERTION** | **Blocked** — and it is a tool for assigning issues to coding agents (Go). Wrong domain entirely; nothing to do with client SEO. |
-| public-apis/public-apis | MIT | A LIST. Mined already — see below. |
-| free-for-dev, awesome-selfhosted | none / NOASSERTION | Reference only |
-
-**public-apis findings (mined 2026-08-06, 1,695 rows):**
-- **News:** GNews, Currents, MarketAux all want keys and cap free tiers.
-  Titan already uses **Google News RSS — no key, no quota, no bill.** Adopting
-  a keyed provider would be a monthly cost for nothing.
-- **Photography:** the category is image *manipulation* (resize, optimise,
-  templates), **not AI generation**.
-- **Video:** the category is TV/film trivia APIs (Breaking Bad, Game of
-  Thrones). **There is no video-generation API in the list at all.**
-- Useful: Groq (already wired), DeepAI, Cloudmersive.
-
-**So image/video generation is NOT solvable from that list.** Real options
-(Replicate, fal.ai, Stability, Veo, Runway, Kling) are paid per-image or
-per-second of video. That is a cost decision for Abdullah, not an engineering
-gap.
-
-**Auto-posting to social is against his own standing rule** — drafts queue for
-approval, because a platform ban ends the service a client is paying for. There
-is a test asserting the news watch cannot send anything.
+- **Retrieval is 2/4** on natural questions. Semantic only leads above 0.68
+  cosine; lowering to 0.60 was tested and changed nothing. Next lever is
+  **better chunking, not a bigger model**.
+- **Landing pages score 60/C and 70/C** against Titan's own engine — no schema
+  markup. Found by the demo workspace.
+- **"Career Mind" appears 58× across 13 backend files.** Only the next-post
+  generator was fixed. The rest is a real cleanup with little test cover.
+- **Crawler has no JS rendering** — single `httpx` GET. Most small-business
+  sites are client-rendered, so **Titan audits empty shells for a large share
+  of the market**. Most under-recognised functional gap. Needs Playwright in a
+  SEPARATE service (browser binaries at Docker build time will break the free
+  Space build).
+- **102 agents are mostly presentation.** Either back them with behaviour or
+  stop claiming them.
+- Rate limiting is **in-process** — does not survive scaling to 2 containers.
 
 ---
 
-## 8. Bugs — do not reintroduce
+## 6. Standing rules — he has stated these
 
-1. **reportlab took production down** — any new dependency goes in
-   `requirements.txt` in the SAME commit, and imports defensively including
-   module-level constants.
-2. **A test that onboards a client writes to the real state file.** The client
-   registry and `STORE.leads` are module-level and persisted; `fresh_store` does
-   not reset them. Use the `isolated_clients` / `isolated_leads` /
-   `isolated_billing` fixtures.
-3. **The suite must pass with AND without a local `.env`.** `app.main` autoloads
-   one; tests asserting "tool unconfigured" need the `no_ambient_config`
-   fixture. A suite whose result depends on an untracked file trains you to
-   ignore red.
-4. **CRLF breaks local image builds, never production.** All four repos now pin
-   `*.sh`/Dockerfile to LF via `.gitattributes`. `* text=auto` is NOT enough.
-5. **`git add --renormalize .` + `rm` destroys untracked files.** Commit new
-   files first.
-6. **The browser automation pane stops compositing** when hidden — synthetic
-   clicks silently do nothing and framer-motion transitions never finish.
-   Element-level `.click()` via the JS tool still works; `read_page` and
-   `get_page_text` stay reliable. Do not conclude the app is broken.
-7. **Docker is unfixable on this machine.** Podman 5.8.3 replaces it.
-8. **`podman compose` shells out to Docker's leftover `docker-compose.exe`** —
-   works fine against Podman's socket.
-
----
-
-## 9. Standing preferences
-
-- Address him as **Abdullah**, never "Boss". (The master spec says
-  `HELLO ABDULLAH BOSS` — the spec is wrong; "Boss" appears nowhere in the code.)
+- Address him as **Abdullah**, never "Boss".
 - **No Claude attribution** in commits or repos.
-- **Never auto-post to social.** Drafts queue for approval.
-- **Never invent numbers.** Say which tool would measure it.
-- He asks for enormous scope in single messages ("world best ever", "billions").
-  Build the highest-value piece properly and say plainly what was not done.
-  Fifteen half-finished systems are worth less than one that has been run.
-- **Revenue is still $0 and there are no paying customers.** The gap is not
-  features.
+- **Never auto-post to social.** Drafts queue for approval. There is a test.
+- **Never invent a number.** This is the spine of the codebase: cost is `null`
+  not `0.00`; latency `null` when unmeasured; unaudited sites show "not
+  audited" not `0`; funnel steps carry their source. **Do not break this.**
+- Verify by RUNNING it. Never claim something works without evidence.
+- New dependency → `requirements.txt` in the SAME commit, imported **inside the
+  function** (reportlab took production down at module level once).
+- Run the full suite before every push.
+- Say plainly when something cannot be done. He gets angry at hedging, and
+  angrier at being told something works when it does not.
+- He asks for enormous scope in one message ("world best ever", "billions").
+  Build the highest-value piece properly and say what was not done.
 
 ---
 
-## 10. The master spec
+## 7. Tests — never delete these
 
-`TITAN OMEGA MASTER SPEC.md` (in his WhatsApp transfers folder) is a ~1,500-line
-enterprise vision doc. `docs/SPEC_STATUS.md` in the Titan repo tracks it — a row
-only says "built" when it has been RUN.
+- `test_every_founder_endpoint_is_hidden_from_guests` walks the **real route
+  table** and fails on any endpoint serving real data to a demo visitor. The
+  guard **fails OPEN** — anything unregistered leaks. It has caught **five**
+  endpoints, including `/api/admin/clients` exposing real client contacts.
+- Outreach has **no send capability at all** — asserted by source inspection.
+- Rate-limit buckets are module-level; `fresh_store` resets them or one test
+  poisons another with a 429.
 
-**Not started:** marketplace, plugin SDK, native mobile/desktop apps, SSO,
-prompt library, voice mode with a 3D avatar, founder-only usage analytics.
+---
+
+## 8. Architecture blueprint
+
+Full forensic audit with scored baseline, verified research and a 25-item
+checklist:
+**https://claude.ai/code/artifact/18979618-2a79-45a4-b740-d08206669c70**
+
+Items **001–004, 006 are DONE**. Remaining, in order:
+- **007** durable task queue (crawls run on the request path today)
+- **011** Playwright crawler service (the JS-rendering blind spot)
+- **012** schema markup on the landing pages
+- **013** verifier layer before customer-facing output
 
 ---
 
 # PROMPT FOR NEXT SESSION
 
-> Continue my projects. Read `D:\projects\CONTINUE_HERE.md` FULLY first — it has
-> the machine gotchas, every bug already found, the licence research already
-> done, and what is blocked on me rather than on code. Do not redo research that
-> is already recorded there.
+> Continue Titan Omega. Read `D:\projects\CONTINUE_HERE.md` FULLY first — it has
+> the machine gotchas, the deploy traps that have already cost real time, the
+> payment research, and what is blocked on me rather than on code. Do not redo
+> research recorded there.
 >
-> Key facts: TWO drives, use **D:** for everything. Projects in `D:\projects\`.
-> `gh` is not logged in — get the token via `git credential fill`. Podman
-> replaced Docker. Push Titan to the `github` remote, never `origin`.
+> Key facts: use **D:** for everything, projects in `D:\projects\`. `gh` IS
+> authenticated — push with
+> `git -c credential.helper="!gh auth git-credential" push github main`, to the
+> `github` remote, never `origin`. `git credential fill` hangs. Frontend needs
+> `TITAN_STATIC=1` or `out/` stays stale. HF rejects a `short_description` over
+> 60 characters and the push fails silently.
 >
-> **Titan Omega is live at https://titanomega-ai.com** and is my flagship: a
-> multi-tenant SEO + legal-compliance + social platform I sell to businesses.
-> **My German restaurant client is gone; my current client is a leather
-> wholesale/manufacturing business** whose site I am building at
-> `D:\projects\triad-thread-studio`. Titan must work for ANY business, not just
-> restaurants.
+> **Titan is live at https://titanomega-ai.com** — a multi-tenant SEO + legal
+> compliance + voice platform I sell to businesses. 264 tests pass; it scores
+> 100/100 on its own audit. My client is a leather wholesale/manufacturing
+> business (`D:\projects\triad-thread-studio`). Titan must work for ANY
+> business, not only restaurants.
+>
+> The rule the whole codebase is built on: **never show a number that was not
+> measured.** Cost is null, not 0.00. Unmeasured latency is null. Unaudited
+> sites show "not audited", not 0. Do not break this — it is the product's main
+> credibility asset.
 >
 > Before writing code, tell me in one short list: what is blocked on me, and
 > what you intend to do first and why.
 >
 > What I want next, in priority order:
-> 1. **Founder-only analytics** — on my own login I want to see who signed up,
->    which plan they bought, and how they are actually using Titan. The
->    Executive tab is already founder-only; extend it.
-> 2. **Finish the onboarding UX** — signup → pick plan → add business, website,
->    Instagram → first audit → PDF already works at the API level
->    (`POST /api/account/onboard`). It needs a real screen, and the demo and the
->    signup flow both need to be genuinely easy to use.
-> 3. **Voice mode** — Titan speaking naturally in any language. LiveKit
->    (Apache-2.0) is already registered as a tool adapter. Design it free-tier
->    first and tell me honestly what it would cost before building.
-> 4. Then: prompt library, marketplace/SDK, SSO.
+> 1. **Make Titan actually FIX websites, not just audit them.** The WordPress
+>    credential vault and setup guide are built (`core/site_access.py`). Next is
+>    the propose → approve → apply → rollback loop, then a 24/7 cycle.
+> 2. **Blueprint item 011** — a Playwright crawler in a separate service. Titan
+>    currently audits empty shells on client-rendered sites, which is a large
+>    share of my market.
+> 3. **Item 007** — durable task queue; crawls run on the request path today.
+> 4. **Item 012** — schema markup on the 25 landing pages (they score 60–70/C
+>    against my own engine).
 >
 > Rules: verify everything by RUNNING it, never claim something works without
-> evidence, put any new dependency in requirements.txt in the same commit, run
-> the test suite before every push (**130 tests must pass**), and tell me
-> plainly when something cannot be done rather than working around it silently.
-> If I ask for something that needs a paid account or a credential, say so
+> evidence, put any new dependency in requirements.txt in the same commit and
+> import it inside the function, run the full test suite before every push, and
+> tell me plainly when something cannot be done instead of working around it
+> silently. If something needs a paid account or a credential, say so
 > immediately instead of building half of it.
