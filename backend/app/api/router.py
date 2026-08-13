@@ -1129,6 +1129,135 @@ def disconnect_site(cid: str,
     return out
 
 
+# ---------------------------------------------------------------- site fixes --
+# Titan changing a page on somebody else's live website. Every endpoint here
+# checks TWO things: that the caller owns the business, and that the fix
+# belongs to that business. Checking only the first would let a valid
+# subscriber apply a fix belonging to another subscriber's site by guessing an
+# id, which is a worse leak than any read endpoint in this file.
+
+class ApproveIn(BaseModel):
+    approver: str = Field(..., min_length=1,
+                          description="Who is approving. Recorded on the fix.")
+    reason: str = Field(default="")
+
+
+def _owned(cid: str, token: Optional[str]) -> str:
+    from ..core import billing
+    email = billing.resolve(token or "")
+    if not email or cid not in billing.owned_clients(email):
+        raise HTTPException(status_code=404, detail="Not found")
+    return email
+
+
+def _owned_fix(cid: str, fix_id: str, token: Optional[str]) -> dict:
+    from ..core import site_fix
+    _owned(cid, token)
+    fix = site_fix.get(fix_id)
+    # Same 404 for "no such fix" and "not yours" — distinguishing them tells a
+    # prober which ids exist.
+    if not fix or fix["client_id"] != cid:
+        raise HTTPException(status_code=404, detail="Not found")
+    return fix
+
+
+@router.post("/account/clients/{cid}/fixes/propose", tags=["billing"])
+def propose_fixes(cid: str,
+                  x_account_token: Optional[str] = Header(None)) -> dict:
+    """Turn the latest audit's findings into concrete, appliable changes.
+
+    Nothing is changed on the site by this call. It reads the connected
+    WordPress site to find the real page behind the audited URL and records
+    what it would write — plus, explicitly, every finding it cannot fix and
+    why.
+    """
+    from ..core import site_fix
+    _owned(cid, x_account_token)
+    rec = clients.get(cid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Not found")
+    audit = rec.get("last_audit") or {}
+    if not audit:
+        raise HTTPException(status_code=400, detail=(
+            "This business has not been audited yet, so there are no findings "
+            "to turn into fixes. Run the audit first."))
+    out = site_fix.propose(cid, audit, business=rec)
+    if not out["ok"]:
+        raise HTTPException(status_code=400, detail=out["error"])
+    persistence.save(STORE)
+    return out
+
+
+@router.get("/account/clients/{cid}/fixes", tags=["billing"])
+def list_fixes(cid: str, status: str = Query(default=""),
+               x_account_token: Optional[str] = Header(None)) -> dict:
+    from ..core import site_fix
+    _owned(cid, x_account_token)
+    return {"fixes": site_fix.for_client(cid, status),
+            "summary": site_fix.summary(cid)}
+
+
+@router.get("/account/clients/{cid}/fixes/{fix_id}", tags=["billing"])
+def fix_detail(cid: str, fix_id: str,
+               x_account_token: Optional[str] = Header(None)) -> dict:
+    """The full before/after text, so a human can read what they are approving."""
+    return _owned_fix(cid, fix_id, x_account_token)
+
+
+@router.post("/account/clients/{cid}/fixes/{fix_id}/approve", tags=["billing"])
+def approve_fix(cid: str, fix_id: str, req: ApproveIn,
+                x_account_token: Optional[str] = Header(None)) -> dict:
+    from ..core import site_fix
+    _owned_fix(cid, fix_id, x_account_token)
+    out = site_fix.approve(fix_id, req.approver)
+    if not out["ok"]:
+        raise HTTPException(status_code=409, detail=out["error"])
+    persistence.save(STORE)
+    return out
+
+
+@router.post("/account/clients/{cid}/fixes/{fix_id}/reject", tags=["billing"])
+def reject_fix(cid: str, fix_id: str, req: ApproveIn,
+               x_account_token: Optional[str] = Header(None)) -> dict:
+    from ..core import site_fix
+    _owned_fix(cid, fix_id, x_account_token)
+    out = site_fix.reject(fix_id, req.approver, req.reason)
+    if not out["ok"]:
+        raise HTTPException(status_code=409, detail=out["error"])
+    persistence.save(STORE)
+    return out
+
+
+@router.post("/account/clients/{cid}/fixes/{fix_id}/apply", tags=["billing"])
+def apply_fix(cid: str, fix_id: str,
+              x_account_token: Optional[str] = Header(None)) -> dict:
+    """Write the approved change to the live site, then read it back.
+
+    A 409 here means the change did NOT go live — either the page moved on
+    since it was proposed, or the site accepted the write and discarded it.
+    The body carries what the site actually says now.
+    """
+    from ..core import site_fix
+    _owned_fix(cid, fix_id, x_account_token)
+    out = site_fix.apply(fix_id)
+    persistence.save(STORE)
+    if not out["ok"]:
+        raise HTTPException(status_code=409, detail=out["error"])
+    return out
+
+
+@router.post("/account/clients/{cid}/fixes/{fix_id}/rollback", tags=["billing"])
+def rollback_fix(cid: str, fix_id: str,
+                 x_account_token: Optional[str] = Header(None)) -> dict:
+    from ..core import site_fix
+    _owned_fix(cid, fix_id, x_account_token)
+    out = site_fix.rollback(fix_id)
+    persistence.save(STORE)
+    if not out["ok"]:
+        raise HTTPException(status_code=409, detail=out["error"])
+    return out
+
+
 @router.get("/account/clients", tags=["billing"])
 def account_clients(x_account_token: Optional[str] = Header(None)) -> dict:
     """The businesses THIS subscriber owns. Never anyone else's."""

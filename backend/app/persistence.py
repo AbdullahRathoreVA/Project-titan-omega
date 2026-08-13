@@ -18,7 +18,7 @@ import tempfile
 
 from .core import (analytics, billing, clients, db, evidence, learning,
                    reflection, knowledge, routing, sessions, site_access,
-                   traffic, voice_sessions)
+                   site_fix, traffic, voice_sessions)
 from .store import STORE, Store
 
 
@@ -66,6 +66,12 @@ def save(store: Store = STORE) -> None:
             # TITAN_CREDENTIAL_KEY, which is why it is safe to store here at
             # all — but losing it would silently disconnect every client.
             "site_access": site_access.export_state(),
+            # Fixes applied to a CUSTOMER'S live website, each carrying the
+            # exact previous value. Losing this does not just lose history —
+            # it loses the only way to undo a change Titan made to somebody
+            # else's business. `durable` on every record says whether this
+            # deployment actually keeps it.
+            "site_fix": site_fix.export_state(),
             # Visitor counts are the top of the funnel. A restart that zeroes
             # them makes a launch day look like it never happened.
             "traffic": traffic.export_state(),
@@ -186,6 +192,9 @@ def load(store: Store = STORE) -> None:
         sites = data.get("site_access")
         if isinstance(sites, dict):
             site_access.import_state(sites)
+        fixes = data.get("site_fix")
+        if isinstance(fixes, dict):
+            site_fix.import_state(fixes)
         visits = data.get("traffic")
         if isinstance(visits, dict):
             traffic.import_state(visits)

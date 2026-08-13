@@ -3997,3 +3997,399 @@ def test_one_subscriber_cannot_connect_anothers_site(client, isolated_billing,
                           "application_password": "y" * 12},
                     headers={"X-Account-Token": tok_b})
     assert r.status_code == 404
+
+
+# ── fixing a live website: propose → approve → apply → verify → rollback ───
+#
+# Every test below drives a fake WordPress rather than a real one. That proves
+# the state machine, the approval gate, the staleness check and the read-back
+# verification. It does NOT prove Titan can write to a real WordPress install —
+# only a real site with a real application password proves that, and that is
+# recorded as blocked on Abdullah, not on this suite.
+
+class FakeWP:
+    """An in-memory WordPress REST API — enough of one to test writes.
+
+    `strips_scripts` reproduces the behaviour that makes read-back
+    verification necessary in the first place: WordPress runs wp_kses_post on
+    content for any user without the unfiltered_html capability, which removes
+    <script> tags and answers 200 as if it had saved them.
+    """
+
+    def __init__(self, *, strips_scripts=False, write_status=200):
+        self.pages = {
+            12: {"id": 12, "link": "https://shop.example/",
+                 "title": {"raw": "Home"},
+                 "content": {"raw": "<p>We sell leather jackets.</p>"}},
+        }
+        self.media = {
+            7: {"id": 7, "alt_text": "",
+                "title": {"raw": "black-leather-biker-jacket"},
+                "source_url": "https://shop.example/img/7.jpg"},
+            8: {"id": 8, "alt_text": "",
+                "title": {"raw": "IMG_4821"},
+                "source_url": "https://shop.example/img/8.jpg"},
+        }
+        self.strips_scripts = strips_scripts
+        self.write_status = write_status
+        self.writes = []
+
+    class Resp:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+
+        def json(self):
+            if self._payload is None:
+                raise ValueError("not JSON")
+            return self._payload
+
+    def _collection(self, kind):
+        return self.pages if kind == "pages" else (
+            self.media if kind == "media" else {})
+
+    def __call__(self, cred, method, path, *, params=None, body=None):
+        params = params or {}
+        parts = path.replace("/wp-json/wp/v2/", "").strip("/").split("/")
+        kind = parts[0]
+        obj_id = int(parts[1]) if len(parts) > 1 else None
+        coll = self._collection(kind)
+
+        if method == "GET" and obj_id is None:
+            rows = list(coll.values())
+            if params.get("slug"):
+                rows = [r for r in rows
+                        if params["slug"] in r.get("link", "")]
+            return self.Resp(200, rows)
+        if method == "GET":
+            row = coll.get(obj_id)
+            return self.Resp(200, row) if row else self.Resp(404, None)
+        if method == "POST":
+            row = coll.get(obj_id)
+            if row is None:
+                return self.Resp(404, None)
+            if self.write_status >= 400:
+                return self.Resp(self.write_status,
+                                 {"message": "Sorry, you are not allowed."})
+            self.writes.append((kind, obj_id, dict(body or {})))
+            for field, value in (body or {}).items():
+                if field == "content" and self.strips_scripts:
+                    import re as _re
+                    value = _re.sub(r"<script.*?</script>", "", value,
+                                    flags=_re.S).rstrip()
+                if isinstance(row.get(field), dict):
+                    row[field] = {"raw": value}
+                else:
+                    row[field] = value
+            return self.Resp(200, row)
+        return self.Resp(405, None)
+
+
+@pytest.fixture
+def wp(monkeypatch, clean_sites):
+    """A connected WordPress site backed by FakeWP."""
+    from app.core import site_access, site_fix
+    site_fix.reset()
+    monkeypatch.setattr(site_access, "verify", lambda *a, **k: {
+        "ok": True, "user": "Owner", "capabilities": ["edit_pages"]})
+    site_access.connect("c1", "wordpress", "https://shop.example", "owner",
+                        "abcd EFGH ijkl MNOP")
+    fake = FakeWP()
+    monkeypatch.setattr(site_fix, "_wp", fake)
+    yield fake
+    site_fix.reset()
+
+
+AUDIT = {
+    "ok": True, "url": "https://shop.example/", "score": 55,
+    "findings": [
+        {"id": "title", "severity": "critical", "title": "Weak title",
+         "detail": "Found 'Home' (4 chars).", "fix": "Write a real title."},
+        {"id": "meta_description", "severity": "high", "title": "No meta",
+         "detail": "Found 0 chars.", "fix": "Write one."},
+        {"id": "schema", "severity": "critical", "title": "No schema",
+         "detail": "No structured data found.", "fix": "Add JSON-LD."},
+        {"id": "images_alt", "severity": "medium", "title": "No alt text",
+         "detail": "2 of 2 images have no alt text.", "fix": "Describe them."},
+    ],
+}
+
+BUSINESS = {"business_name": "Triad Thread Studio", "city": "Sialkot",
+            "country": "Pakistan", "industry": "leather manufacturer",
+            "phone": "+92 52 123456"}
+
+
+def test_nothing_can_be_proposed_without_a_connected_site(clean_sites):
+    """Titan holds no key to this business, so it can change nothing."""
+    from app.core import site_fix
+    site_fix.reset()
+    out = site_fix.propose("nobody", AUDIT)
+    assert out["ok"] is False
+    assert "no website credential" in out["error"].lower()
+    assert out["proposed"] == []
+
+
+def test_propose_says_which_findings_it_cannot_fix_and_why(wp):
+    """'Titan found 9 problems and can fix 2' is true. 'Titan fixes your
+    site' is not, and the difference is the whole product."""
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    assert out["ok"] is True
+
+    kinds = {f["kind"] for f in out["proposed"]}
+    assert kinds == {"title", "schema", "alt_text"}
+
+    skipped = {s["finding_id"]: s["reason"] for s in out["skipped"]}
+    # Core WordPress genuinely has no meta description field.
+    assert "meta_description" in skipped
+    assert "no meta description field" in skipped["meta_description"]
+    # IMG_4821 carries no description, and Titan has not seen the image.
+    assert "images_alt" in skipped
+    assert "invented" in skipped["images_alt"]
+
+    # Nothing was written to the site by proposing.
+    assert wp.writes == []
+
+
+def test_alt_text_is_proposed_only_where_the_filename_describes_something(wp):
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    alts = [f for f in out["proposed"] if f["kind"] == "alt_text"]
+    assert len(alts) == 1, "Titan invented a description for an unnamed image"
+    assert alts[0]["target"]["id"] == 7
+    assert alts[0]["proposed"] == "black leather biker jacket"
+
+
+def test_schema_never_publishes_a_placeholder_or_an_invented_fact(wp):
+    """Telling Google the business is called '<city>' is worse than no markup,
+    and 'opens 09:00' for hours nobody measured is a fabricated fact."""
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    schema = [f for f in out["proposed"] if f["kind"] == "schema"][0]
+    full = site_fix.get(schema["id"])["proposed"]
+
+    assert "<street address>" not in full and "<city>" not in full
+    assert "<phone number>" not in full and "<country>" not in full
+    # Template defaults from suggested_schema that nobody measured.
+    assert "openingHoursSpecification" not in full
+    assert "priceRange" not in full
+    # ...but the facts Titan actually holds are there.
+    assert "Triad Thread Studio" in full and "Sialkot" in full
+    assert '"addressCountry": "PK"' in full
+
+
+def test_schema_is_refused_entirely_when_the_business_is_unknown(wp):
+    """With no city, no phone and no country there is nothing true to say."""
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business={"business_name": "A Ltd"})
+    assert not [f for f in out["proposed"] if f["kind"] == "schema"]
+    reasons = " ".join(s["reason"] for s in out["skipped"])
+    assert "placeholders" in reasons
+
+
+def test_a_fix_cannot_be_applied_without_an_approval(wp):
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = [f for f in out["proposed"] if f["kind"] == "title"][0]
+
+    result = site_fix.apply(fix["id"])
+    assert result["ok"] is False
+    assert "approved" in result["error"]
+    assert wp.writes == [], "an unapproved fix reached the live site"
+
+
+def test_an_approval_must_carry_a_name(wp):
+    """Nothing changes a customer's website on an anonymous decision."""
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = out["proposed"][0]
+    assert site_fix.approve(fix["id"], "")["ok"] is False
+    assert site_fix.approve(fix["id"], "   ")["ok"] is False
+    assert site_fix.get(fix["id"])["status"] == "proposed"
+
+
+def test_apply_writes_reads_back_and_records_the_snapshot(wp):
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = [f for f in out["proposed"] if f["kind"] == "title"][0]
+
+    site_fix.approve(fix["id"], "Abdullah")
+    result = site_fix.apply(fix["id"])
+    assert result["ok"] is True, result.get("error")
+
+    rec = site_fix.get(fix["id"])
+    assert rec["status"] == "applied"
+    assert rec["verified"] is True
+    assert "read back" in rec["verify_note"].lower()
+    assert rec["snapshot"] == "Home", "the exact previous value was not kept"
+    assert rec["approved_by"] == "Abdullah"
+    assert wp.pages[12]["title"]["raw"] == rec["proposed"]
+
+
+def test_a_write_that_the_site_silently_discards_is_reported_as_failed(monkeypatch,
+                                                                      clean_sites):
+    """The reason read-back exists. WordPress strips <script> from content for
+    users without unfiltered_html, answers 200, and saves nothing. A tool that
+    trusted the status code would tell the customer their schema is live."""
+    from app.core import site_access, site_fix
+    site_fix.reset()
+    monkeypatch.setattr(site_access, "verify", lambda *a, **k: {
+        "ok": True, "user": "Owner", "capabilities": ["edit_pages"]})
+    site_access.connect("c1", "wordpress", "https://shop.example", "owner",
+                        "abcd EFGH ijkl MNOP")
+    fake = FakeWP(strips_scripts=True)
+    monkeypatch.setattr(site_fix, "_wp", fake)
+
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = [f for f in out["proposed"] if f["kind"] == "schema"][0]
+    site_fix.approve(fix["id"], "Abdullah")
+    result = site_fix.apply(fix["id"])
+
+    assert result["ok"] is False
+    rec = site_fix.get(fix["id"])
+    assert rec["status"] == "failed", "a discarded write was recorded as applied"
+    assert rec["verified"] is False
+    assert "wp_kses_post" in rec["error"]
+    assert "NOT live" in rec["error"]
+    # The write really was attempted, and the page really is unchanged.
+    assert fake.writes, "the write was never sent"
+    assert "application/ld+json" not in fake.pages[12]["content"]["raw"]
+
+    site_fix.reset()
+
+
+def test_a_proposal_is_refused_if_the_page_changed_since_it_was_made(wp):
+    """A proposal is a claim about a specific prior state. Applying it to a
+    different one would silently overwrite whatever the owner just wrote."""
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = [f for f in out["proposed"] if f["kind"] == "title"][0]
+    site_fix.approve(fix["id"], "Abdullah")
+
+    # The owner edits the page in their own admin.
+    wp.pages[12]["title"] = {"raw": "Home — Autumn Sale"}
+
+    result = site_fix.apply(fix["id"])
+    assert result["ok"] is False
+    assert "changed since this fix was proposed" in result["error"]
+    rec = site_fix.get(fix["id"])
+    assert rec["status"] == "failed" and rec.get("stale") is True
+    assert wp.pages[12]["title"]["raw"] == "Home — Autumn Sale", \
+        "Titan overwrote the owner's own edit"
+    assert wp.writes == []
+
+
+def test_rollback_restores_the_exact_previous_value_and_verifies_it(wp):
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = [f for f in out["proposed"] if f["kind"] == "title"][0]
+    site_fix.approve(fix["id"], "Abdullah")
+    site_fix.apply(fix["id"])
+    assert wp.pages[12]["title"]["raw"] != "Home"
+
+    result = site_fix.rollback(fix["id"])
+    assert result["ok"] is True, result.get("error")
+    assert wp.pages[12]["title"]["raw"] == "Home"
+    rec = site_fix.get(fix["id"])
+    assert rec["status"] == "rolled_back"
+    assert rec["rolled_back_at"] is not None
+
+
+def test_a_rolled_back_fix_cannot_quietly_reapply_itself(wp):
+    """Re-applying a change a human reverted is how an automated tool loses
+    the right to touch a customer's site."""
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = [f for f in out["proposed"] if f["kind"] == "title"][0]
+    site_fix.approve(fix["id"], "Abdullah")
+    site_fix.apply(fix["id"])
+    site_fix.rollback(fix["id"])
+
+    assert site_fix.approve(fix["id"], "Abdullah")["ok"] is False
+    assert site_fix.apply(fix["id"])["ok"] is False
+    assert wp.pages[12]["title"]["raw"] == "Home"
+
+
+def test_a_refused_write_leaves_the_fix_failed_with_the_reason(monkeypatch,
+                                                              clean_sites):
+    from app.core import site_access, site_fix
+    site_fix.reset()
+    monkeypatch.setattr(site_access, "verify", lambda *a, **k: {
+        "ok": True, "user": "Owner", "capabilities": ["edit_pages"]})
+    site_access.connect("c1", "wordpress", "https://shop.example", "owner",
+                        "abcd EFGH ijkl MNOP")
+    monkeypatch.setattr(site_fix, "_wp", FakeWP(write_status=403))
+
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = [f for f in out["proposed"] if f["kind"] == "title"][0]
+    site_fix.approve(fix["id"], "Abdullah")
+    result = site_fix.apply(fix["id"])
+
+    assert result["ok"] is False
+    assert "no longer have permission" in result["error"]
+    assert site_fix.get(fix["id"])["status"] == "failed"
+    site_fix.reset()
+
+
+def test_the_summary_counts_verified_writes_not_accepted_ones(wp):
+    """'Applied' must mean read back off the live site."""
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = [f for f in out["proposed"] if f["kind"] == "title"][0]
+    site_fix.approve(fix["id"], "Abdullah")
+    site_fix.apply(fix["id"])
+
+    s = site_fix.summary("c1")
+    assert s["counts"]["applied"] == 1
+    assert s["verified_live"] == 1
+    assert "read back" in s["note"]
+
+
+def test_fixes_and_their_snapshots_survive_a_restart(wp):
+    """The snapshot is the only way to undo a change to a customer's site."""
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    fix = [f for f in out["proposed"] if f["kind"] == "title"][0]
+    site_fix.approve(fix["id"], "Abdullah")
+    site_fix.apply(fix["id"])
+
+    blob = json.loads(json.dumps(site_fix.export_state()))
+    site_fix.reset()
+    assert site_fix.get(fix["id"]) is None
+    site_fix.import_state(blob)
+
+    rec = site_fix.get(fix["id"])
+    assert rec["snapshot"] == "Home"
+    assert rec["status"] == "applied" and rec["approved_by"] == "Abdullah"
+
+
+def test_a_fix_record_says_whether_its_own_rollback_would_survive_a_rebuild(wp):
+    """On a free Space the state file is wiped by a rebuild, which would leave
+    a change applied to a customer's site with no snapshot to undo it. The
+    record must not imply otherwise."""
+    from app.core import site_fix
+    out = site_fix.propose("c1", AUDIT, business=BUSINESS)
+    assert out["durable"] in (True, False)
+    assert all("durable" in f for f in out["proposed"])
+
+
+def test_one_subscriber_cannot_apply_anothers_fix(client, isolated_billing,
+                                                  isolated_clients, wp):
+    """Guessing a fix id must not reach another subscriber's website."""
+    from app.core import billing, clients as creg, site_fix
+    billing.signup("a@example.com", "hunter2hunter2")
+    billing.signup("b@example.com", "hunter2hunter2")
+    rec = creg.create_client(business_name="A Ltd", username="sf-1",
+                             password="x" * 20, website="https://shop.example")
+    billing.attach_client("a@example.com", rec["id"])
+    tok_b = billing.authenticate("b@example.com", "hunter2hunter2")
+
+    out = site_fix.propose(rec["id"], AUDIT, business=BUSINESS)
+    assert out["ok"] is False, "propose needs a credential for THAT client id"
+
+    # A fix that really belongs to c1, addressed through b's own client id.
+    mine = site_fix.propose("c1", AUDIT, business=BUSINESS)["proposed"][0]
+    r = client.post(f"/api/account/clients/{rec['id']}/fixes/{mine['id']}/apply",
+                    headers={"X-Account-Token": tok_b})
+    assert r.status_code == 404
+    assert site_fix.get(mine["id"])["status"] == "proposed"
