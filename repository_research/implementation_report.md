@@ -1,6 +1,42 @@
 # Implementation report — god-tier transformation, session 1
 
-Commits `557a0ea..0c20621`. Tests **304 → 323**. All deployed and verified live.
+Commits `557a0ea..ecaeb46`. Tests **304 → 338**. All deployed and verified live.
+
+## Session 2 addendum — observability, backup/restore, retrieval
+
+| Item | Before | After |
+|---|---|---|
+| Observability | **1/10** — zero request ids, zero structured logs | **7/10** — JSON logs, request id on every response incl. 401s, structural credential redaction |
+| Backup / restore | **1/10** — export only, never tested | **7/10** — self-verifying backups, reversible restore, a test that destroys the DB and recovers it |
+| Retrieval | 3/10 | **6/10** — root cause found and fixed, measured before/after |
+
+**Retrieval, measured on the same corpus and questions:**
+
+| | Before | After |
+|---|---|---|
+| hit@1 | 0.600 | **0.700** |
+| hit@3 | 0.800 | 0.800 |
+| MRR | 0.700 | **0.750** |
+| silence (answerable, no result) | 2/10 | **0/10** |
+| false answers (unanswerable, answered) | 1/5 | 1/5 |
+
+The cause was not a threshold. `knowledge.backfill()` existed, had a unit test,
+and was exposed as an endpoint — **nothing ever called it**. Passages ingested
+while the embedding model was downloading kept no vectors and were never
+re-embedded, so the whole semantic branch was dead code in production. That
+also explains the old note that lowering the cosine threshold "changed nothing".
+
+Wiring it up immediately broke something else, which the benchmark caught before
+it shipped: false answers went 1/5 → 5/5, because `COS_FLOOR` was 0.52 while the
+module's own comment records that sentence models score almost any two English
+sentences 0.6–0.9. Recalibrated to 0.60 from measurement
+(`evaluation/calibrate_cosine.py`).
+
+**Mutation testing is now a repo tool** (`evaluation/mutation_check.py`, 22
+guards). It found two tests that protected nothing — one asserted on a *comment*
+rather than the code, one never exercised its branch. A scratch version of this
+tool also left `if False:` inside `backup.py`'s verification gate after a run;
+the permanent tool now verifies every restore byte-for-byte and aborts loudly.
 
 This report follows the brief's §56 deliverables. **It is deliberately explicit
 about what was NOT done**, because the brief's §57 rule 6 forbids claiming an

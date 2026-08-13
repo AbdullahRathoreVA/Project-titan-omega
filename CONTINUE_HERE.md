@@ -204,7 +204,24 @@ Every commit was verified live in production before being called done.
   fence, neutralise-don't-delete, and a system declaration that the region is
   data. **Detection is heuristic and says so — do not let anyone upgrade that
   wording to a guarantee; there is a test on it.**
-- **OPEN, HIGH — retrieval returns nothing on a small site.** `MIN_SCORE` is a
+- **FIXED 2026-08-13 — the retrieval score had nothing to do with thresholds.**
+  `knowledge.backfill()` existed, was unit-tested, and was exposed as an
+  endpoint — **nothing ever called it.** Passages ingested while the embedding
+  model was downloading kept no vectors and were never re-embedded, so
+  `any(vectors)` stayed False and the entire semantic branch was DEAD CODE in
+  production. That is also why lowering the cosine threshold "changed nothing".
+  Now called from the heartbeat. Measured: hit@1 0.600→0.700, MRR 0.700→0.750,
+  silence 2/10→0/10, false answers unchanged at 1/5.
+  Wiring it up exposed a second bug the benchmark caught before it shipped:
+  `COS_FLOOR` was 0.52, below the 0.6–0.9 band where sentence models score any
+  two English sentences, so semantic-rescue answered 5/5 unanswerable
+  questions. Recalibrated to **0.60** via `evaluation/calibrate_cosine.py`.
+  **Run `python -m evaluation.retrieval_benchmark --with-embeddings` before
+  touching any retrieval parameter.**
+- **Mutation testing is a repo tool now**: `python -m evaluation.mutation_check`
+  (22 guards). It found two tests that protected nothing. Do not trust a green
+  suite without it.
+- **OPEN, MEDIUM — BM25 absolute threshold** (separate from the above). `MIN_SCORE` is a
   fixed `0.8` but BM25 scales with corpus size through IDF: one passage gives
   `idf = log(1.333) = 0.288`, so a two-term exact match scores ~0.58 and is
   filtered out. Titan's market is small sites. **Masked in CI** because the
