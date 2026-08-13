@@ -4496,6 +4496,139 @@ def test_the_marked_up_price_cannot_drift_from_the_price_charged():
     assert marked_up == real, "the marked-up price drifted from the plan table"
 
 
+# ── JavaScript-rendered pages (blueprint 011) ──────────────────────────────
+#
+# Titan's crawler is one HTTP GET. On a client-rendered site it was auditing a
+# <div id="root"> and reporting "no H1", "no schema", "thin content" with total
+# confidence. A confident wrong finding is indistinguishable from a right one.
+
+SPA_SHELL = (
+    '<!doctype html><html lang="en"><head><title>Loading…</title></head>'
+    '<body><div id="root"></div>'
+    '<script src="/static/js/main.8f3a1c.js"></script>'
+    '<script>window.__NEXT_DATA__={"props":{}}</script>'
+    '<script src="/static/js/vendor.js"></script></body></html>')
+
+REAL_PAGE = (
+    '<!doctype html><html lang="en"><head><title>Leather jackets, wholesale</title>'
+    '<meta name="description" content="Full-grain leather outerwear, made to order.">'
+    '</head><body><h1>Triad Thread Studio</h1>'
+    '<p>' + ("We manufacture full-grain leather jackets for wholesale buyers "
+             "across Europe and the Gulf, with a minimum order of twenty "
+             "units per style and lead times of six weeks. " * 4) +
+    '</p></body></html>')
+
+
+def test_an_empty_react_shell_is_recognised_as_one():
+    from app.core import render
+    out = render.inspect(SPA_SHELL)
+    assert out["client_rendered"] is True
+    assert out["empty_mount_element"] is True
+    assert "Next.js" in out["frameworks"]
+    assert out["visible_text_chars"] < 250
+    # The verdict must be checkable, not just asserted.
+    assert out["reasons"], "no evidence was given for the verdict"
+
+
+def test_a_real_page_is_not_mistaken_for_a_shell():
+    from app.core import render
+    out = render.inspect(REAL_PAGE)
+    assert out["client_rendered"] is False
+    assert out["visible_text_chars"] > 250
+
+
+def test_a_short_page_with_no_javascript_is_thin_content_not_a_shell():
+    """A genuinely short page that ships no JS is a different finding with a
+    different fix. Calling it client-rendered would send the wrong advice."""
+    from app.core import render
+    out = render.inspect(
+        "<html><body><h1>Contact</h1><p>Call 0300 1234567.</p></body></html>")
+    assert out["client_rendered"] is False
+
+
+def test_auditing_a_shell_says_it_is_unreliable_instead_of_scoring_it(monkeypatch):
+    """The behaviour that matters. Titan must not publish a confident F on a
+    page it could not see."""
+    from app.core import render, safe_fetch
+    from app.engines import client_seo
+
+    monkeypatch.setattr(render, "RENDER_URL", "")
+    monkeypatch.setattr(
+        safe_fetch, "fetch",
+        lambda url, **k: (SPA_SHELL, None, 200) if "sitemap" not in url
+        and "robots" not in url else (None, "HTTP 404", 404))
+
+    a = client_seo.audit("https://spa.example", business_name="A Ltd")
+    assert a["ok"] is True
+    assert a["reliable"] is False, "a shell was scored as if it were the page"
+    assert a["rendering"]["rendered_with"] == "http"
+    assert a["rendering"]["client_rendered"] is True
+
+    # The warning must be the FIRST thing read, above even a legal finding —
+    # if it is true, every other finding may be about the shell.
+    assert a["findings"][0]["id"] == "client_rendered"
+    assert "not reliable" in a["findings"][0]["title"]
+    assert "RENDERS IN THE BROWSER" in a["note"]
+
+
+def test_a_server_rendered_page_is_never_flagged_unreliable(monkeypatch):
+    from app.core import render, safe_fetch
+    from app.engines import client_seo
+
+    monkeypatch.setattr(render, "RENDER_URL", "")
+    monkeypatch.setattr(
+        safe_fetch, "fetch",
+        lambda url, **k: (REAL_PAGE, None, 200) if "sitemap" not in url
+        and "robots" not in url else (None, "HTTP 404", 404))
+
+    a = client_seo.audit("https://real.example", business_name="Triad")
+    assert a["reliable"] is True
+    assert a["rendering"]["rendered_with"] == "http"
+    assert not [f for f in a["findings"] if f["id"] == "client_rendered"]
+
+
+def test_titan_never_claims_a_rendered_audit_it_did_not_perform(monkeypatch):
+    """With no renderer configured the answer is 'no', not a silent fallback
+    that leaves the caller thinking JavaScript ran."""
+    from app.core import render
+
+    monkeypatch.setattr(render, "RENDER_URL", "")
+    assert render.available() is False
+    html, err = render.render("https://spa.example")
+    assert html is None
+    assert "No browser renderer is configured" in err
+
+    status = render.status()
+    assert status["available"] is False
+    assert "does not publish a confident score on a shell" in status["note"]
+
+
+def test_the_browser_is_used_only_when_the_plain_fetch_looks_like_a_shell(monkeypatch):
+    """Rendering every page would be slower and would cost an extra request
+    against someone else's server for no gain."""
+    from app.core import render, safe_fetch
+
+    calls = []
+    monkeypatch.setattr(render, "RENDER_URL", "https://renderer.example")
+    monkeypatch.setattr(render, "render",
+                        lambda url, **k: (calls.append(url), (REAL_PAGE, ""))[1])
+
+    monkeypatch.setattr(safe_fetch, "fetch",
+                        lambda url, **k: (REAL_PAGE, None, 200))
+    _, _, _, r = render.fetch_best("https://real.example", user_agent="x",
+                                   timeout=5)
+    assert calls == [], "the browser was used on a server-rendered page"
+    assert r["rendered_with"] == "http"
+
+    monkeypatch.setattr(safe_fetch, "fetch",
+                        lambda url, **k: (SPA_SHELL, None, 200))
+    html, _, _, r = render.fetch_best("https://spa.example", user_agent="x",
+                                      timeout=5)
+    assert calls == ["https://spa.example"], "the browser was not used on a shell"
+    assert r["rendered_with"] == "browser"
+    assert html == REAL_PAGE
+
+
 # ── durable work queue (blueprint 007) ─────────────────────────────────────
 
 @pytest.fixture

@@ -1,0 +1,7 @@
+# Pinned, like the main app's requirements. A renderer that silently changes
+# Chromium version between deploys makes "the audit changed" impossible to
+# explain.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+playwright==1.49.1

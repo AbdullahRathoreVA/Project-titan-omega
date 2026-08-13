@@ -1507,6 +1507,18 @@ def founder_demo_workspace_run() -> dict:
                                                 "reason": "Demo workspace is disabled."}
 
 
+@router.get("/founder/rendering", tags=["executive"])
+def founder_rendering() -> dict:
+    """Whether Titan can see JavaScript-built pages, stated plainly.
+
+    A large share of small-business sites are client-rendered. Without a
+    browser renderer Titan detects them and says its findings are unreliable
+    rather than publishing a confident score on an empty shell.
+    """
+    from ..core import render
+    return render.status()
+
+
 @router.get("/founder/fix-cycle", tags=["executive"])
 def founder_fix_cycle() -> dict:
     """What the 24/7 fix loop is responsible for, and what it has actually done.

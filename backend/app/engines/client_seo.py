@@ -151,7 +151,12 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    html, err, status = _fetch(url)
+    # Uses a real browser when the plain GET looks like a shell AND a renderer
+    # is configured; otherwise it reports that it could not. See core/render.py
+    # — the point is that `rendering` always says which happened.
+    from ..core import render as _render
+    html, err, status, rendering = _render.fetch_best(
+        url, user_agent=UA, timeout=TIMEOUT, fetcher=_fetch)
     if html is None:
         return {"ok": False, "url": url, "error": err, "status": status,
                 "findings": [{
@@ -166,6 +171,37 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     earned: dict[str, bool] = {}
     parsed = urllib.parse.urlparse(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    # A page that builds itself in the browser was, until now, audited as if
+    # the shell were the site: "no H1", "no schema", "thin content", all
+    # reported with total confidence and all describing a <div id="root">.
+    # A confident wrong finding is indistinguishable from a right one, so this
+    # goes at the TOP of the list and the result carries reliable=False.
+    unreliable = rendering.get("reliable") is False
+    if unreliable:
+        findings.append({
+            "id": "client_rendered",
+            "severity": "critical",
+            "title": "This page is built by JavaScript — the audit below is "
+                     "not reliable for it",
+            "detail": (
+                "The server sent "
+                f"{rendering.get('visible_text_chars', 0)} characters of "
+                f"visible text and "
+                f"{rendering.get('script_tags', 0)} script tags"
+                + (f" ({', '.join(rendering['frameworks'])})"
+                   if rendering.get("frameworks") else "")
+                + ". Evidence: " + "; ".join(rendering.get("reasons", []))
+                + ". Google renders JavaScript and will see more than this, so "
+                  "the findings below may describe an empty shell rather than "
+                  "your real page. Titan is telling you it cannot see this "
+                  "page properly instead of guessing."),
+            "fix": ("Server-render or pre-render the page so its content is in "
+                    "the HTML. This matters beyond Titan: AI answer engines "
+                    "(ChatGPT Search, Perplexity) largely do NOT execute "
+                    "JavaScript, so a client-rendered page is close to "
+                    "invisible to them even when Google can read it."),
+        })
 
     # Every client-facing string below is a function of the trade. Telling a
     # law firm that "the food photography is the product" is not a credible
@@ -402,7 +438,11 @@ def audit(url: str, *, business_name: str = "", city: str = "",
 
     order = {"legal-critical": 0, "critical": 1, "high": 2,
              "medium": 3, "low": 4}
-    findings.sort(key=lambda f: order.get(f["severity"], 9))
+    # "I cannot see this page properly" outranks everything, including a legal
+    # finding — because if it is true, every other finding in the list may be
+    # about a shell rather than about the site.
+    findings.sort(key=lambda f: (0 if f["id"] == "client_rendered" else 1,
+                                 order.get(f["severity"], 9)))
 
     return {
         "ok": True,
@@ -411,6 +451,14 @@ def audit(url: str, *, business_name: str = "", city: str = "",
         "score": score,
         "grade": ("A" if score >= 90 else "B" if score >= 75 else
                   "C" if score >= 60 else "D" if score >= 40 else "F"),
+        # How the HTML was obtained, always. A caller can never be left
+        # guessing whether JavaScript ran.
+        "rendering": rendering,
+        # False when the page renders in the browser and Titan could not.
+        # The score is still a real measurement OF WHAT WAS SERVED, but it is
+        # not a measurement of the page a visitor sees, and presenting it as
+        # one would be the exact failure this codebase exists to avoid.
+        "reliable": not unreliable,
         "passed": [k for k, v in earned.items() if v is True],
         "failed": [k for k, v in earned.items() if v is False],
         # Reported separately so a reader can see what was skipped and why the
@@ -427,9 +475,15 @@ def audit(url: str, *, business_name: str = "", city: str = "",
             "medium": sum(1 for f in findings if f["severity"] == "medium"),
             "low": sum(1 for f in findings if f["severity"] == "low"),
         },
-        "note": ("Rankings, traffic and Google Business Profile health cannot "
-                 "be read over HTTP — those need Search Console and GBP "
-                 "access, which the client must grant."),
+        "note": (("THIS PAGE RENDERS IN THE BROWSER AND TITAN COULD NOT. The "
+                  "score above describes the HTML the server sent, which is "
+                  "not what a visitor sees — treat every finding as unverified "
+                  "until the page is server-rendered or a browser renderer is "
+                  "configured. "
+                  if unreliable else "")
+                 + "Rankings, traffic and Google Business Profile health cannot "
+                   "be read over HTTP — those need Search Console and GBP "
+                   "access, which the client must grant."),
     }
 
 
