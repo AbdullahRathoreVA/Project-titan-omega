@@ -218,6 +218,24 @@ Every commit was verified live in production before being called done.
   questions. Recalibrated to **0.60** via `evaluation/calibrate_cosine.py`.
   **Run `python -m evaluation.retrieval_benchmark --with-embeddings` before
   touching any retrieval parameter.**
+- **FIXED — the test suite took 6h27m and was still green.** `time.monotonic()`
+  is time since SYSTEM BOOT, so every interval tracker seeded to `0.0` made
+  `monotonic() - _last_x >= INTERVAL` true on the FIRST heartbeat tick. Every
+  scheduled cycle — full SQLite backup, embedding download, watch, self-audit,
+  fix cycle — fired at startup, and `TestClient(app)` runs the lifespan ~100
+  times in this suite. **It was a production bug first**: every container boot
+  did its heaviest work before serving a request. Trackers now seed to
+  `time.monotonic()`; one backup still runs shortly after boot in the initial
+  sync (a free Space rebuilds more often than 6h, so otherwise a backup might
+  never be taken). Suite is now **55s**. Two tests lock it in.
+  **`TITAN_HEARTBEAT_ENABLED=0` is set in test_core.py before importing
+  app.main — do not remove it.**
+- **Verification layer (013) DONE** — `core/verify.py`. Every figure in
+  generated text must trace to the evidence. Wired into `knowledge.answer()`:
+  a failed check falls back to QUOTING the site verbatim rather than shipping
+  an invented price or closing time. Verdicts: pass/retry/reject/escalate.
+  It verifies claims TRACE to the source, **not** that they answer the
+  question — asserted by a test so nobody upgrades the claim.
 - **Mutation testing is a repo tool now**: `python -m evaluation.mutation_check`
   (22 guards). It found two tests that protected nothing. Do not trust a green
   suite without it.

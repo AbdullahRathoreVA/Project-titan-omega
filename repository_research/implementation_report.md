@@ -2,6 +2,37 @@
 
 Commits `557a0ea..ecaeb46`. Tests **304 → 338**. All deployed and verified live.
 
+## Session 4 addendum — verification layer, and a 6h27m test suite
+
+| Item | Before | After |
+|---|---|---|
+| Verification layer (013) | **0/10** | **6/10** — generated text checked against evidence, wired into the voice path |
+| Test suite runtime | **6h 27m** (green!) | **55s** |
+
+**The suite regression is the more important finding.** A full run came back
+`354 passed in 23,210s`. Green, but six and a half hours is a broken suite, not
+a passing one.
+
+`time.monotonic()` is time since **system boot**, not process start. Every
+interval tracker was seeded to `0.0`, so `monotonic() - _last_x >= INTERVAL`
+was true on the *first* heartbeat tick — a full SQLite backup, an
+embedding-model download and every 24/7 cycle fired at startup. `TestClient(app)`
+runs the lifespan, and this suite creates ~100 of them.
+
+**It was a production bug first:** every container boot did its heaviest work
+before serving a request. Fixed by seeding trackers to `time.monotonic()`, with
+one backup still taken shortly after boot — a free Space rebuilds more often
+than 6h, so otherwise a backup might never be taken at all.
+
+**Verification layer:** `core/verify.py` grounds every figure in generated text
+against its evidence. Wired into `knowledge.answer()` so a failed check falls
+back to **quoting the site verbatim** — worse prose that is true beats better
+prose that is invented, and quoting cannot hallucinate. It verifies claims
+*trace* to the source, **not** that they answer the question correctly; that
+limit is in the module and asserted by a test.
+
+31 guards mutation-verified. 356 tests.
+
 ## Session 3 addendum — tenancy and measured cost
 
 | Item | Before | After |
