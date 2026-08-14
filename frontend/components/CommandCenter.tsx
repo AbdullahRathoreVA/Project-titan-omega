@@ -331,7 +331,17 @@ export function CommandCenter() {
               reason to pay for this; the backend serves [SAMPLE] businesses
               for them rather than blocking them. Finance, CRM, Telegram and
               Job Radar already had demo-safe payloads all along. */}
-          <div className="flex gap-2">
+          {/* Fourteen tabs in a `flex` with no wrap and no scroll put ~980px
+              of buttons inside a 390px phone: the last six were unreachable,
+              clipped at the right edge with nothing to indicate they existed.
+              Measured on a real iPhone screenshot.
+
+              Now a horizontal scroller with snap points. The negative margin
+              lets it bleed to the screen edge so the cut-off tab is visibly
+              half-shown — that is the affordance that tells a thumb to swipe.
+              Desktop is unchanged: at `sm` and up they all fit and the
+              scroller never engages. */}
+          <div className="no-scrollbar -mx-3 flex snap-x snap-mandatory gap-2 overflow-x-auto px-3 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
             {(([
               ["universe", "Universe", false],
               ["dashboard", "Dashboard", false],
@@ -358,7 +368,11 @@ export function CommandCenter() {
                   tap();
                   setView(v);
                 }}
-                className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                // shrink-0 or flex squeezes 14 tabs into unreadable slivers
+                // instead of letting them scroll. min-h-11 is the 44px touch
+                // target; the old py-1.5/text-xs measured 17px tall, which is
+                // a thumb-miss every time. Desktop keeps the compact size.
+                className={`min-h-11 shrink-0 snap-start whitespace-nowrap rounded-lg border px-4 text-sm transition-colors sm:min-h-0 sm:px-3 sm:py-1.5 sm:text-xs ${
                   view === v
                     ? "border-hud-cyan/50 bg-hud-cyan/10 text-hud-cyan"
                     : "border-edge bg-panel/80 text-slate-400 hover:text-slate-200"

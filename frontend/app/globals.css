@@ -12,6 +12,28 @@ body {
   color: #cfe3ff;
 }
 
+/* iOS notch / home indicator. Measured on a real iPhone: the status bar sat
+   directly on top of the welcome banner text and the milestone line was
+   clipped off the top edge, because nothing in the stylesheet referenced
+   safe-area-inset at all. env() resolves to 0px everywhere it does not apply,
+   so this is inert on desktop and Android. */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* A horizontal scroller needs to look like content continues, not like a
+   scrollbar. Used by the dashboard tab strip, which holds 14 tabs. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Faint engineering grid + radial vignette behind the whole command center. */
 body::before {
   content: "";
