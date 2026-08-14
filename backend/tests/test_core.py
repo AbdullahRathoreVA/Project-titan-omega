@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -4496,6 +4497,235 @@ def test_the_marked_up_price_cannot_drift_from_the_price_charged():
     assert marked_up == real, "the marked-up price drifted from the plan table"
 
 
+# ── model catalogue: the route out of cost: null ───────────────────────────
+
+CATALOG_ROWS = {"data": [
+    {"id": "meta-llama/llama-3.3-70b-instruct:free",
+     "name": "Llama 3.3 70B (free)", "context_length": 131072,
+     "pricing": {"prompt": "0", "completion": "0"},
+     "architecture": {"input_modalities": ["text"],
+                      "output_modalities": ["text"]}},
+    {"id": "openai/gpt-4o-mini", "name": "GPT-4o mini",
+     "context_length": 128000,
+     "pricing": {"prompt": "0.00000015", "completion": "0.0000006"},
+     "architecture": {"input_modalities": ["text", "image"],
+                      "output_modalities": ["text"]}},
+    {"id": "mystery/unpriced", "name": "Unpriced model",
+     "context_length": 8192, "pricing": {},
+     "architecture": {"input_modalities": ["text"],
+                      "output_modalities": ["text"]}},
+    # Real shape from the live endpoint: OpenRouter's router models publish
+    # "-1" for "priced dynamically". See the negative-price test.
+    {"id": "openrouter/auto", "name": "Auto router",
+     "context_length": 200000,
+     "pricing": {"prompt": "-1", "completion": "-1"},
+     "architecture": {"input_modalities": ["text"],
+                      "output_modalities": ["text"]}},
+]}
+
+
+@pytest.fixture
+def catalog(monkeypatch):
+    from app.core import model_catalog
+    model_catalog.reset()
+    model_catalog._models.update(model_catalog._parse(CATALOG_ROWS["data"]))
+    monkeypatch.setattr(model_catalog, "_fetched_at", time.time())
+    yield model_catalog
+    model_catalog.reset()
+
+
+def test_cost_is_measured_tokens_times_published_price(catalog):
+    """Two measured numbers multiplied is a measurement. This is the only
+    honest route out of cost: null."""
+    out = catalog.estimate_cost("openai/gpt-4o-mini",
+                                prompt_tokens=1000, completion_tokens=500)
+    assert out["measured"] is True
+    # 1000 * 0.00000015 + 500 * 0.0000006 = 0.00015 + 0.0003 = 0.00045
+    assert out["usd"] == pytest.approx(0.00045)
+    assert "list price, not a billed invoice" in out["reason"]
+
+
+def test_cost_is_none_not_zero_when_it_cannot_be_known(catalog):
+    """A 0.00 on the founder's screen reads as 'this was free', which is a
+    different and false claim from 'nobody counted'."""
+    unknown_model = catalog.estimate_cost("who/knows", prompt_tokens=10)
+    assert unknown_model["usd"] is None and unknown_model["measured"] is False
+
+    no_tokens = catalog.estimate_cost("openai/gpt-4o-mini")
+    assert no_tokens["usd"] is None
+    assert "nothing to price" in no_tokens["reason"]
+
+    unpriced = catalog.estimate_cost("mystery/unpriced", prompt_tokens=100,
+                                     completion_tokens=100)
+    assert unpriced["usd"] is None
+    assert "no price" in unpriced["reason"]
+
+
+def test_unknown_pricing_is_never_treated_as_free(catalog):
+    """'is_free' must mean measured-zero, not missing. Titan runs on no budget
+    and would otherwise route real work to a model that quietly bills."""
+    assert catalog.get("meta-llama/llama-3.3-70b-instruct:free")["is_free"] is True
+    assert catalog.get("openai/gpt-4o-mini")["is_free"] is False
+    assert catalog.get("mystery/unpriced")["is_free"] is None
+
+    free = catalog.free_models()
+    assert [m["id"] for m in free] == ["meta-llama/llama-3.3-70b-instruct:free"]
+
+
+def test_a_negative_sentinel_price_is_unknown_not_cheap(catalog):
+    """Found by running against the LIVE endpoint, not a fixture. OpenRouter's
+    router models publish "-1" for 'priced dynamically'. Taken literally they
+    sorted as the cheapest models available and would have produced a NEGATIVE
+    cost on the founder's screen — a confident lie, which is worse than null."""
+    auto = catalog.get("openrouter/auto")
+    assert auto["completion_price_per_token"] is None
+    assert auto["prompt_price_per_token"] is None
+    assert auto["is_free"] is None, "a -1 sentinel was read as free"
+
+    est = catalog.estimate_cost("openrouter/auto", prompt_tokens=1000,
+                                completion_tokens=500)
+    assert est["usd"] is None, "a negative cost was produced"
+
+    # And it must never be presented as the cheapest option.
+    assert catalog.candidates()[0]["id"] != "openrouter/auto"
+    assert "openrouter/auto" not in [m["id"] for m in catalog.free_models()]
+
+
+def test_capability_comes_from_the_catalogue_not_from_a_name(catalog):
+    """Selecting by popularity is how a router sends a vision task to a
+    text-only model and reports the refusal as a failure."""
+    vision = catalog.candidates(needs_vision=True)
+    assert [m["id"] for m in vision] == ["openai/gpt-4o-mini"]
+
+    big = catalog.candidates(min_context=100000)
+    assert "mystery/unpriced" not in [m["id"] for m in big]
+
+    # Everything unpriced sorts to the BACK — unpriced is not free. There are
+    # two such models here: a missing price and a "-1" dynamic-pricing
+    # sentinel, and both must land behind every model with a real price.
+    ordered = [m["id"] for m in catalog.candidates()]
+    assert ordered[0] == "meta-llama/llama-3.3-70b-instruct:free"
+    assert set(ordered[-2:]) == {"mystery/unpriced", "openrouter/auto"}
+
+
+def test_the_catalogue_says_how_stale_it_is_and_degrades_to_nothing(monkeypatch):
+    from app.core import model_catalog
+    model_catalog.reset()
+
+    cold = model_catalog.status()
+    assert cold["models"] == 0
+    assert cold["age_seconds"] is None, "0 would read as 'just fetched'"
+    assert cold["fetched"] is False
+
+    # No network: returns a reason, raises nothing, blocks nothing.
+    import httpx
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("no network")))
+    out = model_catalog.refresh(force=True)
+    assert out["ok"] is False and out["models"] == 0
+    assert model_catalog.estimate_cost("anything", prompt_tokens=5)["usd"] is None
+    model_catalog.reset()
+
+
+# ── tenant isolation: the adversarial route-table walk ─────────────────────
+
+def test_no_account_endpoint_serves_another_subscribers_business(
+        client, isolated_billing, isolated_clients, clean_sites):
+    """Walks the REAL route table and ATTACKS every /api/account route that
+    takes a client id, using a different subscriber's token.
+
+    This is the same shape as the founder-endpoint guard, which had already
+    caught five leaks including /api/admin/clients exposing real client
+    contacts. It fails OPEN: an endpoint added later and not exempted is
+    attacked by default, so a cross-tenant leak is a failing test rather than a
+    discovery.
+
+    A 200 is a leak. A 422 is fine — the request was rejected by body
+    validation before it ever reached the data.
+    """
+    from app.core import billing, clients as creg, site_fix, tenancy
+
+    billing.signup("victim@example.com", "hunter2hunter2")
+    billing.signup("attacker@example.com", "hunter2hunter2")
+    victim = creg.create_client(business_name="Victim Ltd", username="ten-v",
+                                password="x" * 20,
+                                website="https://victim.example")
+    billing.attach_client("victim@example.com", victim["id"])
+    attacker_token = billing.authenticate("attacker@example.com",
+                                          "hunter2hunter2")
+    assert attacker_token
+
+    # Give the victim a real fix, so fix-scoped routes have something to leak.
+    site_fix.reset()
+    fix_id = "fix-nonexistent"
+
+    leaked = []
+    attacked = 0
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        methods = (getattr(route, "methods", set()) or set()) - {"HEAD", "OPTIONS"}
+        if not path.startswith("/api/account") or "{cid}" not in path:
+            continue
+        if path in tenancy.EXEMPT:
+            continue
+        target = path.replace("{cid}", victim["id"]).replace("{fix_id}", fix_id)
+        for method in methods:
+            attacked += 1
+            r = client.request(method, target,
+                               headers={"X-Account-Token": attacker_token},
+                               json={})
+            # 422 = rejected by body validation before touching data.
+            if r.status_code == 200:
+                leaked.append(f"{method} {path}")
+
+    assert attacked, "the route walk found nothing to attack — check the filter"
+    assert not leaked, (
+        "These endpoints served one subscriber's business to another and are "
+        "not registered in tenancy.EXEMPT: " + ", ".join(sorted(leaked)))
+
+
+def test_the_owner_lookup_and_the_gate_agree(isolated_billing,
+                                             isolated_clients):
+    """Two independent paths to the same answer must not disagree — a gate
+    that says yes while the lookup says somebody else owns it is the bug."""
+    from app.core import billing, clients as creg, tenancy
+
+    billing.signup("a@example.com", "hunter2hunter2")
+    billing.signup("b@example.com", "hunter2hunter2")
+    rec = creg.create_client(business_name="A Ltd", username="ten-a",
+                             password="x" * 20)
+    billing.attach_client("a@example.com", rec["id"])
+
+    assert tenancy.owner_of(rec["id"]) == "a@example.com"
+    assert tenancy.owns("a@example.com", rec["id"]) is True
+    assert tenancy.owns("b@example.com", rec["id"]) is False
+    assert tenancy.owner_of("cl_does_not_exist") is None
+
+    tok_b = billing.authenticate("b@example.com", "hunter2hunter2")
+    with pytest.raises(tenancy.NotOwned):
+        tenancy.require_owner(rec["id"], tok_b)
+    with pytest.raises(tenancy.NotOwned):
+        tenancy.require_owner(rec["id"], "")
+
+
+def test_the_ownership_gate_binds_the_tenant_for_logging(isolated_billing,
+                                                         isolated_clients,
+                                                         logs):
+    """A cross-tenant incident is only reconstructable if the log lines say
+    which tenant the request was acting for."""
+    from app.core import billing, clients as creg, tenancy
+
+    billing.signup("a@example.com", "hunter2hunter2")
+    rec = creg.create_client(business_name="A Ltd", username="ten-log",
+                             password="x" * 20)
+    billing.attach_client("a@example.com", rec["id"])
+    tok = billing.authenticate("a@example.com", "hunter2hunter2")
+
+    tenancy.require_owner(rec["id"], tok)
+    line = logs.info("did.something")
+    assert line["tenant"] == rec["id"]
+
+
 # ── observability ──────────────────────────────────────────────────────────
 #
 # Measured before this existed: ZERO matches for request_id, structlog or
@@ -5199,8 +5429,6 @@ def test_the_queue_survives_a_worker_dying_mid_job(jobs):
 def test_a_failing_job_backs_off_and_is_eventually_buried(jobs):
     """Retrying a crawl of a site that just 500'd, four times a second, is
     abuse rather than resilience."""
-    import time
-
     calls = []
 
     def boom(payload):

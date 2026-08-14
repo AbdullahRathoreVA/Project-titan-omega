@@ -302,6 +302,17 @@ def owned_clients(email: str) -> list:
         return list(acct.get("client_ids", [])) if acct else []
 
 
+def all_emails() -> list:
+    """Every registered subscriber. For tenancy lookups, never for display.
+
+    Deliberately an accessor rather than letting callers reach into
+    `_accounts`: the ownership rule has one home (`core/tenancy.py`) and this
+    is the only door it needs.
+    """
+    with _lock:
+        return list(_accounts)
+
+
 def can_add_client(email: str) -> dict:
     """Is this subscriber allowed another business? Never a bare boolean —
     a refusal has to say what to do about it."""

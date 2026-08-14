@@ -1093,12 +1093,8 @@ def connect_site(cid: str, req: SiteConnectIn,
     is checked first — a token for one subscriber must never connect another
     subscriber's site.
     """
-    from ..core import billing, site_access
-    email = billing.resolve(x_account_token or "")
-    if not email:
-        raise HTTPException(status_code=401, detail="Sign in first")
-    if cid not in billing.owned_clients(email):
-        raise HTTPException(status_code=404, detail="Not found")
+    from ..core import site_access
+    _owned(cid, x_account_token)
 
     out = site_access.connect(cid, req.provider, req.site_url, req.username,
                               req.application_password)
@@ -1110,20 +1106,16 @@ def connect_site(cid: str, req: SiteConnectIn,
 
 @router.get("/account/clients/{cid}/site", tags=["billing"])
 def site_status(cid: str, x_account_token: Optional[str] = Header(None)) -> dict:
-    from ..core import billing, site_access
-    email = billing.resolve(x_account_token or "")
-    if not email or cid not in billing.owned_clients(email):
-        raise HTTPException(status_code=404, detail="Not found")
+    from ..core import site_access
+    _owned(cid, x_account_token)
     return site_access.status(cid)
 
 
 @router.delete("/account/clients/{cid}/site", tags=["billing"])
 def disconnect_site(cid: str,
                     x_account_token: Optional[str] = Header(None)) -> dict:
-    from ..core import billing, site_access
-    email = billing.resolve(x_account_token or "")
-    if not email or cid not in billing.owned_clients(email):
-        raise HTTPException(status_code=404, detail="Not found")
+    from ..core import site_access
+    _owned(cid, x_account_token)
     out = site_access.disconnect(cid)
     persistence.save(STORE)
     return out
@@ -1143,11 +1135,19 @@ class ApproveIn(BaseModel):
 
 
 def _owned(cid: str, token: Optional[str]) -> str:
-    from ..core import billing
-    email = billing.resolve(token or "")
-    if not email or cid not in billing.owned_clients(email):
+    """The single ownership gate. See core/tenancy.py for why it lives there.
+
+    Also binds the tenant to the logging context, so every log line for the
+    rest of the request carries it and a cross-tenant incident is
+    reconstructable.
+    """
+    from ..core import tenancy
+    try:
+        return tenancy.require_owner(cid, token or "")
+    except tenancy.NotOwned:
+        # The SAME 404 as "no such client" — two different answers would tell
+        # a prober which client ids exist.
         raise HTTPException(status_code=404, detail="Not found")
-    return email
 
 
 def _owned_fix(cid: str, fix_id: str, token: Optional[str]) -> dict:
@@ -1277,12 +1277,7 @@ def account_report(cid: str, x_account_token: Optional[str] = Header(None)):
     Ownership is checked against the account's own list — a valid token for one
     subscriber must never fetch another subscriber's report.
     """
-    from ..core import billing
-    email = billing.resolve(x_account_token or "")
-    if not email:
-        raise HTTPException(status_code=401, detail="Sign in first")
-    if cid not in billing.owned_clients(email):
-        raise HTTPException(status_code=404, detail="Not found")
+    email = _owned(cid, x_account_token)
     from ..core import analytics
     analytics.record(email, analytics.DOWNLOADED_REPORT, client_id=cid)
     rec = clients.get(cid)
@@ -1505,6 +1500,31 @@ def founder_demo_workspace_run() -> dict:
     from ..engines import demo_workspace
     return demo_workspace.cycle(force=True) or {"skipped": True,
                                                 "reason": "Demo workspace is disabled."}
+
+
+@router.get("/founder/models", tags=["executive"])
+def founder_models(free_only: bool = Query(default=False),
+                   vision: bool = Query(default=False),
+                   min_context: int = Query(default=0, ge=0),
+                   limit: int = Query(default=40, ge=1, le=200)) -> dict:
+    """Model capability and per-token price, from OpenRouter's live catalogue.
+
+    This is what makes a cost figure possible at all: measured token counts
+    times a published price. Cost stays null wherever tokens were not counted.
+    """
+    from ..core import model_catalog
+    model_catalog.refresh()
+    rows = (model_catalog.free_models(min_context=min_context, vision=vision)
+            if free_only else
+            model_catalog.candidates(needs_vision=vision,
+                                     min_context=min_context))
+    return {"status": model_catalog.status(), "models": rows[:limit]}
+
+
+@router.post("/founder/models/refresh", tags=["executive"])
+def founder_models_refresh() -> dict:
+    from ..core import model_catalog
+    return model_catalog.refresh(force=True)
 
 
 @router.get("/founder/logs", tags=["executive"])

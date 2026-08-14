@@ -92,6 +92,26 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("retrieval: backfill is wired", "app/main.py",
      "await asyncio.to_thread(knowledge.backfill)", "pass",
      "backfill_is_actually"),
+    # --- tenancy ----------------------------------------------------------
+    ("tenancy: ownership gate", "app/core/tenancy.py",
+     "if not email or not owns(email, client_id):", "if False:",
+     "another_subscribers or owner_lookup"),
+    ("tenancy: owns() actually checks", "app/core/tenancy.py",
+     "return client_id in billing.owned_clients(email)", "return True",
+     "another_subscribers or owner_lookup"),
+    ("tenancy: gate binds the tenant", "app/core/tenancy.py",
+     "obs.bind(tenant=client_id)", "pass", "ownership_gate_binds"),
+    # --- model catalogue --------------------------------------------------
+    ("catalog: negative price is unknown", "app/core/model_catalog.py",
+     "return None if value < 0 else value", "return value",
+     "negative_sentinel"),
+    ("catalog: unknown price is not free", "app/core/model_catalog.py",
+     "and completion_price is not None else None),",
+     "and completion_price is not None else True),",
+     "unknown_pricing or negative_sentinel"),
+    ("catalog: cost is None without tokens", "app/core/model_catalog.py",
+     "if prompt_tokens is None and completion_tokens is None:", "if False:",
+     "cost_is_none"),
 ]
 
 
