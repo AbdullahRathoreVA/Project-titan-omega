@@ -112,6 +112,16 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("catalog: cost is None without tokens", "app/core/model_catalog.py",
      "if prompt_tokens is None and completion_tokens is None:", "if False:",
      "cost_is_none"),
+    # --- verification layer -----------------------------------------------
+    ("verify: ungrounded figures rejected", "app/core/verify.py",
+     "if digits and digits not in grounded:", "if False:",
+     "invented_figure or hallucinated_voice"),
+    ("verify: prohibited claims rejected", "app/core/verify.py",
+     "prohibited = [why for pattern, why in _COMPILED_PROHIBITED\n                  if pattern.search(output)]",
+     "prohibited = []", "prohibited_claims"),
+    ("verify: is wired into the voice answer", "app/core/knowledge.py",
+     "if reply and checked and checked[\"ok\"]:",
+     "if reply:", "hallucinated_voice"),
 ]
 
 

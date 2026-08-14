@@ -41,25 +41,43 @@ from .engines.evolution import ensure_weights
 from .store import STORE, seed
 
 HEARTBEAT_SECONDS = float(os.getenv("TITAN_HEARTBEAT_SECONDS", "5"))
+
+# The background loop is the product's whole "24/7" claim, so it is ON by
+# default and only the test suite turns it off. Tests exercise every cycle by
+# calling it directly; letting the loop also run inside ~100 TestClient
+# instantiations made the suite take SIX AND A HALF HOURS instead of two
+# minutes (each app start fired a full SQLite backup, an embedding-model
+# download and every scheduled cycle — see the interval note below).
+HEARTBEAT_ENABLED = os.getenv("TITAN_HEARTBEAT_ENABLED", "1").strip() not in (
+    "0", "false", "no", "")
 # How often the autonomous growth engine runs a full live-research cycle (24/7).
 # Default 4h keeps a free Tavily key (1,000 searches/mo) well within budget:
 # 6 cycles/day x 2 searches = ~360/mo, leaving room for on-demand scans.
 GROWTH_INTERVAL = float(os.getenv("TITAN_GROWTH_INTERVAL", "14400"))  # 4 hours
-_last_growth = 0.0
 # Client site monitoring cadence. 30 min between ticks; each tick checks at most
 # 3 clients whose own 6-hour window has elapsed, so no site is hit often.
 WATCH_INTERVAL = float(os.getenv("TITAN_WATCH_INTERVAL", "1800"))
-_last_watch = 0.0
-
 # Six hours. Frequent enough that a rebuild loses at most one window of work,
 # rare enough that snapshotting is never a meaningful share of what this
 # container is doing.
 BACKUP_INTERVAL = float(os.getenv("TITAN_BACKUP_INTERVAL", str(6 * 3600)))
-_last_backup = 0.0
+
+# Seeded to NOW, not to 0.0. `time.monotonic()` is time since system boot on
+# every platform Titan runs on, so `monotonic() - 0.0 >= INTERVAL` is TRUE on
+# the very first tick — every scheduled cycle fired immediately at startup.
+# In production that is a thundering herd on boot: a full SQLite backup, an
+# embedding-model download and every 24/7 cycle, all before the app has served
+# a request. Seeding to now means the first run of each happens one real
+# interval after boot, which is what the intervals were written to mean.
+_last_growth = time.monotonic()
+_last_watch = time.monotonic()
+_last_backup = time.monotonic()
 
 
 async def _heartbeat_loop() -> None:
     """Drive autonomous activity on a fixed cadence until cancelled."""
+    if not HEARTBEAT_ENABLED:
+        return
     global _last_growth, _last_watch
     while True:
         await asyncio.sleep(HEARTBEAT_SECONDS)
@@ -171,6 +189,11 @@ async def lifespan(app: FastAPI):
         fix_cycle.register_handlers()
 
     async def _initial_sync() -> None:
+        # Same gate as the heartbeat: these are three network round trips
+        # (GitHub, CareerMind, a live web-research cycle) fired on every app
+        # start, which in the test suite means on every TestClient.
+        if not HEARTBEAT_ENABLED:
+            return
         with contextlib.suppress(Exception):
             await asyncio.to_thread(github.refresh, STORE)
         with contextlib.suppress(Exception):
@@ -179,6 +202,17 @@ async def lifespan(app: FastAPI):
         with contextlib.suppress(Exception):
             from .engines import autonomous
             await asyncio.to_thread(autonomous.growth_cycle, STORE)
+        # One backup shortly after boot, then every BACKUP_INTERVAL.
+        #
+        # Seeding the interval trackers to "now" fixed the boot stampede, but
+        # it also meant the first backup would be six hours after start — and
+        # a free Space frequently rebuilds sooner than that, so in practice a
+        # backup might never be taken at all. It measured ~20ms, so taking one
+        # here costs nothing and is exactly the case backups exist for: an
+        # ephemeral disk that can be wiped at any moment.
+        with contextlib.suppress(Exception):
+            from .core import backup
+            await asyncio.to_thread(backup.create, "boot")
 
     sync_task = asyncio.create_task(_initial_sync())
     task = asyncio.create_task(_heartbeat_loop())

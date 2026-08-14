@@ -418,12 +418,34 @@ def answer(client_id: str, question: str, lang: str = "en") -> dict:
 
     # With no model configured the top passage is still a real answer, quoted
     # rather than paraphrased. Better than silence and impossible to hallucinate.
-    text = (reply or "").strip() or found["hits"][0]["text"]
+    # Blueprint 013: nothing a model wrote reaches a caller unchecked. A model
+    # told to use only the passages mostly obeys, and mostly is not a control.
+    # An invented opening time or price is unrecoverable — the customer turns
+    # up to a closed door — so a failed check falls back to QUOTING the best
+    # passage rather than shipping the generated sentence.
+    from . import verify
+
+    passage_text = found["hits"][0]["text"]
+    checked = None
+    if reply:
+        checked = verify.check(
+            reply, evidence="\n".join(h["text"] for h in found["hits"]),
+            question=question, kind="voice answer")
+
+    if reply and checked and checked["ok"]:
+        text, source = reply.strip(), "llm"
+    else:
+        # Quoting the site verbatim cannot hallucinate. Worse prose, true.
+        text, source = passage_text, "quoted"
+
     return {
         "ok": True,
         "answer": text,
         "grounded": True,
-        "generated_by": "llm" if reply else "quoted",
+        "generated_by": source,
+        # Surfaced, not swallowed: an operator should be able to see that the
+        # model tried to invent a figure and was stopped.
+        "verification": checked,
         "sources": [{"url": h["url"], "score": h["score"]} for h in found["hits"]],
         # Surfaced rather than hidden: if the crawled page carried
         # instruction-shaped text, the operator should be able to see that the

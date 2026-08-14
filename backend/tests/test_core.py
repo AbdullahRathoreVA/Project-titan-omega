@@ -13,6 +13,17 @@ import os
 import pathlib
 import time
 
+# BEFORE app.main is imported. Every TestClient(app) runs the lifespan, which
+# starts the background heartbeat and an initial network sync. `time.monotonic()`
+# is time since system boot, so the "has the interval elapsed?" checks were all
+# true on the first tick — meaning every one of the ~100 TestClient
+# instantiations in this file fired a full SQLite backup, an embedding-model
+# download, and every 24/7 cycle. The suite went from 2 minutes to 6h27m.
+#
+# The cycles are all tested directly by calling them; the loop itself is not
+# under test here.
+os.environ.setdefault("TITAN_HEARTBEAT_ENABLED", "0")
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -4497,6 +4508,121 @@ def test_the_marked_up_price_cannot_drift_from_the_price_charged():
     assert marked_up == real, "the marked-up price drifted from the plan table"
 
 
+# ── verification layer (blueprint 013) ─────────────────────────────────────
+
+EVIDENCE = ("The workshop is open Monday to Saturday, nine in the morning "
+            "until 5pm. The minimum order is 20 units and a deposit of 50% "
+            "is due at confirmation. Production takes about six weeks.")
+
+# A multi-section page for the end-to-end tests. A single passage cannot be
+# retrieved at all on the keyword path — see
+# test_bm25_threshold_is_relative_to_the_corpus_not_absolute — and these tests
+# are about the verifier, not the retriever.
+EVIDENCE_PAGE = (
+    "<h2>Opening hours</h2><p>The workshop is open Monday to Saturday, nine "
+    "in the morning until 5pm, and we close on Sunday for stock intake.</p>"
+    "<h2>Wholesale terms</h2><p>The minimum order is 20 units per style and a "
+    "deposit of 50% is due at confirmation of the specification sheet.</p>"
+    "<h2>Production</h2><p>Production takes about six weeks from the day the "
+    "order is confirmed, and sampling adds two weeks before that.</p>"
+    "<h2>Shipping</h2><p>We ship worldwide by air freight for samples and sea "
+    "freight for full production runs leaving from Karachi.</p>")
+
+
+def test_an_invented_figure_is_rejected():
+    """The failure the voice agent exists to avoid. 'We close at 6' is
+    unrecoverable when the shop closes at 5 — the customer turns up to a
+    closed door."""
+    from app.core import verify
+
+    out = verify.check("We are open until 6pm every day.", evidence=EVIDENCE)
+    assert out["verdict"] == "reject"
+    assert out["ok"] is False
+    assert "6pm" in out["ungrounded_figures"]
+
+    bad_price = verify.check("The deposit is 75% up front.", evidence=EVIDENCE)
+    assert bad_price["verdict"] == "reject"
+    assert "75%" in bad_price["ungrounded_figures"]
+
+
+def test_a_grounded_answer_passes_including_reformatted_numbers():
+    """A check that rejects correct answers gets switched off. '1,200' and
+    '1200' are the same claim."""
+    from app.core import verify
+
+    assert verify.check("We close at 5pm.", evidence=EVIDENCE)["ok"] is True
+    assert verify.check("The minimum order is 20 units.",
+                        evidence=EVIDENCE)["ok"] is True
+    assert verify.check("A 50% deposit is due.", evidence=EVIDENCE)["ok"] is True
+    # Comma formatting must not count as invention.
+    assert verify.check("The fee is PKR 1,200.",
+                        evidence="the fee is PKR 1200")["ok"] is True
+    # A figure the CALLER supplied is grounded too.
+    assert verify.check("Yes, 9am is correct.", evidence=EVIDENCE,
+                        question="do you open at 9am?")["ok"] is True
+
+
+def test_prohibited_claims_never_reach_a_customer():
+    from app.core import verify
+
+    for text, label in (
+        ("Results are guaranteed.", "guarantee"),
+        ("We are the world's best supplier.", "superlative"),
+        ("This is completely risk-free.", "risk-free"),
+        ("As an AI, I cannot confirm that.", "character break"),
+        ("Contact us at <phone number>.", "placeholder"),
+    ):
+        out = verify.check(text, evidence=EVIDENCE)
+        assert out["verdict"] == "reject", f"{label} was allowed through"
+        assert out["prohibited"], label
+
+
+def test_an_empty_generation_is_a_retry_not_a_rejection():
+    from app.core import verify
+    out = verify.check("   ", evidence=EVIDENCE)
+    assert out["verdict"] == "retry"
+
+
+def test_the_verifier_does_not_overclaim_what_it_checks():
+    """It verifies claims TRACE to the source, not that they answer the
+    question. Saying otherwise would be the overclaim it exists to prevent."""
+    from app.core import verify
+    out = verify.check("We close at 5pm.", evidence=EVIDENCE)
+    assert "not that they answer the question correctly" in out["note"]
+
+
+def test_a_hallucinated_voice_answer_falls_back_to_quoting_the_site(monkeypatch):
+    """End to end on the path a caller actually hears. Worse prose that is
+    true beats better prose that is invented."""
+    from app.core import knowledge, llm
+
+    knowledge.import_state({"clients": {}})
+    knowledge.ingest("v1", EVIDENCE_PAGE, "https://shop.example")
+
+    monkeypatch.setattr(llm, "complete",
+                        lambda **kw: "We are open until 11pm every night.")
+    out = knowledge.answer("v1", "when do you close")
+
+    assert out["ok"] is True
+    assert out["generated_by"] == "quoted", "an invented closing time was served"
+    assert "11pm" not in out["answer"]
+    assert out["verification"]["verdict"] == "reject"
+    assert "11pm" in out["verification"]["ungrounded_figures"]
+
+
+def test_a_grounded_voice_answer_is_served_as_generated(monkeypatch):
+    from app.core import knowledge, llm
+
+    knowledge.import_state({"clients": {}})
+    knowledge.ingest("v2", EVIDENCE_PAGE, "https://shop.example")
+
+    monkeypatch.setattr(llm, "complete",
+                        lambda **kw: "We close at 5pm, Monday to Saturday.")
+    out = knowledge.answer("v2", "when do you close")
+    assert out["generated_by"] == "llm"
+    assert out["verification"]["ok"] is True
+
+
 # ── model catalogue: the route out of cost: null ───────────────────────────
 
 CATALOG_ROWS = {"data": [
@@ -5116,6 +5242,40 @@ def test_the_voice_answer_path_fences_crawled_text(clean_untrusted, monkeypatch)
     # And the operator can see it happened.
     assert out["untrusted_content_flagged"] is True
     assert "override-instructions" in out["untrusted_categories"]
+
+
+def test_scheduled_work_does_not_all_fire_on_the_first_heartbeat_tick():
+    """`time.monotonic()` is time since SYSTEM BOOT, not since process start.
+    Seeded at 0.0, every `monotonic() - _last_x >= INTERVAL` check was true on
+    tick one, so a full SQLite backup, an embedding-model download and every
+    24/7 cycle ran before the app had served a request.
+
+    In production that is a thundering herd on boot. In this suite it was a
+    6h27m run instead of 2 minutes, because every TestClient started it again.
+    """
+    from app import main
+
+    now = time.monotonic()
+    for name in ("_last_growth", "_last_watch", "_last_backup"):
+        seeded = getattr(main, name)
+        assert seeded > 0, (
+            f"{name} is seeded to 0.0 — every scheduled cycle will fire on the "
+            f"first heartbeat tick, because monotonic() is time since boot")
+        # Seeded at import, so it must be at or before now, and recent.
+        assert seeded <= now
+        assert now - seeded < 3600, f"{name} looks stale, not seeded at import"
+
+
+def test_the_heartbeat_can_be_switched_off_and_is_off_in_this_suite():
+    """The loop is ON by default — it is the product's 24/7 claim. Only the
+    tests turn it off, and they must, or app startup does real network work
+    on every TestClient."""
+    from app import main
+
+    assert main.HEARTBEAT_ENABLED is False, (
+        "the heartbeat is running during tests — every TestClient will fire "
+        "background cycles and network calls")
+    assert os.environ.get("TITAN_HEARTBEAT_ENABLED") == "0"
 
 
 def test_the_embedding_backfill_is_actually_CALLED_by_the_heartbeat():
