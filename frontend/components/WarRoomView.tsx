@@ -97,16 +97,27 @@ export function WarRoomView({
   return (
     <div className="space-y-4">
       {/* Unique 3D Neural String signature */}
-      <section className="panel relative h-[360px] overflow-hidden">
+      {/* 360px is 43% of an 844px phone for a decorative lattice. Halved on
+          mobile so the panels below it are reachable without scrolling past a
+          background animation. Desktop unchanged. */}
+      <section className="panel relative h-[200px] overflow-hidden sm:h-[360px]">
         <div className="pointer-events-none absolute left-3 top-3 z-10 hud-label">
           Titan Neural Lattice · live
         </div>
         <div className="absolute inset-0">
           <NeuralString intensity={intensity} count={agentCount || 14} />
         </div>
-        <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-10 flex items-center justify-between font-mono text-[10px] text-slate-500">
-          <span>app core ↔ {agentCount || 102} agents · strings pulse with live activity</span>
-          <span>{intel?.live ? "live web: ON" : "live web: add TAVILY_API_KEY"}</span>
+        {/* These are two long strings in a `justify-between` row. On a 390px
+            phone they met in the middle and overlapped into unreadable mush —
+            `justify-between` distributes space it does not have, and nothing
+            here allowed a wrap. Stacked on mobile, side by side from `sm`. */}
+        <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-10 flex flex-col items-start gap-0.5 font-mono text-[10px] leading-tight text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+          <span className="min-w-0 truncate sm:whitespace-nowrap">
+            app core ↔ {agentCount || 102} agents · strings pulse with live activity
+          </span>
+          <span className="min-w-0 truncate sm:whitespace-nowrap">
+            {intel?.live ? "live web: ON" : "live web: add TAVILY_API_KEY"}
+          </span>
         </div>
       </section>
 
