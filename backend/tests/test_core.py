@@ -4605,6 +4605,152 @@ def test_the_catalogue_endpoint_paginates(client):
     assert stats["stats"]["adapters_written"] == 0
 
 
+# ── the three real integrations ────────────────────────────────────────────
+#
+# Deterministic: api_runtime.call is substituted, so these never touch the
+# network. Live behaviour was verified by hand before the adapters were
+# written — the catalogue lists homepages, not endpoints, so an unverified
+# endpoint produces an adapter that has never worked.
+
+def _fake_runtime(monkeypatch, responses):
+    """responses: url-substring -> (ok, data) or (ok, data, outcome)."""
+    from app.core import api_adapters
+
+    def call(url, **kw):
+        for frag, payload in responses.items():
+            if frag in url:
+                ok, data = payload[0], payload[1]
+                outcome = payload[2] if len(payload) > 2 else ("OK" if ok else "SERVER_ERROR")
+                return {"url": url, "ok": ok, "data": data, "outcome": outcome,
+                        "latency_ms": 12.3, "status": 200 if ok else 500,
+                        "bytes": 100, "error": "" if ok else outcome}
+        return {"url": url, "ok": False, "data": None, "outcome": "NOT_FOUND",
+                "latency_ms": 1.0, "status": 404, "bytes": 0,
+                "error": "no stub"}
+
+    monkeypatch.setattr(api_adapters.api_runtime, "call", call)
+
+
+def test_currency_falls_back_to_the_second_provider(monkeypatch):
+    """Frankfurter exists as a fallback precisely so one outage is survivable."""
+    from app.core import api_adapters
+
+    _fake_runtime(monkeypatch, {
+        "open.er-api.com": (False, None, "SERVER_ERROR"),
+        "frankfurter": (True, {"base": "USD", "date": "2026-08-14",
+                               "rates": {"EUR": 0.87, "GBP": 0.74}}),
+    })
+    out = api_adapters.exchange_rates("USD", ["EUR"])
+    assert out["ok"] is True
+    assert out["provider"] == "frankfurter"
+    assert out["rates"] == {"EUR": 0.87}
+    assert [a["provider"] for a in out["attempts"]] == \
+        ["open.er-api.com", "frankfurter"]
+
+
+def test_currency_never_invents_a_rate_when_every_provider_fails(monkeypatch):
+    from app.core import api_adapters
+
+    _fake_runtime(monkeypatch, {
+        "open.er-api.com": (False, None, "TIMEOUT"),
+        "frankfurter": (False, None, "DNS_FAILURE"),
+    })
+    out = api_adapters.exchange_rates("USD", ["PKR"])
+    assert out["ok"] is False
+    assert out["rates"] == {}
+    assert "Every currency provider failed" in out["error"]
+    assert len(out["attempts"]) == 2
+
+
+def test_a_currency_the_provider_lacks_is_named_not_silently_dropped(monkeypatch):
+    """The real case that chose the primary: Frankfurter carries ECB rates and
+    has NO PKR. Measured 2026-08-14 — it answers {"message":"not found"}. An
+    absent currency must never read as a rate of zero."""
+    from app.core import api_adapters
+
+    _fake_runtime(monkeypatch, {
+        "open.er-api.com": (True, {"base_code": "USD",
+                                   "rates": {"EUR": 0.87, "GBP": 0.74}}),
+    })
+    out = api_adapters.exchange_rates("USD", ["EUR", "PKR"])
+    assert out["ok"] is True
+    assert "PKR" not in out["rates"]
+    assert out["unavailable_symbols"] == ["PKR"]
+
+
+def test_weather_rejects_impossible_coordinates():
+    from app.core import api_adapters
+    for lat, lon in ((91, 0), (0, 181), (-100, 0)):
+        out = api_adapters.weather(lat, lon)
+        assert out["ok"] is False
+        assert "not a point on Earth" in out["error"]
+    assert api_adapters.weather("abc", 0)["ok"] is False
+
+
+def test_an_unmapped_weather_code_is_none_not_a_guess(monkeypatch):
+    """Inventing a description for a WMO code this table does not carry would
+    be a fabricated observation about real weather."""
+    from app.core import api_adapters
+
+    _fake_runtime(monkeypatch, {"open-meteo.com/v1/forecast": (True, {
+        "latitude": 32.5, "longitude": 74.5,
+        "current": {"temperature_2m": 30.8, "weather_code": 4242,
+                    "time": "2026-08-14T11:15"}})})
+    out = api_adapters.weather(32.5, 74.5)
+    assert out["ok"] is True
+    assert out["temperature_c"] == 30.8
+    assert out["conditions"] is None, "an unmapped code was given a fake label"
+
+    _fake_runtime(monkeypatch, {"open-meteo.com/v1/forecast": (True, {
+        "latitude": 32.5, "longitude": 74.5,
+        "current": {"temperature_2m": 30.8, "weather_code": 95,
+                    "time": "2026-08-14T11:15"}})})
+    assert api_adapters.weather(32.5, 74.5)["conditions"] == "thunderstorm"
+
+
+def test_an_unknown_place_is_a_real_answer_not_an_error(monkeypatch):
+    """'The provider does not know this place' is information. Reporting it as
+    a failure would send a caller retrying forever."""
+    from app.core import api_adapters
+
+    _fake_runtime(monkeypatch, {"geocoding-api": (True, {"results": []})})
+    out = api_adapters.geocode("Zzzyx Nowhere")
+    assert out["ok"] is True
+    assert out["found"] == 0
+    assert out["results"] == []
+
+
+def test_the_chained_call_says_which_stage_failed(monkeypatch):
+    """weather_for_place spans two providers. 'It failed' is not actionable;
+    'geocoding failed' is."""
+    from app.core import api_adapters
+
+    _fake_runtime(monkeypatch, {"geocoding-api": (False, None, "TIMEOUT")})
+    out = api_adapters.weather_for_place("Sialkot")
+    assert out["ok"] is False and out["stage"] == "geocode"
+
+    _fake_runtime(monkeypatch, {
+        "geocoding-api": (True, {"results": [
+            {"name": "Sialkot", "country": "Pakistan", "latitude": 32.49,
+             "longitude": 74.53, "timezone": "Asia/Karachi"}]}),
+        "open-meteo.com/v1/forecast": (False, None, "SERVER_ERROR"),
+    })
+    out = api_adapters.weather_for_place("Sialkot")
+    assert out["ok"] is False and out["stage"] == "weather"
+    assert out["place"]["name"] == "Sialkot"
+
+
+def test_the_integrated_surface_does_not_overclaim():
+    from app.core import api_adapters, api_registry
+
+    integrated = api_adapters.integrated()
+    assert integrated["count"] == 4
+    assert integrated["credentials_required"] is False
+    assert "METADATA_ONLY" in integrated["note"]
+    # The catalogue is still honest about the other 1,671.
+    assert api_registry.stats()["adapters_written"] == 0
+
+
 # ── hardened API runtime ───────────────────────────────────────────────────
 
 def test_the_runtime_refuses_private_addresses(monkeypatch):
