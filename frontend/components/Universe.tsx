@@ -129,7 +129,14 @@ export function Universe({
     : [];
 
   return (
-    <div className="relative h-[78vh] min-h-[540px] overflow-hidden rounded-xl border border-edge/60">
+    // 78vh with a 540px floor took 658px of an 844px phone — 78% of the
+    // screen for the visualization, pushing every actionable control below
+    // the fold. On desktop that cinematic scale is the point; on a phone it
+    // is the reason the dashboard cannot be operated.
+    //
+    // 52vh/320px floor on mobile leaves room for the stat cards and the tab
+    // strip in the same screen. Desktop is unchanged from `sm` up.
+    <div className="relative h-[52vh] min-h-[320px] overflow-hidden rounded-xl border border-edge/60 sm:h-[78vh] sm:min-h-[540px]">
       <div className="absolute inset-0">
         <Boundary>
           <Scene
