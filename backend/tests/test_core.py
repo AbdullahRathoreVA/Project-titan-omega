@@ -1017,6 +1017,12 @@ def test_every_founder_endpoint_is_hidden_from_guests(monkeypatch):
         # nothing accepts a self-reported confidence score. Describes HOW Titan
         # decides what to trust, and contains no observation about anyone.
         "/api/evidence/sources",
+        # A directory of PUBLICLY LISTED third-party APIs, parsed from the
+        # public-apis repository. Contains no customer data and no credential —
+        # every entry is metadata about someone else's public service, and the
+        # integration audit it reports is 0 adapters. Useful to show a
+        # prospect what Titan can reach for.
+        "/api/apis", "/api/apis/stats", "/api/apis/capability",
         # Demo-safe by substitution or by containing no private data.
         "/api/status", "/api/divisions", "/api/agents", "/api/opportunities",
         "/api/feed", "/api/executions", "/api/connectors", "/api/posts",
@@ -4506,6 +4512,97 @@ def test_the_marked_up_price_cannot_drift_from_the_price_charged():
     marked_up = sorted(o["price"] for o in app_node["offers"])
     real = sorted(f"{billing.PLANS[k].price_usd:.2f}" for k in billing.ORDER)
     assert marked_up == real, "the marked-up price drifted from the plan table"
+
+
+# ── external API catalogue ─────────────────────────────────────────────────
+
+def test_the_catalogue_parsed_the_whole_upstream_repository():
+    from app.core import api_registry
+
+    s = api_registry.stats()
+    assert s["total"] > 1500, f"only {s['total']} APIs parsed — parser broke"
+    assert s["categories"] >= 40
+    assert "public-apis" in (s["source"] or "")
+
+
+def test_every_entry_is_metadata_only_and_says_so():
+    """The single most important property. A catalogue entry is a true
+    statement that an API was LISTED upstream. It is not a claim that Titan
+    can call it, and nothing may quietly promote itself."""
+    from app.core import api_registry
+
+    s = api_registry.stats()
+    assert set(s["by_status"]) == {"METADATA_ONLY"}, \
+        "something claimed a stronger integration status than metadata"
+    assert s["adapters_written"] == 0
+    assert "has not integrated them" in s["note"]
+
+    for row in api_registry.all_apis()[:50]:
+        assert row["status"] == "METADATA_ONLY"
+        assert row["adapter"] is None
+
+
+def test_unknown_https_is_not_treated_as_supported():
+    """Upstream writes 'Unknown' in real rows. Collapsing that to False states
+    as fact that an API lacks HTTPS when nobody checked — and collapsing it to
+    True is worse, because an https_only filter would return plain-HTTP APIs."""
+    from app.core import api_registry
+
+    s = api_registry.stats()
+    assert s["https_unknown"] >= 0
+    secure = api_registry.search(https_only=True, limit=500)["results"]
+    assert all(r["https"] is True for r in secure)
+    assert not any(r["https"] is None for r in secure)
+
+
+def test_capability_routing_prefers_providers_needing_no_credential():
+    """Titan runs on no budget, so 'works without a key' is the first sort
+    term — and it is a catalogue fact, not a quality score nobody measured."""
+    from app.core import api_registry
+
+    out = api_registry.for_capability("what is the current exchange rate")
+    assert "Currency Exchange" in out["capabilities"]
+    assert out["candidates"], "no candidate providers for a mapped intent"
+    assert out["candidates"][0]["auth"] == "none"
+    assert "not connections" in out["note"]
+
+    weather = api_registry.for_capability("weather forecast for tomorrow")
+    assert "Weather" in weather["capabilities"]
+
+
+def test_search_filters_are_real_and_not_network_bound(monkeypatch):
+    """Discovery must work offline. A registry that reaches out to answer
+    'what APIs exist' fails exactly when the network does."""
+    import urllib.request
+
+    from app.core import api_registry
+
+    def boom(*a, **k):
+        raise AssertionError("the registry made a network call")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    api_registry.reset()
+
+    free = api_registry.search(no_credential=True, limit=500)
+    assert free["total"] > 300
+    assert all(r["auth"] == "none" for r in free["results"])
+
+    geo = api_registry.search(category="Geocoding", limit=10)
+    assert geo["total"] > 20
+    assert all(r["category"] == "Geocoding" for r in geo["results"])
+
+
+def test_the_catalogue_endpoint_paginates(client):
+    """1,675 entries must never all be shipped to a phone."""
+    r = client.get("/api/apis?q=weather&limit=5")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["results"]) <= 5
+    assert body["total"] >= len(body["results"])
+
+    stats = client.get("/api/apis/stats").json()
+    assert stats["stats"]["total"] > 1500
+    assert stats["stats"]["adapters_written"] == 0
 
 
 # ── trials and the Paddle detector ─────────────────────────────────────────

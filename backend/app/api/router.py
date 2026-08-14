@@ -1502,6 +1502,47 @@ def founder_demo_workspace_run() -> dict:
                                                 "reason": "Demo workspace is disabled."}
 
 
+@router.get("/apis", tags=["system"])
+def api_catalogue(q: str = Query(default=""),
+                  category: str = Query(default=""),
+                  auth: str = Query(default=""),
+                  no_credential: bool = Query(default=False),
+                  https_only: bool = Query(default=False),
+                  limit: int = Query(default=25, ge=1, le=100)) -> dict:
+    """Search the external-API catalogue. Metadata only — no calls are made.
+
+    Public by design: it is a directory of publicly listed APIs and contains
+    no customer data. Paginated because the catalogue is 1,675 entries and
+    shipping all of them to a phone would be the performance bug the brief
+    warns about.
+    """
+    from ..core import api_registry
+    return api_registry.search(q, category=category, auth=auth,
+                               no_credential=no_credential,
+                               https_only=https_only, limit=limit)
+
+
+@router.get("/apis/stats", tags=["system"])
+def api_catalogue_stats() -> dict:
+    """The integration audit: how many are catalogued vs actually integrated."""
+    from ..core import api_registry
+    return {"stats": api_registry.stats(),
+            "categories": api_registry.categories()}
+
+
+@router.get("/apis/capability", tags=["system"])
+def api_capability(intent: str = Query(..., min_length=2),
+                   limit: int = Query(default=5, ge=1, le=25)) -> dict:
+    """Map an intent ("current exchange rate") onto candidate providers.
+
+    Returns candidates ranked by catalogue facts — credential needed, HTTPS,
+    CORS — not by a quality score nobody measured. Candidates are not
+    connections; see the note on the response.
+    """
+    from ..core import api_registry
+    return api_registry.for_capability(intent, limit=limit)
+
+
 @router.get("/founder/models", tags=["executive"])
 def founder_models(free_only: bool = Query(default=False),
                    vision: bool = Query(default=False),
