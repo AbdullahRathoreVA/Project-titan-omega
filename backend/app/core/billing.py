@@ -46,6 +46,34 @@ from . import events
 # incumbents is a real advantage, and an empty paid tier earns nothing.
 
 
+# Trial lengths, per plan, overridable without a deploy:
+#   TITAN_TRIAL_DAYS_STUDENT / _INDIVIDUAL / _ENTERPRISE
+#
+# Abdullah set these: 10 days on Enterprise, 7 on Individual, and a full YEAR
+# on Student. The year is deliberate and matches what the market does — Cursor
+# gives verified students a free year, and a student evaluating a business SEO
+# tool has no client website to audit in five days, so a short student trial
+# tests nothing and converts nobody.
+#
+# They are env-driven because a trial length is a pricing experiment, and a
+# pricing experiment that needs a redeploy never gets run.
+_DEFAULT_TRIAL_DAYS = {"free": 0, "student": 365, "individual": 7,
+                       "enterprise": 10}
+
+
+def trial_days(plan_key: str) -> int:
+    """How long this plan's trial runs. Never negative, never invented."""
+    import os
+    default = _DEFAULT_TRIAL_DAYS.get(plan_key, 0)
+    raw = os.getenv(f"TITAN_TRIAL_DAYS_{plan_key.upper()}", "").strip()
+    if not raw:
+        return default
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Plan:
     key: str
@@ -59,6 +87,7 @@ class Plan:
     note: str = ""
 
     def as_dict(self) -> dict:
+        days = trial_days(self.key)
         return {
             "key": self.key, "name": self.name, "price_usd": self.price_usd,
             "limits": {
@@ -69,6 +98,11 @@ class Plan:
             },
             "features": list(self.features),
             "note": self.note,
+            "trial_days": days,
+            # A trial with no processor behind it is not a trial, it is a
+            # free account that stops working. Say which one this is rather
+            # than advertising a conversion that cannot happen.
+            "trial_billable": bool(days) and processor_configured(),
         }
 
 
@@ -396,7 +430,34 @@ def paypal_configured() -> bool:
                 and os.getenv("PAYPAL_CLIENT_SECRET", "").strip())
 
 
+def paddle_price_id(plan_key: str) -> str:
+    return os.getenv(f"PADDLE_PRICE_ID_{plan_key.upper()}", "").strip()
+
+
+def paddle_configured() -> bool:
+    """Paddle is the researched processor for a Pakistan seller — and until
+    now nothing in this module looked for it.
+
+    It was named in the help text as the recommended option and checked
+    against Paddle's own unsupported-suppliers list on 2026-08-08, but there
+    was no detector: `configured()` tested Dodo and PayPal only. Setting
+    PADDLE_API_KEY would have left the product still reporting "no processor"
+    and still refusing every sale, with nothing on screen explaining why.
+
+    Requires the API key AND at least one price id — a key with no price to
+    sell against cannot complete a checkout, and reporting "configured" on the
+    key alone would move the failure to the customer's card screen.
+    """
+    if not os.getenv("PADDLE_API_KEY", "").strip():
+        return False
+    return any(paddle_price_id(k) for k in ORDER if k != "free")
+
+
 def processor_name() -> str:
+    # Paddle first: it is the only one of the three verified to onboard a
+    # Pakistan-based seller, so if it is configured it is the intended one.
+    if paddle_configured():
+        return "paddle"
     if dodo_configured():
         return "dodo"
     if os.getenv("PAYPAL_CLIENT_ID", "").strip():
@@ -405,7 +466,27 @@ def processor_name() -> str:
 
 
 def configured() -> bool:
-    return dodo_configured() or paypal_configured()
+    return paddle_configured() or dodo_configured() or paypal_configured()
+
+
+def processor_configured() -> bool:
+    """Alias used by the plan table. A trial is only real if a card can be
+    charged at the end of it."""
+    return configured()
+
+
+def missing_for_paddle() -> list[str]:
+    """Exactly which environment variables are still absent. Names them rather
+    than saying 'not configured', so the fix is a copy-paste."""
+    missing = []
+    if not os.getenv("PADDLE_API_KEY", "").strip():
+        missing.append("PADDLE_API_KEY")
+    for key in ORDER:
+        if key == "free":
+            continue
+        if not paddle_price_id(key):
+            missing.append(f"PADDLE_PRICE_ID_{key.upper()}")
+    return missing
 
 
 def _dodo_product_id(plan_key: str) -> str:

@@ -4508,6 +4508,90 @@ def test_the_marked_up_price_cannot_drift_from_the_price_charged():
     assert marked_up == real, "the marked-up price drifted from the plan table"
 
 
+# ── trials and the Paddle detector ─────────────────────────────────────────
+
+def test_trial_lengths_match_what_abdullah_set(monkeypatch):
+    """10 enterprise / 7 individual / a YEAR for students. The year is
+    deliberate: a student has no client website to audit, so a five-day
+    student trial tests nothing and converts nobody. Cursor gives students a
+    free year for the same reason."""
+    from app.core import billing
+
+    for var in ("TITAN_TRIAL_DAYS_STUDENT", "TITAN_TRIAL_DAYS_INDIVIDUAL",
+                "TITAN_TRIAL_DAYS_ENTERPRISE"):
+        monkeypatch.delenv(var, raising=False)
+
+    assert billing.trial_days("student") == 365
+    assert billing.trial_days("individual") == 7
+    assert billing.trial_days("enterprise") == 10
+    assert billing.trial_days("free") == 0
+
+
+def test_trial_length_is_changeable_without_a_deploy(monkeypatch):
+    """A trial length is a pricing experiment, and an experiment that needs a
+    redeploy never gets run."""
+    from app.core import billing
+
+    monkeypatch.setenv("TITAN_TRIAL_DAYS_INDIVIDUAL", "14")
+    assert billing.trial_days("individual") == 14
+
+    # Garbage falls back to the default rather than crashing checkout.
+    monkeypatch.setenv("TITAN_TRIAL_DAYS_INDIVIDUAL", "not-a-number")
+    assert billing.trial_days("individual") == 7
+    # Negative is not a trial.
+    monkeypatch.setenv("TITAN_TRIAL_DAYS_INDIVIDUAL", "-5")
+    assert billing.trial_days("individual") == 0
+
+
+def test_paddle_was_invisible_to_the_processor_detector(monkeypatch):
+    """The bug: Paddle was named in the help text as THE processor for a
+    Pakistan seller and checked against Paddle's unsupported list, but nothing
+    detected it. Setting PADDLE_API_KEY left Titan reporting 'no processor'
+    and refusing every sale, with nothing on screen saying why."""
+    from app.core import billing
+
+    for var in ("PADDLE_API_KEY", "DODO_PAYMENTS_API_KEY", "PAYPAL_CLIENT_ID",
+                "PAYPAL_CLIENT_SECRET"):
+        monkeypatch.delenv(var, raising=False)
+    for k in ("STUDENT", "INDIVIDUAL", "ENTERPRISE"):
+        monkeypatch.delenv(f"PADDLE_PRICE_ID_{k}", raising=False)
+
+    assert billing.paddle_configured() is False
+    assert billing.processor_name() == "none"
+
+    # A key alone must NOT count — a key with nothing to sell against moves
+    # the failure to the customer's card screen.
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_live_xxx")
+    assert billing.paddle_configured() is False
+    assert "PADDLE_PRICE_ID_STUDENT" in billing.missing_for_paddle()
+
+    monkeypatch.setenv("PADDLE_PRICE_ID_INDIVIDUAL", "pri_123")
+    assert billing.paddle_configured() is True
+    assert billing.processor_name() == "paddle"
+    assert billing.configured() is True
+    assert "PADDLE_API_KEY" not in billing.missing_for_paddle()
+
+
+def test_a_trial_is_not_advertised_as_billable_without_a_processor(monkeypatch):
+    """A trial with no processor behind it is not a trial — it is a free
+    account that stops working. Do not advertise a conversion that cannot
+    happen."""
+    from app.core import billing
+
+    for var in ("PADDLE_API_KEY", "DODO_PAYMENTS_API_KEY", "PAYPAL_CLIENT_ID",
+                "PAYPAL_CLIENT_SECRET"):
+        monkeypatch.delenv(var, raising=False)
+
+    student = billing.PLANS["student"].as_dict()
+    assert student["trial_days"] == 365
+    assert student["trial_billable"] is False, \
+        "a trial was advertised as billable with no payment processor"
+
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_live_xxx")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STUDENT", "pri_s")
+    assert billing.PLANS["student"].as_dict()["trial_billable"] is True
+
+
 # ── verification layer (blueprint 013) ─────────────────────────────────────
 
 EVIDENCE = ("The workshop is open Monday to Saturday, nine in the morning "

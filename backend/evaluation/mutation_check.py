@@ -122,6 +122,16 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("verify: is wired into the voice answer", "app/core/knowledge.py",
      "if reply and checked and checked[\"ok\"]:",
      "if reply:", "hallucinated_voice"),
+    # --- billing / trials -------------------------------------------------
+    ("billing: paddle needs a price id too", "app/core/billing.py",
+     'return any(paddle_price_id(k) for k in ORDER if k != "free")',
+     "return True", "paddle_was_invisible"),
+    ("billing: paddle counts as a processor", "app/core/billing.py",
+     "if paddle_configured():\n        return \"paddle\"",
+     "if False:\n        return \"paddle\"", "paddle_was_invisible"),
+    ("billing: trial not billable without processor", "app/core/billing.py",
+     '"trial_billable": bool(days) and processor_configured(),',
+     '"trial_billable": bool(days),', "not_advertised_as_billable"),
 ]
 
 
