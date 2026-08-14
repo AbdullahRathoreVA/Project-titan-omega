@@ -229,10 +229,21 @@ Every commit was verified live in production before being called done.
   rescues it — the test is order-dependent unless embeddings are disabled.
   Consistent with the old note that lowering the *semantic* threshold changed
   nothing. **Build a retrieval benchmark BEFORE touching the threshold.**
-- **OPEN, HIGH — no `tenant_id` anywhere.** Isolation is per-endpoint via
-  `billing.owned_clients(email)`, correct where applied but with no structural
-  guarantee.
-- **OPEN — zero observability.** No structured logs, no request IDs anywhere.
+- **FIXED — tenant isolation is now structural.** `core/tenancy.py` is the one
+  gate (`require_owner`), and an adversarial test walks the REAL route table
+  attacking every `/api/account/**{cid}**` route with another subscriber's
+  token. It **fails open** — a new endpoint not listed in `tenancy.EXEMPT` is
+  attacked by default. Add new subscriber-facing endpoints and the test will
+  tell you if you forgot the check.
+- **FIXED — observability.** `core/obs.py`: JSON logs on stdout, request id on
+  every response (verified live, including on 401s), structural credential
+  redaction and email hashing. The middleware MUST stay registered last in
+  `main.py` — Starlette makes the last one outermost, and any earlier it sits
+  inside `auth_guard` and misses every rejected request.
+- **Cost is measurable now.** `core/model_catalog.py` reads OpenRouter's
+  `/models` (no SDK). Measured tokens × published price. Watch for the `-1`
+  "priced dynamically" sentinel — treating it as a price yields a NEGATIVE
+  cost. `GET /api/founder/models`.
 - **`/compliance/pk` is a 404 — Pakistan is not in `compliance.JURISDICTIONS`.**
   Abdullah's own country. Needs real statute research before it ships; do not
   generate plausible-sounding law.

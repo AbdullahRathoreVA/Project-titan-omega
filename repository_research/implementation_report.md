@@ -2,6 +2,32 @@
 
 Commits `557a0ea..ecaeb46`. Tests **304 → 338**. All deployed and verified live.
 
+## Session 3 addendum — tenancy and measured cost
+
+| Item | Before | After |
+|---|---|---|
+| Multi-tenancy | 4/10 — correct but unenforced | **7/10** — one gate, plus an adversarial route-table walk that fails open |
+| Measured cost | **0/10** — `null` everywhere, nothing could price | **6/10** — measured tokens × published price |
+
+**OpenRouter is now genuinely used** (ADAPT, no SDK — the metadata endpoint over
+the existing `httpx` client). Verified against the live catalogue: 411 models,
+18 genuinely free. Real cost of one audit-summary call (2000 in / 700 out):
+
+| Model | Cost | Per 1000 audits |
+|---|---|---|
+| `openai/gpt-4o-mini` | $0.000720 | $0.72 |
+| `meta-llama/llama-3.3-70b-instruct` | $0.000424 | $0.42 |
+| `anthropic/claude-3.5-haiku` | **unknown** | not in this catalogue |
+
+That last row is the point — unknown stays unknown.
+
+**A bug found only by running it live:** OpenRouter publishes `-1` as a
+"priced dynamically" sentinel. Taken literally, the router models sorted as the
+*cheapest available* and would have put a **negative cost** on the founder's
+screen. Negative cost is worse than null — null is honest about not knowing.
+Now: measured zero (free), missing field (unknown, not free) and the `-1`
+sentinel (unknown) are three distinct facts, all kept apart.
+
 ## Session 2 addendum — observability, backup/restore, retrieval
 
 | Item | Before | After |
