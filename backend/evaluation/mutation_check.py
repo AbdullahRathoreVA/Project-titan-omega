@@ -179,6 +179,12 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "app/core/api_adapters.py",
      'if name.endswith(".local") or name.endswith(".internal"):',
      "if False:", "private_name"),
+    # --- Titan's own published contact details -----------------------------
+    ("contact: a partial address is not published", "app/core/contact.py",
+     "if not all(parts.values()):", "if False:", "postcode_on_its_own"),
+    ("contact: <address> only when there IS an address", "app/core/contact.py",
+     'tag = "address" if a else "p"', 'tag = "address"',
+     "phone_only_block_never_emits"),
 ]
 
 

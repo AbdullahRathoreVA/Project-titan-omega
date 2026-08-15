@@ -6535,3 +6535,133 @@ def test_a_third_party_scanner_is_not_pointed_at_a_private_name(monkeypatch):
                 "localhost", "x", ""):
         out = api_adapters.security_headers(bad)
         assert out["ok"] is False, f"{bad} was accepted"
+
+
+# ── Titan's own published contact details ──────────────────────────────────
+#
+# The last failing check on all 25 landing pages, and the only thing holding
+# them at 89/B. These run Titan's OWN audit checks against Titan's OWN page,
+# which is the only way to know the block actually satisfies them.
+
+_FULL_CONTACT = {
+    "TITAN_PHONE": "+92 321 8811027",
+    "TITAN_STREET": "12 Kashmir Road",
+    "TITAN_LOCALITY": "Sialkot",
+    "TITAN_POSTCODE": "51310",
+    "TITAN_COUNTRY": "Pakistan",
+}
+
+
+def _set_contact(monkeypatch, values: dict) -> None:
+    for key in ("TITAN_PHONE", "TITAN_STREET", "TITAN_LOCALITY",
+                "TITAN_POSTCODE", "TITAN_COUNTRY"):
+        monkeypatch.delenv(key, raising=False)
+    for key, val in values.items():
+        monkeypatch.setenv(key, val)
+
+
+def test_with_nothing_set_no_contact_details_are_invented(monkeypatch):
+    """The state the pages shipped in. 89/B is the honest score."""
+    from app.core import contact
+    from app.engines import landing, self_seo
+
+    _set_contact(monkeypatch, {})
+    assert contact.phone() is None
+    assert contact.address() is None
+    assert contact.html_block() == ""
+    assert contact.schema_fragment() == {}
+
+    org = next(n for n in self_seo.structured_data()["@graph"]
+               if n["@type"] == "Organization")
+    assert "telephone" not in org and "address" not in org
+
+    html = landing.vertical_page("restaurant")
+    assert "<address" not in html
+    for placeholder in ("<phone", "coming soon", "TBD", "N/A"):
+        assert placeholder.lower() not in html.lower()
+
+
+def test_a_postcode_on_its_own_is_not_published_as_an_address(monkeypatch):
+    """A bare postcode satisfies neither Titan's own `_has_address` nor an
+    Impressum obligation. Publishing it would leave the check failing while
+    making the page look like it had been dealt with."""
+    from app.core import contact
+    from app.engines import client_seo, landing
+
+    _set_contact(monkeypatch, {"TITAN_POSTCODE": "52200"})
+
+    assert contact.address() is None
+    assert "52200" not in contact.html_block()
+    assert "52200" not in landing.vertical_page("restaurant")
+    assert client_seo._has_address("<p>52200</p>") is False
+
+    st = contact.status()
+    assert st["address_published"] is False
+    assert "TITAN_STREET" in st["missing_env"]
+    assert any("partial address" in n for n in st["notes"])
+
+
+def test_a_phone_publishes_without_waiting_for_the_address(monkeypatch):
+    """They satisfy different halves of the NAP check, so one must not block
+    the other."""
+    from app.core import contact
+    from app.engines import client_seo
+
+    _set_contact(monkeypatch, {"TITAN_PHONE": "+92 321 8811027"})
+    block = contact.html_block()
+
+    assert 'href="tel:+923218811027"' in block
+    assert client_seo._has_phone(block) is True
+    assert contact.schema_fragment() == {"telephone": "+92 321 8811027"}
+
+
+def test_a_phone_only_block_never_emits_the_address_element(monkeypatch):
+    """`_has_address` returns True for ANY `<address\\b` it finds. Emitting the
+    element around a phone number would make Titan's own audit report a postal
+    address on a page that has none — the same shape as the Cloudflare-beacon
+    false pass, but self-inflicted."""
+    from app.core import contact
+    from app.engines import client_seo
+
+    _set_contact(monkeypatch, {"TITAN_PHONE": "+92 321 8811027"})
+    block = contact.html_block()
+
+    assert "<address" not in block
+    assert client_seo._has_address(block) is False
+
+
+def test_a_local_format_number_is_published_verbatim_and_flagged(monkeypatch):
+    """Rewriting "03218811027" to "+92 …" means asserting the country, and a
+    wrong country code is a number that does not ring. Publish what was given
+    and say what is limited about it."""
+    from app.core import contact
+
+    _set_contact(monkeypatch, {"TITAN_PHONE": "03218811027"})
+    assert contact.phone() == "03218811027"
+    assert "03218811027" in contact.html_block()
+    assert any("country code" in n for n in contact.status()["notes"])
+
+
+def test_full_details_make_titans_own_page_pass_its_own_nap_check(monkeypatch):
+    """The point of the whole exercise. Not "a contact block was added" —
+    Titan's own audit functions, run against Titan's own rendered page."""
+    from app.core import contact
+    from app.engines import client_seo, landing, self_seo
+
+    _set_contact(monkeypatch, _FULL_CONTACT)
+    html = landing.vertical_page("restaurant")
+
+    assert client_seo._has_phone(html) is True
+    assert client_seo._has_address(html) is True
+
+    # Visible text, not only JSON-LD. `_visible_text` strips scripts before
+    # looking, so schema alone would leave the check failing.
+    assert "<address>" in html
+    assert "Sialkot" in client_seo._visible_text(html)
+
+    org = next(n for n in self_seo.structured_data()["@graph"]
+               if n["@type"] == "Organization")
+    assert org["telephone"] == _FULL_CONTACT["TITAN_PHONE"]
+    assert org["address"]["postalCode"] == "51310"
+    assert org["address"]["addressCountry"] == "Pakistan"
+    assert contact.status()["missing_env"] == []

@@ -163,6 +163,17 @@ def _schema_graph(title: str, desc: str, canonical: str,
             + blob.replace("</", "<\\/") + "</script>")
 
 
+def _contact_block() -> str:
+    """Titan's own phone and postal address, when it has any to publish.
+
+    This is the last failing check on all 25 of these pages and the only thing
+    holding them at 89/B. It is empty until `TITAN_PHONE` and the four address
+    variables are set — see `core/contact.py` for why a partial address is
+    published as nothing rather than as something."""
+    from ..core import contact
+    return contact.html_block()
+
+
 def _page(title: str, desc: str, canonical: str, body: str,
           breadcrumb: Optional[list[tuple[str, str]]] = None) -> str:
     schema = _schema_graph(title, desc, canonical,
@@ -190,6 +201,7 @@ def _page(title: str, desc: str, canonical: str, body: str,
 <div class="foot">
   <a href="/join">Run a free audit</a> · <a href="/pricing">Pricing</a> ·
   <a href="/privacy">Privacy</a>
+  {_contact_block()}
   <p>Every figure above comes from the same rule set Titan applies when it
   audits a real site. Legal information, not legal advice — confirm anything
   consequential with a qualified lawyer in that jurisdiction.</p>

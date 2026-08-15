@@ -114,7 +114,7 @@ def structured_data() -> dict:
     published none. Offers are generated from the real plan table so the
     marked-up price can never drift from the price actually charged.
     """
-    from ..core import billing
+    from ..core import billing, contact
 
     offers = [
         {
@@ -155,6 +155,10 @@ def structured_data() -> dict:
                 "name": "Titan Omega",
                 "url": SITE,
                 "logo": f"{SITE}/icons/icon-512.png",
+                # Empty until real details are set, and never a placeholder.
+                # Schema alone would not satisfy Titan's own NAP check either —
+                # that reads VISIBLE text, which is `contact.html_block`.
+                **contact.schema_fragment(),
             },
             {
                 "@type": "WebSite",
