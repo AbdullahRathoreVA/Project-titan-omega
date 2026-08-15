@@ -6665,3 +6665,295 @@ def test_full_details_make_titans_own_page_pass_its_own_nap_check(monkeypatch):
     assert org["address"]["postalCode"] == "51310"
     assert org["address"]["addressCountry"] == "Pakistan"
     assert contact.status()["missing_env"] == []
+
+
+# ── self-improvement: propose → measure → approve → activate → rollback ────
+#
+# The benchmark is stubbed to a deterministic function, because the real one
+# downloads a ~130MB embedding model. What is being tested is the GATE, not
+# the retriever: that nothing reaches production without a measured number and
+# a named human, and that measuring never leaves a value behind.
+
+@pytest.fixture()
+def improving(fresh_store, monkeypatch):
+    """A clean proposals table and a benchmark whose answer we control."""
+    from app.core import db, improve, knowledge, params
+
+    conn = improve._conn()
+    with conn:
+        conn.execute("DELETE FROM proposals")
+    db.put("params.overrides", {})
+
+    original = knowledge.COS_FLOOR
+    scores = {}          # value -> metric the fake benchmark reports
+
+    def fake() -> dict:
+        # Reads the LIVE module attribute, so it only sees the candidate if
+        # _measure actually applied it.
+        return {"false_answers": scores.get(round(knowledge.COS_FLOOR, 4), 99),
+                "silence": 0}
+
+    params.register_benchmark("retrieval", fake)
+    try:
+        yield {"scores": scores, "original": original}
+    finally:
+        knowledge.COS_FLOOR = original
+        # Overrides are PERSISTED and re-applied by main.py at boot, so a
+        # leaked one is not confined to this test — the next TestClient
+        # lifespan would push it back onto the live module and change
+        # COS_FLOOR for the rest of the suite. Which is exactly what it did.
+        db.put("params.overrides", {})
+        params._default_benchmarks()
+
+
+def test_an_unmeasured_proposal_cannot_be_approved(improving):
+    """An approval without numbers is a guess with a signature on it."""
+    from app.core import improve
+
+    p = improve.propose("retrieval.cos_floor", 0.70,
+                        reason="Fewer invented answers, allegedly.")
+    assert p["status"] == improve.PROPOSED
+    assert p["before_metric"] is None and p["after_metric"] is None
+
+    with pytest.raises(ValueError, match="evaluated"):
+        improve.approve(p["id"], "Abdullah")
+
+
+def test_approval_must_carry_a_name(improving):
+    from app.core import improve
+
+    improving["scores"].update({0.60: 5, 0.70: 1})
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Measured better.")
+    improve.evaluate(p["id"])
+
+    for anonymous in ("", "   ", None):
+        with pytest.raises(ValueError, match="name"):
+            improve.approve(p["id"], anonymous)
+
+
+def test_a_candidate_that_measures_worse_cannot_be_approved(improving):
+    """A measured failure is still a result worth keeping — it is recorded
+    with its numbers, and it is refused."""
+    from app.core import improve
+
+    improving["scores"].update({0.60: 1, 0.70: 4})
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="A hunch.")
+    ev = improve.evaluate(p["id"])
+
+    assert ev["regression"] is True
+    assert ev["before_metric"] == 1.0 and ev["after_metric"] == 4.0
+
+    with pytest.raises(ValueError, match="measured WORSE"):
+        improve.approve(p["id"], "Abdullah")
+
+
+def test_a_change_that_measures_identically_is_not_an_improvement(improving):
+    """Churn on a live product is a risk with no upside."""
+    from app.core import improve
+
+    improving["scores"].update({0.60: 2, 0.70: 2})
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Should be a wash.")
+    assert improve.evaluate(p["id"])["regression"] is True
+
+
+def test_titan_cannot_activate_its_own_proposal(improving):
+    """The spine of the whole module. There is no flag that changes this."""
+    from app.core import improve
+
+    improving["scores"].update({0.60: 5, 0.70: 1})
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Measured better.")
+
+    with pytest.raises(ValueError, match="does not deploy"):
+        improve.activate(p["id"])          # still proposed
+
+    improve.evaluate(p["id"])
+    with pytest.raises(ValueError, match="does not deploy"):
+        improve.activate(p["id"])          # measured, but nobody approved it
+
+
+def test_measuring_a_candidate_never_leaves_it_applied(improving):
+    """The value under test is applied to a live module to measure it. A
+    scratch script in this repo once left `if False:` inside backup.py — this
+    restores in a finally and then VERIFIES the restoration."""
+    from app.core import improve, knowledge
+
+    improving["scores"].update({0.60: 5, 0.70: 1})
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Measured better.")
+    improve.evaluate(p["id"])
+
+    assert knowledge.COS_FLOOR == improving["original"]
+
+
+def test_a_benchmark_that_explodes_still_puts_the_value_back(improving):
+    from app.core import improve, knowledge, params
+
+    def boom() -> dict:
+        raise RuntimeError("benchmark died mid-run")
+
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Measured better.")
+    params.register_benchmark("retrieval", boom)
+
+    with pytest.raises(RuntimeError, match="died"):
+        improve.evaluate(p["id"])
+    assert knowledge.COS_FLOOR == improving["original"]
+
+
+def test_the_full_approved_path_activates_and_rolls_back_exactly(improving):
+    from app.core import improve, knowledge, params
+
+    improving["scores"].update({0.60: 5, 0.70: 1})
+    p = improve.propose("retrieval.cos_floor", 0.70,
+                        reason="Halves invented answers on the benchmark.")
+    improve.evaluate(p["id"])
+    approved = improve.approve(p["id"], "Abdullah")
+    assert approved["approver"] == "Abdullah"
+
+    active = improve.activate(p["id"])
+    assert active["status"] == improve.ACTIVE
+    assert knowledge.COS_FLOOR == 0.70
+    assert active["previous_value"] == improving["original"]
+    # Persisted, so a rebuild does not silently revert it.
+    assert params.overrides()["retrieval.cos_floor"] == 0.70
+
+    rolled = improve.rollback(p["id"], why="Abdullah changed his mind.")
+    assert rolled["status"] == improve.ROLLED_BACK
+    assert knowledge.COS_FLOOR == improving["original"]
+
+
+def test_rollback_restores_what_was_running_not_the_shipped_default(improving):
+    """`previous_value` is read off the live module at activation. If a value
+    was already overridden, the shipped source default is the wrong target."""
+    from app.core import improve, knowledge, params
+
+    params.set_value("retrieval.cos_floor", 0.65)   # not the shipped 0.60
+    improving["scores"].update({0.65: 5, 0.80: 1})
+
+    p = improve.propose("retrieval.cos_floor", 0.80, reason="Measured better.")
+    improve.evaluate(p["id"])
+    improve.approve(p["id"], "Abdullah")
+    row = improve.activate(p["id"])
+
+    assert row["previous_value"] == 0.65
+    improve.rollback(p["id"], why="testing")
+    assert knowledge.COS_FLOOR == 0.65, "restored the default instead of the " \
+                                        "value that was actually running"
+
+
+def test_an_active_change_that_regresses_is_rolled_back_automatically(improving):
+    """The one automatic action here, and it only moves a value BACK."""
+    from app.core import improve, knowledge
+
+    improving["scores"].update({0.60: 5, 0.70: 1})
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Measured better.")
+    improve.evaluate(p["id"])
+    improve.approve(p["id"], "Abdullah")
+    improve.activate(p["id"])
+
+    # The world changes: the same value now measures worse than the approved
+    # baseline of 5.
+    improving["scores"][0.70] = 9
+    checked = improve.check_active()
+
+    assert checked and checked[0]["rolled_back"] is True
+    assert knowledge.COS_FLOOR == improving["original"]
+    row = improve.get(p["id"])
+    assert row["status"] == improve.ROLLED_BACK
+    assert row["automatic_rollback"] is True
+    assert "Automatic" in row["rollback_reason"]
+
+
+def test_only_registered_parameters_can_ever_be_proposed(improving):
+    """"Tune anything" is how a model turns a rate limit off at 3am."""
+    from app.core import improve
+
+    for unknown in ("ratelimit.per_minute", "auth.token_ttl", "anything"):
+        with pytest.raises(ValueError, match="not a registered parameter"):
+            improve.propose(unknown, 1, reason="because")
+
+
+def test_a_value_outside_its_registered_bounds_is_refused(improving):
+    from app.core import improve
+
+    for bad in (0.0, 0.49, 0.96, 40.0):
+        with pytest.raises(ValueError, match="bounds"):
+            improve.propose("retrieval.cos_floor", bad, reason="because")
+
+
+def test_a_proposal_must_say_why(improving):
+    from app.core import improve
+
+    with pytest.raises(ValueError, match="say why"):
+        improve.propose("retrieval.cos_floor", 0.70, reason="   ")
+
+
+def test_stored_overrides_are_reapplied_at_boot(improving):
+    """knowledge.backfill() existed, was tested, was exposed as an endpoint and
+    had zero callers. An override that is not re-applied is the same defect."""
+    from app.core import knowledge, params
+
+    params.set_value("retrieval.cos_floor", 0.72)
+    knowledge.COS_FLOOR = 0.60                  # simulate a fresh container
+    assert params.apply_stored() == ["retrieval.cos_floor"]
+    assert knowledge.COS_FLOOR == 0.72
+
+
+def test_apply_stored_is_actually_called_at_boot():
+    """The test above proves the FUNCTION works. It passed with the call
+    deleted from main.py — caught by mutation testing, and it is the same
+    defect as knowledge.backfill(), which existed, was unit-tested, was exposed
+    as an endpoint and had zero callers for months.
+
+    Comments are stripped first: the comment above that call names both
+    `apply_stored` and `knowledge.backfill()`, so a naive substring search
+    passes on the explanation while the code says nothing."""
+    import inspect
+    import re as _re
+
+    from app import main
+
+    src = inspect.getsource(main.lifespan)
+    code = "\n".join(_re.sub(r"#.*$", "", line) for line in src.splitlines())
+    assert _re.search(r"\bapply_stored\s*\(", code), (
+        "params.apply_stored() is no longer CALLED at boot — an approved, "
+        "activated improvement will silently revert on the next rebuild")
+
+
+def test_the_approval_gate_holds_over_http_and_says_why(client, improving):
+    """The module-level tests prove the gate. This proves it survives the API
+    layer, and that the refusal REASON reaches the caller instead of being
+    flattened into a generic 400."""
+    improving["scores"].update({0.60: 5, 0.70: 1})
+
+    made = client.post("/api/improve/propose", json={
+        "param": "retrieval.cos_floor", "value": 0.70,
+        "reason": "Halves invented answers on the benchmark."})
+    assert made.status_code == 200, made.text
+    pid = made.json()["id"]
+
+    blocked = client.post(f"/api/improve/{pid}/activate")
+    assert blocked.status_code == 400
+    assert "does not deploy its own changes" in blocked.json()["detail"]
+
+    unmeasured = client.post(f"/api/improve/{pid}/approve",
+                             json={"approver": "Abdullah"})
+    assert unmeasured.status_code == 400
+    assert "evaluated" in unmeasured.json()["detail"]
+
+    assert client.post(f"/api/improve/{pid}/evaluate").status_code == 200
+
+    # An approval with no name is refused by the schema itself.
+    assert client.post(f"/api/improve/{pid}/approve", json={}).status_code == 422
+
+    assert client.post(f"/api/improve/{pid}/approve",
+                       json={"approver": "Abdullah"}).status_code == 200
+    assert client.post(f"/api/improve/{pid}/activate").status_code == 200
+
+
+def test_the_engine_does_not_claim_it_can_change_its_own_source():
+    """Deploying a code change needs a git push and a rebuild, and the
+    container has no git credentials. Saying otherwise would be the overclaim
+    this codebase exists to prevent."""
+    from app.core import improve, params
+
+    assert "cannot modify its own source" in params.status()["note"]
+    assert "never activates its own proposals" in improve.report()["note"]

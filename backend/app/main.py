@@ -181,6 +181,14 @@ async def lifespan(app: FastAPI):
     # reports what it needs.
     from .engines import adapters
     adapters.register_all()
+    # Re-apply approved parameter overrides to the live modules. Without this
+    # an approved, activated improvement silently reverts on the next rebuild
+    # and nobody would know why the numbers moved back — the same shape as
+    # knowledge.backfill(), which existed, was tested, was exposed as an
+    # endpoint, and had zero callers.
+    with contextlib.suppress(Exception):
+        from .core import params as _params
+        _params.apply_stored()
     # Bind job kinds to their handlers BEFORE the heartbeat drains anything,
     # so work already sitting in the queue from a previous container is picked
     # up on this boot rather than parked as unhandled.

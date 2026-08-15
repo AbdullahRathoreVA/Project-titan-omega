@@ -52,6 +52,10 @@ _SENSITIVE_PREFIXES = (
     "/api/learning",
     "/api/evolution",
     "/api/decisions",
+    # The self-improvement engine. Abdullah IS the approval step, so every
+    # route under this changes — or is one call away from changing — how the
+    # live product behaves. There is no demo-safe version of an approval.
+    "/api/improve",
     # Client management. This one is the worst of the set: it is not Abdullah's
     # data, it is his CLIENTS' — business names, websites, contact details and
     # their audit findings. Leaking a paying client's information to a public

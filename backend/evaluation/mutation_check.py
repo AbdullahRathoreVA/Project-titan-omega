@@ -185,6 +185,37 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("contact: <address> only when there IS an address", "app/core/contact.py",
      'tag = "address" if a else "p"', 'tag = "address"',
      "phone_only_block_never_emits"),
+    # --- self-improvement engine -------------------------------------------
+    # The approval gate is the whole product decision here. If any of these
+    # survive, Titan can change its own behaviour without Abdullah.
+    ("improve: activate requires APPROVED", "app/core/improve.py",
+     'if row["status"] != APPROVED:', "if False:",
+     "cannot_activate_its_own"),
+    ("improve: approve requires a measurement", "app/core/improve.py",
+     'if row["status"] != EVALUATED:', "if False:",
+     "unmeasured_proposal_cannot"),
+    ("improve: approve requires a name", "app/core/improve.py",
+     'if not (approver or "").strip():', "if False:",
+     "approval_must_carry_a_name"),
+    ("improve: a regression cannot be approved", "app/core/improve.py",
+     'if row["regression"]:', "if False:", "measures_worse_cannot"),
+    ("improve: only registered parameters", "app/core/improve.py",
+     "if param not in params.PARAMS:", "if False:",
+     "only_registered_parameters"),
+    ("improve: measurement restores the value", "app/core/improve.py",
+     "setattr(module, spec.attr, original)", "pass",
+     "never_leaves_it_applied or explodes_still_puts"),
+    ("improve: rollback restores what was RUNNING", "app/core/improve.py",
+     "previous = float(params.current(row[\"param\"]))",
+     "previous = float(params.PARAMS[row['param']].low)",
+     "restores_what_was_running"),
+    ("improve: auto-rollback on regression", "app/core/improve.py",
+     "if worse:", "if False:", "rolled_back_automatically"),
+    ("params: bounds are enforced", "app/core/params.py",
+     "if not (param.low <= cast <= param.high):", "if False:",
+     "outside_its_registered_bounds"),
+    ("params: overrides are re-applied at boot", "app/main.py",
+     "_params.apply_stored()", "pass", "actually_called_at_boot"),
 ]
 
 

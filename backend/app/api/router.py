@@ -930,6 +930,97 @@ def tools_invoke(name: str, payload: dict | None = None) -> dict:
     return tool.invoke(**(payload or {})).as_dict()
 
 
+# --- self-improvement -----------------------------------------------------
+# Abdullah IS the approval step, so these have to exist for the loop to close.
+# Everything here is founder-only: `approve` changes how a live product
+# behaves, and there is no version of that a demo visitor should reach.
+
+class ProposalRequest(BaseModel):
+    param: str
+    value: float
+    reason: str
+    evidence: dict | None = None
+
+
+class ApprovalRequest(BaseModel):
+    # Not optional and not defaulted. An approval without a name is not an
+    # audit trail, and a default like "founder" would be a name nobody typed.
+    approver: str
+    why: str = ""
+
+
+def _improve_call(fn, *args, **kwargs) -> dict:
+    """ValueError from the engine is a 400 with its own message.
+
+    Those messages are the product — "this measured WORSE", "Titan does not
+    deploy its own changes" — so they are surfaced rather than flattened into
+    a generic error.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/improve", tags=["system"])
+def improve_report() -> dict:
+    from ..core import improve
+    return improve.report()
+
+
+@router.get("/improve/params", tags=["system"])
+def improve_params() -> dict:
+    """What Titan may change about itself, and the evidence for each default."""
+    from ..core import params
+    return params.status()
+
+
+@router.get("/improve/observe", tags=["system"])
+def improve_observe() -> dict:
+    from ..core import improve
+    return improve.observe()
+
+
+@router.post("/improve/propose", tags=["system"])
+def improve_propose(req: ProposalRequest) -> dict:
+    from ..core import improve
+    return _improve_call(improve.propose, req.param, req.value,
+                         reason=req.reason, evidence=req.evidence)
+
+
+@router.post("/improve/{proposal_id}/evaluate", tags=["system"])
+def improve_evaluate(proposal_id: str) -> dict:
+    """Run the benchmark. Changes nothing that is running."""
+    from ..core import improve
+    return _improve_call(improve.evaluate, proposal_id)
+
+
+@router.post("/improve/{proposal_id}/approve", tags=["system"])
+def improve_approve(proposal_id: str, req: ApprovalRequest) -> dict:
+    from ..core import improve
+    return _improve_call(improve.approve, proposal_id, req.approver)
+
+
+@router.post("/improve/{proposal_id}/reject", tags=["system"])
+def improve_reject(proposal_id: str, req: ApprovalRequest) -> dict:
+    from ..core import improve
+    return _improve_call(improve.reject, proposal_id, req.approver, req.why)
+
+
+@router.post("/improve/{proposal_id}/activate", tags=["system"])
+def improve_activate(proposal_id: str) -> dict:
+    """Apply an already-APPROVED proposal. Refuses anything else."""
+    from ..core import improve
+    return _improve_call(improve.activate, proposal_id)
+
+
+@router.post("/improve/{proposal_id}/rollback", tags=["system"])
+def improve_rollback(proposal_id: str, req: ApprovalRequest) -> dict:
+    from ..core import improve
+    return _improve_call(improve.rollback, proposal_id,
+                         why=req.why or f"Rolled back by {req.approver}.")
+
+
 class PlanRequest(BaseModel):
     goal: str = Field(..., min_length=1)
 

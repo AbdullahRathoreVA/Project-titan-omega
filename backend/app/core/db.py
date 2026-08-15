@@ -38,7 +38,7 @@ import threading
 import time
 from typing import Any, Optional
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _lock = threading.RLock()
 _conn: Optional[sqlite3.Connection] = None
@@ -93,6 +93,45 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE UNIQUE INDEX IF NOT EXISTS jobs_dedupe_open
             ON jobs (dedupe_key)
             WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running');
+    """),
+    # Self-improvement proposals. A table rather than a blob because the whole
+    # value of this record is that it is auditable afterwards: who approved a
+    # change to Titan's own behaviour, on what measured evidence, what the
+    # value was BEFORE it, and whether it was rolled back and why.
+    #
+    # `previous_value` is the exact value read off the live module at
+    # activation, not the shipped default — rollback has to restore what was
+    # actually running, which is not always what the source says.
+    (3, """
+        CREATE TABLE IF NOT EXISTS proposals (
+            id             TEXT PRIMARY KEY,
+            param          TEXT NOT NULL,
+            proposed_value REAL NOT NULL,
+            baseline_value REAL,
+            previous_value REAL,
+            status         TEXT NOT NULL,
+            reason         TEXT NOT NULL,
+            evidence       TEXT,
+            benchmark      TEXT,
+            metric         TEXT,
+            before_metric  REAL,
+            after_metric   REAL,
+            regression     INTEGER,
+            approver       TEXT,
+            decided_at     REAL,
+            activated_at   REAL,
+            rolled_back_at REAL,
+            rollback_reason TEXT,
+            automatic_rollback INTEGER NOT NULL DEFAULT 0,
+            created_at     REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS proposals_status
+            ON proposals (status, created_at);
+        -- One open proposal per parameter. Two competing candidates for the
+        -- same number cannot both be measured against the same baseline.
+        CREATE UNIQUE INDEX IF NOT EXISTS proposals_one_open_per_param
+            ON proposals (param)
+            WHERE status IN ('proposed', 'evaluated', 'approved', 'active');
     """),
 ]
 
