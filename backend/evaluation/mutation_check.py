@@ -167,6 +167,18 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "app/engines/adapters.py",
      'name="weather.current",', 'name="weather.unregistered",',
      "sialkot or keyless_capabilities"),
+    # --- independent security grade ---------------------------------------
+    ("observatory: called with POST", "app/core/api_adapters.py",
+     'method="POST")', 'method="GET")', "called_with_post"),
+    ("observatory: no grade is not a zero", "app/core/api_adapters.py",
+     'if d.get("grade") is None:', "if False:", "no_grade_is_not_reported"),
+    ("runtime: method allowlist", "app/core/api_runtime.py",
+     'if method not in ("GET", "POST"):', "if False:",
+     "hardened_path_allows_only"),
+    ("observatory: private names are never sent out",
+     "app/core/api_adapters.py",
+     'if name.endswith(".local") or name.endswith(".internal"):',
+     "if False:", "private_name"),
 ]
 
 

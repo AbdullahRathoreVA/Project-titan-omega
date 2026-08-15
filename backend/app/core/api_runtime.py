@@ -119,17 +119,33 @@ def _classify(status: int) -> str:
 
 
 def call(url: str, *, timeout: float = TIMEOUT_S,
-         expect_json: bool = True) -> dict:
-    """One GET against a third-party API. Never raises.
+         expect_json: bool = True, method: str = "GET") -> dict:
+    """One request against a third-party API. Never raises.
 
     Returns a classified result. `data` is present only on a genuine JSON
     success, and even then it is the caller's job to treat it as untrusted.
+
+    **GET and POST only, and POST never carries a body.** POST exists here for
+    exactly one shape of API: the trigger, where the whole request is in the
+    query string and the verb is POST only because the provider chose it.
+    MDN's HTTP Observatory is the case that forced it — `GET /api/v2/scan` is
+    a 404 there, measured. Allowing a request body would turn the single
+    hardened outbound path into a general-purpose write channel to 1,675
+    catalogued origins, which is a different thing entirely and is not what
+    this module is for.
     """
     from . import obs, safe_fetch
 
     started = time.monotonic()
     result = {"url": url, "ok": False, "status": None, "outcome": UNKNOWN,
               "latency_ms": None, "bytes": None, "data": None, "error": ""}
+
+    method = (method or "GET").upper()
+    if method not in ("GET", "POST"):
+        result["outcome"] = BLOCKED
+        result["error"] = (f"{method} is not allowed through this path — "
+                           f"only GET and POST, and POST sends no body.")
+        return result
 
     if breaker_open(url):
         result["outcome"] = BLOCKED
@@ -151,7 +167,7 @@ def call(url: str, *, timeout: float = TIMEOUT_S,
         with httpx.Client(timeout=timeout, follow_redirects=True,
                           headers={"User-Agent": UA,
                                    "Accept": "application/json"}) as c:
-            with c.stream("GET", url) as r:
+            with c.stream(method, url) as r:
                 result["status"] = r.status_code
                 ctype = (r.headers.get("content-type") or "").lower()
                 body = bytearray()

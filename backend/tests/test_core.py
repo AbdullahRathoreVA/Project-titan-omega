@@ -4746,7 +4746,9 @@ def test_the_integrated_surface_does_not_overclaim():
     from app.core import api_adapters, api_registry
 
     integrated = api_adapters.integrated()
-    assert integrated["count"] == 4
+    # 4 until security.headers was verified against MDN's live v2 API. This
+    # number only ever moves after a capability has been called for real.
+    assert integrated["count"] == 5
     assert integrated["credentials_required"] is False
     assert "METADATA_ONLY" in integrated["note"]
     # The catalogue is still honest about the other 1,671.
@@ -6430,8 +6432,106 @@ def test_the_keyless_capabilities_are_ready_rather_than_aspirational():
     from app.engines import adapters
 
     adapters.register_all()
-    for name in ("weather.current", "geo.geocode", "finance.exchange_rates"):
+    for name in ("weather.current", "geo.geocode", "finance.exchange_rates",
+                 "security.headers"):
         tool = tool_layer.get(name)
         assert tool is not None, f"{name} is not registered"
         assert tool.status() == "ready", f"{name}: {tool.describe()}"
         assert tool.outbound is False, f"{name} must not act outside Titan"
+
+
+# ── independent security grade (MDN HTTP Observatory) ──────────────────────
+
+_OBSERVATORY_OK = {
+    "id": 114737281,
+    "details_url": "https://developer.mozilla.org/en-US/observatory/analyze"
+                   "?host=titanomega-ai.com",
+    "algorithm_version": 5, "scanned_at": "2026-08-15T02:36:34.164Z",
+    "error": None, "grade": "B+", "score": 80, "status_code": 200,
+    "tests_failed": 1, "tests_passed": 9, "tests_quantity": 10,
+}
+
+
+def test_a_security_grade_always_carries_the_time_it_was_measured(monkeypatch):
+    """Mozilla serves a CACHED scan. A grade without the moment it was taken is
+    a measurement presented as if it were current."""
+    from app.core import api_adapters
+
+    _fake_runtime(monkeypatch, {"observatory-api": (True, _OBSERVATORY_OK)})
+    out = api_adapters.security_headers("https://titanomega-ai.com/pricing")
+
+    assert out["ok"] is True
+    assert out["host"] == "titanomega-ai.com", "a URL must yield its hostname"
+    assert out["grade"] == "B+" and out["score"] == 80
+    assert out["tests_passed"] == 9 and out["tests_total"] == 10
+    assert out["scanned_at"] == "2026-08-15T02:36:34.164Z"
+
+
+def test_a_scan_with_no_grade_is_not_reported_as_a_zero(monkeypatch):
+    """A missing score defaulted to 0 reads as a catastrophic F for a site
+    nobody actually managed to scan."""
+    from app.core import api_adapters
+
+    _fake_runtime(monkeypatch, {"observatory-api": (
+        True, {**_OBSERVATORY_OK, "grade": None, "score": None})})
+    out = api_adapters.security_headers("titanomega-ai.com")
+
+    assert out["ok"] is False
+    assert out.get("score") is None and out.get("grade") is None
+    assert "no grade" in out["error"]
+
+
+def test_the_observatory_is_called_with_post_because_get_is_a_404(monkeypatch):
+    """Measured 2026-08-15: `GET /api/v2/scan` returns 404 there. An adapter
+    that assumed GET would never have worked, which is exactly the failure the
+    catalogue's homepage-not-endpoint problem produces."""
+    from app.core import api_adapters
+
+    seen = {}
+
+    def call(url, **kw):
+        seen["url"] = url
+        seen["method"] = kw.get("method", "GET")
+        return {"ok": True, "data": _OBSERVATORY_OK, "outcome": "OK",
+                "latency_ms": 1.0, "status": 200, "bytes": 1, "error": ""}
+
+    monkeypatch.setattr(api_adapters.api_runtime, "call", call)
+    api_adapters.security_headers("titanomega-ai.com")
+
+    assert seen["method"] == "POST"
+    assert "observatory-api.mdn.mozilla.net" in seen["url"]
+
+
+def test_the_hardened_path_allows_only_get_and_post():
+    """POST was widened for one shape of API — a trigger whose whole request is
+    in the query string. Anything else must not reach a third party through
+    here, and must be refused before any network call is attempted."""
+    from app.core import api_runtime
+
+    for verb in ("DELETE", "PUT", "PATCH", "TRACE"):
+        out = api_runtime.call("https://example.com/x", method=verb)
+        assert out["ok"] is False
+        assert out["outcome"] == api_runtime.BLOCKED
+        assert verb in out["error"]
+        assert out["status"] is None, "it must refuse before making a request"
+
+
+def test_a_third_party_scanner_is_not_pointed_at_a_private_name(monkeypatch):
+    """Titan's SSRF guard protects Titan's own fetches. This scan is performed
+    by Mozilla, so the guard never sees the target.
+
+    Asserting only that the result is a failure would prove nothing — Mozilla
+    rejects these too, so the test would pass with the guard deleted. What is
+    actually being protected is that Titan never ASKS, so the network is
+    booby-trapped instead."""
+    from app.core import api_adapters
+
+    def never(*a, **kw):
+        raise AssertionError(f"a private name was sent to a third party: {a}")
+
+    monkeypatch.setattr(api_adapters.api_runtime, "call", never)
+
+    for bad in ("127.0.0.1", "10.0.0.5", "printer.local", "db.internal",
+                "localhost", "x", ""):
+        out = api_adapters.security_headers(bad)
+        assert out["ok"] is False, f"{bad} was accepted"

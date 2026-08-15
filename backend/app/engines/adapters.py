@@ -190,6 +190,11 @@ def _geocode(place: str = "", limit: int = 3, **_) -> dict:
     return api_adapters.geocode(place, limit)
 
 
+def _security_headers(host: str = "", url: str = "", **_) -> dict:
+    """Takes a hostname or a URL — callers hold client sites as URLs."""
+    return api_adapters.security_headers(host or url)
+
+
 # ------------------------------------------------------------- registration --
 def register_all() -> None:
     """Idempotent: safe to call on every boot."""
@@ -261,3 +266,10 @@ def register_all() -> None:
         name="finance.exchange_rates",
         capability="Live exchange rates, with a second provider behind the first",
         run=_exchange_rates))
+
+    # The first capability that measures something Titan already has an opinion
+    # about, from a source that is not Titan.
+    tools.register(tools.Tool(
+        name="security.headers",
+        capability="Independent security-header grade for a site (MDN Observatory)",
+        run=_security_headers))

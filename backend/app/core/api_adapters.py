@@ -214,11 +214,94 @@ def weather_for_place(place: str) -> dict:
             "providers": ["open-meteo (geocoding)", "open-meteo (forecast)"]}
 
 
+# -------------------------------------------------------- security headers --
+# MDN HTTP Observatory. The catalogue entry for this points at a GitHub README
+# for `mozilla/http-observatory`, and the host that README documents —
+# http-observatory.security.mozilla.org — is DEAD: measured 2026-08-15, both
+# GET and POST return 502. The live service is MDN's v2 API, and it answers
+# only to POST (`GET /api/v2/scan` is a 404). Nothing about that was
+# discoverable from the catalogue, which is the ceiling on auto-integration
+# stated in api_registry.
+#
+# This is the first adapter that measures something Titan already sells an
+# opinion about, from a source that is not Titan. Its own site scores B+ / 80.
+_OBSERVATORY = "https://observatory-api.mdn.mozilla.net/api/v2/scan?host={host}"
+
+
+def security_headers(host: str) -> dict:
+    """A third party's grade for a host's HTTP security headers."""
+    import ipaddress
+    import urllib.parse
+
+    raw = (host or "").strip()
+    if not raw:
+        return {"ok": False, "capability": "security.headers",
+                "error": "Give a hostname, or a URL to take one from."}
+
+    name = raw
+    if "//" in name:
+        name = urllib.parse.urlsplit(name).hostname or ""
+    name = name.split("/")[0].split("@")[-1].split(":")[0].strip().lower()
+
+    if not name or "." not in name:
+        return {"ok": False, "capability": "security.headers",
+                "error": f"{raw!r} is not a hostname."}
+    # The scan is performed by Mozilla, not by Titan, so Titan's own SSRF guard
+    # never sees the target. Refuse to point a third-party scanner at anything
+    # that is not a public name — it would fail anyway, and asking is rude.
+    try:
+        ipaddress.ip_address(name)
+        return {"ok": False, "capability": "security.headers",
+                "error": "Scan a hostname, not an IP address."}
+    except ValueError:
+        pass
+    if name.endswith(".local") or name.endswith(".internal"):
+        return {"ok": False, "capability": "security.headers",
+                "error": f"{name} is not a public hostname."}
+
+    r = api_runtime.call(_OBSERVATORY.format(host=urllib.parse.quote(name)),
+                         method="POST")
+    if not r["ok"]:
+        return {"ok": False, "capability": "security.headers",
+                "provider": "mdn-observatory", "host": name,
+                "error": r["error"], "outcome": r["outcome"]}
+
+    d = r["data"] or {}
+    if d.get("error"):
+        return {"ok": False, "capability": "security.headers",
+                "provider": "mdn-observatory", "host": name,
+                "error": str(d["error"])[:200], "stage": "provider"}
+    if d.get("grade") is None:
+        # No grade is no grade. A missing score defaulted to 0 would read as a
+        # catastrophic F for a site nobody managed to scan.
+        return {"ok": False, "capability": "security.headers",
+                "provider": "mdn-observatory", "host": name,
+                "error": "The scan returned no grade.",
+                "outcome": "SCHEMA_MISMATCH"}
+
+    return {
+        "ok": True, "capability": "security.headers",
+        "provider": "mdn-observatory", "host": name,
+        "grade": d.get("grade"),
+        "score": d.get("score"),
+        "tests_passed": d.get("tests_passed"),
+        "tests_failed": d.get("tests_failed"),
+        "tests_total": d.get("tests_quantity"),
+        # Mozilla serves a CACHED scan. The grade without the moment it was
+        # taken is a measurement presented as if it were current.
+        "scanned_at": d.get("scanned_at"),
+        "algorithm_version": d.get("algorithm_version"),
+        "details_url": d.get("details_url"),
+        "latency_ms": r["latency_ms"],
+    }
+
+
 CAPABILITIES = {
     "currency.exchange_rates": exchange_rates,
     "weather.current": weather,
     "weather.for_place": weather_for_place,
     "geo.geocode": geocode,
+    "security.headers": security_headers,
 }
 
 
@@ -227,7 +310,8 @@ def integrated() -> dict:
     return {
         "capabilities": sorted(CAPABILITIES),
         "count": len(CAPABILITIES),
-        "providers": ["open.er-api.com", "frankfurter", "open-meteo"],
+        "providers": ["open.er-api.com", "frankfurter", "open-meteo",
+                      "observatory-api.mdn.mozilla.net"],
         "credentials_required": False,
         "note": ("These are verified against the live services and normalised "
                  "to a stable shape. Everything else in the API catalogue is "
