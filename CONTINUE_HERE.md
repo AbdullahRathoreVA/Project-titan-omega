@@ -62,7 +62,7 @@ URLs, grep them for a new string. `/health` returning 200 proves nothing.
 
 ## 3. Where Titan is now
 
-**LIVE: https://titanomega-ai.com** · **394 tests pass, 45 mutation guards**
+**LIVE: https://titanomega-ai.com** · **417 tests pass, 57 mutation guards**
 
 > **Read `repository_research/` first if you are picking up the transformation
 > work.** It holds the verified forensic audit (16 prior claims re-checked
@@ -405,8 +405,9 @@ boundary, observability, tested backup/restore, tenant gate, model catalogue
 
 ## 10. Session 2026-08-15 — what changed
 
-**394 tests. `python -m evaluation.mutation_check` = 45 guards, all CAUGHT.**
-Three commits, `3c8b1aa..b473383`, each deployed and the Action conclusion read.
+**417 tests. `python -m evaluation.mutation_check` = 57 guards, all CAUGHT.**
+Commits `3c8b1aa..590773b`, each deployed and the Action conclusion read.
+Priorities 1-4 all shipped.
 
 ### Mobile IA (priority 1) — DONE, verified live
 
@@ -513,6 +514,44 @@ it, with a test). **The heuristic is unchanged for CLIENT sites** — a client
 using `<address>` for a phone still scores a pass it may not deserve. Same
 shape as the Cloudflare-beacon false pass. Fixing it lowers scores on
 already-audited sites, so it was not slipped into that commit.
+
+### Self-improvement engine (priority 4) — DONE, `core/params.py` + `core/improve.py`
+
+**Titan cannot modify its own source code.** Deploy = git push + Action + HF
+rebuild; the container has no git credentials. The engine does not claim
+otherwise and there is a test on the wording.
+
+What it CAN change: registered numeric parameters with bounds, read as module
+globals at call time, that have a benchmark. Two registered:
+`retrieval.cos_floor` (0.60) and `retrieval.min_score` (0.8 — the open MEDIUM
+BM25/IDF defect; registering it means a change now needs numbers).
+
+**Nothing self-deploys, structurally.** `activate()` refuses anything not
+already `approved`; `approve()` refuses without a named human, refuses the
+unmeasured, and refuses anything measured worse. **A change that measures
+IDENTICALLY counts as a regression** — churn on a live product is risk with no
+upside. No auto-approve flag exists, same as `site_fix` has no auto-apply.
+Rollback is the only automatic action and only moves a value BACK.
+
+- The candidate is applied to the live module, benchmarked, **restored in a
+  `finally`, and the restore VERIFIED**. A test kills the benchmark mid-run.
+- `previous_value` is read off the LIVE module at activation, never the source
+  default — if a value was already overridden, the default is the wrong target.
+- Migration **3**, real `proposals` table, one open proposal per parameter.
+- `/api/improve/*`, founder-only. Verified live: guest 403, anonymous 401.
+
+**Two traps this produced — do not re-learn them:**
+
+1. **Overrides are persisted and re-applied at boot, so a leaked one is
+   global.** The suite proved it the hard way: one run left an override on
+   disk, the NEXT run applied it at boot and moved `COS_FLOOR` for everything.
+   That is the intended behaviour (an approved change must survive a rebuild),
+   so any test touching `params.set_value` must clear `params.overrides` in
+   teardown, not just setup.
+2. **`test_stored_overrides_are_reapplied_at_boot` passed with the call
+   deleted from `main.py`** — it called `apply_stored()` directly. Identical to
+   the `knowledge.backfill()` zero-callers defect. There is now a wiring test
+   reading `main.lifespan` with comments stripped. **Test the WIRING.**
 
 ### Still true, and worth knowing before the next change
 
