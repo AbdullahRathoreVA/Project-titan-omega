@@ -342,6 +342,58 @@ Remaining:
 
 ---
 
+## 9. Session 2026-08-14/15 — what changed
+
+**381 tests. `python -m evaluation.mutation_check` = 34 guards, all CAUGHT.**
+
+Shipped and verified live: fix loop, durable queue (007), 24/7 cycle, JS-shell
+detection (011 detection half), landing-page schema (012), prompt-injection
+boundary, observability, tested backup/restore, tenant gate, model catalogue
+(measured cost), verification layer (013), mobile fixes, API catalogue.
+
+### Traps found this session — do not re-learn these
+
+- **`time.monotonic()` is time since SYSTEM BOOT.** Interval trackers seeded to
+  `0.0` fired every scheduled cycle on the FIRST heartbeat tick. Test suite went
+  to **6h27m**. Now seeded to `time.monotonic()`; `TITAN_HEARTBEAT_ENABLED=0` is
+  set in test_core.py **before** importing app.main. Do not remove it.
+- **Paddle was invisible.** It existed only in a help string — `configured()`
+  checked Dodo and PayPal only. Adding the keys would have done NOTHING. Fixed:
+  `paddle_configured()` needs the key AND a price id.
+- **`knowledge.backfill()` had zero callers.** Existed, unit-tested, endpoint
+  exposed, never invoked → the semantic ranker was dead code. Grep for CALLERS,
+  not just definitions. Test the WIRING, and strip comments first — a naive
+  substring check passed with the call deleted.
+- **`COS_FLOOR` was 0.52**, below the 0.6–0.9 band where sentence models score
+  any two English sentences. Recalibrated to 0.60 via
+  `evaluation/calibrate_cosine.py`.
+- **OpenRouter publishes `-1`** as a "priced dynamically" sentinel. Read as a
+  price it yields a NEGATIVE cost. Negative cost is worse than null.
+- **Mobile: 14 tabs in a non-wrapping flex** made the document ~980px wide, and
+  iOS Safari zooms out to fit the widest element — rescaling the WHOLE page.
+  One overflowing element explains the "everything is tiny" symptom.
+- **`viewport-fit: cover` without `env(safe-area-inset-*)`** = status bar on
+  your content.
+- **My mutation script corrupted source once** (left `if False:` in backup.py).
+  `evaluation/mutation_check.py` now verifies every restore byte-for-byte.
+
+### The API work — read before extending it
+
+- `core/api_registry.py` — 1,675 providers, 52 categories, **all
+  METADATA_ONLY**, `adapters_written: 0`. A test fails if anything claims more.
+- `core/api_runtime.py` — the ONLY thing allowed to call a third party. SSRF,
+  timeout, 512KB cap, content-type check, classified failures, per-host
+  politeness as a LOCK. 401/429 must NOT trip the breaker (provider is alive).
+- `core/api_adapters.py` — **4 real capabilities**: currency (open.er-api.com
+  primary, Frankfurter fallback), weather, geocode, weather_for_place.
+- **Frankfurter has NO PKR** (ECB rates only). Measured: `from=USD&to=PKR`
+  returns `{"message":"not found"}`. That is why it is the fallback, not the
+  primary.
+- **Full probe: 788 attempted, 100 json_ok (13%).** 421 SCHEMA_MISMATCH because
+  **the catalogue lists homepages, not endpoints**. That is the hard ceiling on
+  auto-integration from this source.
+- Dashboard: `frontend/components/ApiCommand.tsx`, "APIs" tab.
+
 # PROMPT FOR NEXT SESSION
 
 > Continue Titan Omega. Read `D:\projects\CONTINUE_HERE.md` FULLY first — it has
