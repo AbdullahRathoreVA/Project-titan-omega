@@ -278,24 +278,35 @@ export function CommandCenter() {
       <StatusBar status={liveStatus} online={online || live} intel={intel} />
       <ProgressStrip />
 
-      {mrr === 0 && !isGuest() && (
-        <div className="mt-3 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-4 py-3 text-xs text-hud-amber">
-          <span className="font-semibold">Abdullah — your empire is live.</span>{" "}
-          All numbers are real and start at $0. Got an order? Hit{" "}
-          <span className="font-semibold">Log order</span> in the Revenue Ledger — your dashboard shows the truth.
-        </div>
-      )}
-
       <div className="mt-4 grid gap-4 lg:grid-cols-[210px_minmax(0,1fr)]">
-        {/* Left rail — channels + agents */}
-        <div className="lg:sticky lg:top-4 lg:h-[calc(100vh-1.5rem)]">
-          <Sidebar channels={channels} agents={agents} />
-        </div>
+        {/* Main HUD column — FIRST in the document.
+            It used to be second, after the channels + agents rail. On a
+            desktop the grid turned that rail into a left column, but on a
+            phone the grid collapses and document order IS reading order, so
+            the first thing a phone showed was a 722px roster of channels and
+            agent names. Measured at 375x812: "Total Revenue" started at
+            y=1064 — a full screen below the fold — and the tab strip at
+            y=1489.
 
-        {/* Main HUD column */}
-        <div className="min-w-0 space-y-4">
+            The rail is now second in the document and pinned back to column 1
+            on `lg`. That is deliberate: explicit grid placement moves it
+            visually without moving it in reading order, so keyboard tabbing
+            and screen readers reach the numbers first on every screen size,
+            not only on phones. `order:` would have moved the pixels and left
+            the reading order wrong. */}
+        <div className="min-w-0 space-y-4 lg:col-start-2 lg:row-start-1">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-            <MetricCard label="Total Revenue" value={mrrLabel} sub={mrrSub} icon={Banknote} accent="emerald" />
+            {/* Revenue is the number the business exists for, so on a phone it
+                gets the full width instead of sharing a row with Traffic.
+                Desktop keeps all five equal. */}
+            <MetricCard
+              label="Total Revenue"
+              value={mrrLabel}
+              sub={mrrSub}
+              icon={Banknote}
+              accent="emerald"
+              className="col-span-2 lg:col-span-1"
+            />
             <MetricCard
               label="Traffic"
               value={liveStatus ? (liveStatus.traffic === 0 ? "0 — Connect analytics" : compact(liveStatus.traffic)) : "—"}
@@ -320,6 +331,18 @@ export function CommandCenter() {
             />
           </div>
 
+          {/* Explains the $0 above rather than pre-empting it. It used to sit
+              between the header and the grid, which cost ~120px before the
+              first number on a phone — the reader gets the figure, then the
+              reason it is what it is. */}
+          {mrr === 0 && !isGuest() && (
+            <div className="rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-4 py-3 text-xs text-hud-amber">
+              <span className="font-semibold">Abdullah — your empire is live.</span>{" "}
+              All numbers are real and start at $0. Got an order? Hit{" "}
+              <span className="font-semibold">Log order</span> in the Revenue Ledger — your dashboard shows the truth.
+            </div>
+          )}
+
           {/* View switcher.
               Only EXECUTIVE is founder-only. It is Abdullah's private
               business intelligence — real revenue, real provider errors, what
@@ -340,9 +363,18 @@ export function CommandCenter() {
               Now a horizontal scroller with snap points. The negative margin
               lets it bleed to the screen edge so the cut-off tab is visibly
               half-shown — that is the affordance that tells a thumb to swipe.
-              Desktop is unchanged: at `sm` and up they all fit and the
-              scroller never engages. */}
-          <div className="no-scrollbar -mx-3 flex snap-x snap-mandatory gap-2 overflow-x-auto px-3 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
+
+              This used to carry `sm:overflow-visible` on the belief that above
+              `sm` the tabs all fit. They do not. There are fifteen of them and
+              they live in the main column, not the window: on a 1280px laptop
+              that column is 999px and the row measures ~1092px, so the last
+              two tabs hung 58px past the right edge of the PAGE — measured,
+              `document.body.scrollWidth` 1338 against a 1280 viewport, which
+              is a horizontal scrollbar on the whole dashboard. Letting the
+              scroller stay live at every width fixes it without a breakpoint
+              guess: when the tabs do fit, an `overflow-x-auto` container with
+              nothing to scroll simply never scrolls. */}
+          <div className="no-scrollbar -mx-3 flex snap-x snap-mandatory gap-2 overflow-x-auto px-3 pb-1 sm:mx-0 sm:px-0 sm:pb-0">
             {(([
               ["universe", "Universe", false],
               ["dashboard", "Dashboard", false],
@@ -546,6 +578,13 @@ export function CommandCenter() {
           )}
           </motion.div>
           </AnimatePresence>
+        </div>
+
+        {/* Channels + agent roster. It is reference material, not a headline:
+            below the numbers on a phone, and the sticky left rail on `lg`
+            exactly as before. */}
+        <div className="lg:sticky lg:top-4 lg:col-start-1 lg:row-start-1 lg:h-[calc(100vh-1.5rem)]">
+          <Sidebar channels={channels} agents={agents} />
         </div>
       </div>
 

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   Briefcase,
+  ChevronDown,
   ExternalLink,
   Facebook,
   Image as ImageIcon,
@@ -49,15 +50,56 @@ export function Sidebar({
   agents: AgentView[];
 }) {
   const [selected, setSelected] = useState<AgentView | null>(null);
+  // Collapsed on a phone. Fourteen rows of channel and agent names is a
+  // roster, and a roster is something you go and look at, not something a
+  // dashboard opens on. Desktop never sees this state — the body is `lg:flex`
+  // and the toggle is `lg:hidden`.
+  const [open, setOpen] = useState(false);
   const heads = [...agents]
     .filter((a) => a.is_head)
     .sort((a, b) => b.impact_score - a.impact_score)
     .slice(0, 8);
 
+  // The collapsed line has to carry real information or collapsing just hides
+  // things. Nothing loaded yet is NOT "0 connected" — an empty list means the
+  // fetch has not landed, and reporting a count for it would be a number
+  // nobody measured.
+  const summaryParts: string[] = [];
+  if (channels.length > 0) {
+    const connected = channels.filter((c) => c.status === "connected").length;
+    summaryParts.push(`${connected}/${channels.length} connected`);
+  }
+  if (heads.length > 0) {
+    const working = heads.filter((a) => a.status === "working").length;
+    summaryParts.push(`${working}/${heads.length} working`);
+  }
+  const summary = summaryParts.length > 0 ? summaryParts.join(" · ") : "loading…";
+
   return (
     <>
       <AgentDetailModal agent={selected} onClose={() => setSelected(null)} />
-      <aside className="panel flex h-full flex-col gap-4 p-3">
+      <aside className="panel flex h-full flex-col gap-3 p-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="rail-roster"
+        className="flex min-h-11 items-center gap-2 rounded-lg px-1 text-left lg:hidden"
+      >
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-hud-cyan/70 transition-transform ${open ? "rotate-180" : ""}`}
+          strokeWidth={1.7}
+        />
+        <span className="hud-label shrink-0">Channels &amp; Agents</span>
+        <span className="min-w-0 flex-1 truncate text-right font-mono text-[10px] text-slate-500">
+          {summary}
+        </span>
+      </button>
+
+      <div
+        id="rail-roster"
+        className={`min-h-0 flex-1 flex-col gap-4 lg:flex ${open ? "flex" : "hidden"}`}
+      >
       <div>
         <div className="hud-label mb-2 px-1">Channels</div>
         <div className="space-y-1">
@@ -120,6 +162,7 @@ export function Sidebar({
             </button>
           ))}
         </div>
+      </div>
       </div>
       </aside>
     </>

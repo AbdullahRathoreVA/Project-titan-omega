@@ -9,12 +9,16 @@ export function MetricCard({
   sub,
   icon: Icon,
   accent = "cyan",
+  className = "",
 }: {
   label: string;
   value: string;
   sub?: string;
   icon: LucideIcon;
   accent?: "cyan" | "emerald" | "amber" | "violet" | "blue";
+  // Lets a caller give one card more grid space than the rest — used to make
+  // revenue the headline on a phone.
+  className?: string;
 }) {
   const ring = {
     cyan: "text-hud-cyan",
@@ -28,7 +32,7 @@ export function MetricCard({
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="panel relative overflow-hidden px-4 py-3"
+      className={`panel relative overflow-hidden px-4 py-3 ${className}`}
     >
       <div className="flex items-start justify-between">
         <span className="hud-label">{label}</span>

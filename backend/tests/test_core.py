@@ -6262,3 +6262,80 @@ def test_a_landing_page_still_renders_if_the_plan_table_is_unavailable():
     data = json.loads(block.group(1).replace("<\\/", "</"))
     types = {n.get("@type") for n in data["@graph"]}
     assert types == {"Article", "BreadcrumbList"}
+
+
+# ── mobile information architecture ────────────────────────────────────────
+#
+# The dashboard is a client-rendered React app and this repo has no JS test
+# runner; adding one is a toolchain, not a test. These read the JSX instead,
+# which is enough to catch the regression that actually recurs: something gets
+# put back above the numbers.
+#
+# The numbers behind them, measured on the built static export at 375x812
+# with getBoundingClientRect, before → after:
+#   "Total Revenue"  y=1064 → y=241   (the screen is 812 tall)
+#   tab strip        y=1489 → y=725
+#   document height  2065   → 1387
+# and on a 1280px laptop, document.body.scrollWidth 1338 → 1265.
+
+
+def _jsx_without_comments(name: str) -> str:
+    """Component source with `{/* ... */}` stripped.
+
+    Load-bearing, not tidiness: the comments below these guards quote the very
+    class names the guards assert on, so a substring check against the raw file
+    would pass on the explanation while the code said the opposite. That exact
+    mistake already shipped here once — a wiring test passed with the call it
+    was protecting deleted, because the comment above it still named it."""
+    import pathlib
+    import re as _re
+    path = (pathlib.Path(__file__).resolve().parents[2]
+            / "frontend" / "components" / name)
+    return _re.sub(r"\{/\*.*?\*/\}", "", path.read_text(encoding="utf-8"),
+                   flags=_re.S)
+
+
+def test_a_phone_reaches_the_numbers_before_the_roster():
+    """The grid collapses to one column on a phone, so document order is
+    reading order. With the rail first, a phone opened on 722px of channel and
+    agent names and revenue began below the fold at y=1064."""
+    src = _jsx_without_comments("CommandCenter.tsx")
+    metrics = src.index("<MetricCard")
+    rail = src.index("<Sidebar")
+    assert metrics < rail, (
+        "CommandCenter renders the channels/agents rail before the metric "
+        "cards again — that puts the roster above revenue on every phone.")
+
+
+def test_the_desktop_rail_is_still_pinned_to_the_left_column():
+    """The reorder above is only safe because the rail is placed explicitly.
+    Lose that and the rail silently moves to the right of the dashboard on
+    every desktop."""
+    src = _jsx_without_comments("CommandCenter.tsx")
+    rail = src.index("<Sidebar")
+    wrapper = src[:rail].rsplit("<div", 1)[1]
+    assert "lg:col-start-1" in wrapper and "lg:row-start-1" in wrapper, (
+        f"the Sidebar wrapper no longer pins itself to column 1: {wrapper!r}")
+    assert "lg:col-start-2" in src[:src.index("<MetricCard")], (
+        "the main column no longer claims column 2 on lg")
+
+
+def test_the_tab_strip_cannot_overflow_the_page_on_a_laptop():
+    """Fifteen tabs measure ~1092px and live in the main column, not the
+    window — 999px wide on a 1280px laptop. `sm:overflow-visible` let the last
+    two hang past the right edge of the PAGE: body.scrollWidth 1338 against a
+    1280 viewport, i.e. a horizontal scrollbar on the whole dashboard. An
+    always-live scroller has nothing to scroll when they do fit."""
+    src = _jsx_without_comments("CommandCenter.tsx")
+    assert "sm:overflow-visible" not in src
+    assert "overflow-x-auto" in src
+
+
+def test_the_collapsed_rail_summary_never_reports_a_count_it_has_not_got():
+    """The collapsed rail replaces fourteen rows with one line of counts, so
+    that line has to obey the same rule as everything else: an empty list means
+    the fetch has not landed, not "0 connected"."""
+    src = _jsx_without_comments("Sidebar.tsx")
+    assert "channels.length > 0" in src, "channel counts are no longer guarded"
+    assert "heads.length > 0" in src, "agent counts are no longer guarded"
+    assert "loading…" in src, "an unloaded rail must say so, not show zeroes"

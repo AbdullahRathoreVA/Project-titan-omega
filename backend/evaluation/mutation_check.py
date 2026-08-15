@@ -132,6 +132,29 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("billing: trial not billable without processor", "app/core/billing.py",
      '"trial_billable": bool(days) and processor_configured(),',
      '"trial_billable": bool(days),', "not_advertised_as_billable"),
+    # --- mobile information architecture ----------------------------------
+    # Frontend files are CRLF in the working tree; the byte-preserving restore
+    # above is what makes mutating them safe.
+    ("mobile IA: numbers before the roster",
+     "../frontend/components/CommandCenter.tsx",
+     '<div className="min-w-0 space-y-4 lg:col-start-2 lg:row-start-1">',
+     '<div className="min-w-0 space-y-4 lg:col-start-2 lg:row-start-1">'
+     "<Sidebar channels={channels} agents={agents} />",
+     "phone_reaches_the_numbers"),
+    ("mobile IA: rail stays in the left column on desktop",
+     "../frontend/components/CommandCenter.tsx",
+     'className="lg:sticky lg:top-4 lg:col-start-1 lg:row-start-1',
+     'className="lg:sticky lg:top-4 lg:row-start-1',
+     "desktop_rail_is_still_pinned"),
+    ("mobile IA: tab strip scroller stays live above sm",
+     "../frontend/components/CommandCenter.tsx",
+     'overflow-x-auto px-3 pb-1 sm:mx-0 sm:px-0',
+     'overflow-x-auto px-3 pb-1 sm:mx-0 sm:overflow-visible sm:px-0',
+     "tab_strip_cannot_overflow"),
+    ("mobile IA: collapsed rail counts stay guarded",
+     "../frontend/components/Sidebar.tsx",
+     "if (channels.length > 0) {", "if (true) {",
+     "collapsed_rail_summary"),
 ]
 
 
@@ -147,14 +170,22 @@ def run(only: str = "") -> int:
         if only and only not in label:
             continue
         before_digest = _digest(path)
-        original = io.open(path, encoding="utf-8").read()
+        # Bytes, not text. Text mode reads CRLF as LF and writes LF back, so a
+        # CRLF file would come back content-identical and byte-DIFFERENT — the
+        # restore check would fire FATAL and the tool would have rewritten the
+        # line endings of a file it promised not to touch. Every backend file
+        # here is LF, but the frontend components are CRLF in the working tree
+        # (`* text=auto` + core.autocrlf), and there are guards worth mutating
+        # in them.
+        raw = io.open(path, "rb").read()
+        original = raw.decode("utf-8")
         if anchor not in original:
             print(f"SKIP     {label}: anchor no longer in {path}")
             skipped.append(label)
             continue
 
-        io.open(path, "w", encoding="utf-8", newline="").write(
-            original.replace(anchor, replacement, 1))
+        io.open(path, "wb").write(
+            original.replace(anchor, replacement, 1).encode("utf-8"))
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", "tests/test_core.py", "-q",
@@ -164,8 +195,10 @@ def run(only: str = "") -> int:
         finally:
             # Restore, then PROVE the restore. A scratch version of this tool
             # once left a mutation in backup.py that disabled the check a
-            # backup actually restores.
-            io.open(path, "w", encoding="utf-8", newline="").write(original)
+            # backup actually restores. Restoring the ORIGINAL BYTES rather
+            # than a re-encode of the decoded text makes the digest check mean
+            # what it says.
+            io.open(path, "wb").write(raw)
             if _digest(path) != before_digest:
                 print(f"\nFATAL: {path} was not restored byte-for-byte. "
                       f"Restore it from git before doing anything else.")
