@@ -62,7 +62,7 @@ URLs, grep them for a new string. `/health` returning 200 proves nothing.
 
 ## 3. Where Titan is now
 
-**LIVE: https://titanomega-ai.com** · **323 tests pass**
+**LIVE: https://titanomega-ai.com** · **394 tests pass, 45 mutation guards**
 
 > **Read `repository_research/` first if you are picking up the transformation
 > work.** It holds the verified forensic audit (16 prior claims re-checked
@@ -344,7 +344,7 @@ Remaining:
 
 ## 9. Session 2026-08-14/15 — what changed
 
-**381 tests. `python -m evaluation.mutation_check` = 34 guards, all CAUGHT.**
+**381 tests, 34 guards at the time. (Superseded by §10 — now 394 and 45.)**
 
 Shipped and verified live: fix loop, durable queue (007), 24/7 cycle, JS-shell
 detection (011 detection half), landing-page schema (012), prompt-injection
@@ -393,6 +393,98 @@ boundary, observability, tested backup/restore, tenant gate, model catalogue
   **the catalogue lists homepages, not endpoints**. That is the hard ceiling on
   auto-integration from this source.
 - Dashboard: `frontend/components/ApiCommand.tsx`, "APIs" tab.
+
+## 10. Session 2026-08-15 — what changed
+
+**394 tests. `python -m evaluation.mutation_check` = 45 guards, all CAUGHT.**
+Three commits, `3c8b1aa..b473383`, each deployed and the Action conclusion read.
+
+### Mobile IA (priority 1) — DONE, verified live
+
+The left rail was **first in the document**. Desktop turned that into a left
+column; a phone collapsed the grid, and document order became reading order.
+Measured on the built static export at 375x812:
+
+| | before | after |
+|---|---|---|
+| "Total Revenue" | y=1064 | **y=241** (screen is 812 tall) |
+| tab strip | y=1489 | y=725 |
+| document height | 2065 | 1387 |
+| rail | 722px at y=305 | 69px at y=1240 |
+
+Main column is now first in source and claims `lg:col-start-2`; the rail is
+second and pinned back to `lg:col-start-1`. **Explicit grid placement, not
+`order:`** — reading order and tab order follow the source, so the numbers
+come first for a screen reader on desktop too. Revenue spans full width on a
+phone. The $0 explainer moved below the cards. The rail collapses behind one
+line carrying real counts, and says "loading…" rather than "0 connected" when
+nothing has arrived.
+
+- **Found while verifying, pre-existing:** the tab strip's
+  `sm:overflow-visible` assumed the tabs fit above `sm`. They do not — fifteen
+  tabs, ~1092px, inside a **999px main column** on a 1280px laptop.
+  `document.body.scrollWidth` was **1338 against a 1280 viewport**: a
+  horizontal scrollbar on the whole dashboard. The scroller now stays live at
+  every width.
+
+### The agent tool surface (priority 2) — DONE
+
+`weather.current`, `geo.geocode`, `finance.exchange_rates`, `security.headers`
+are registered in `engines/adapters.py::register_all()`. `weather.current`
+takes a place name **or** a coordinate; "weather in Sialkot" is one call for
+the caller and two upstream, and the caller sees neither. No place and no
+coordinate is refused, not defaulted.
+
+- **`Tool.invoke` treated "did not raise" as success.** That holds while every
+  adapter signals by raising — these do not, because a provider being down is
+  a normal outcome, so they return `{"ok": False}`. A weather lookup that
+  reached nobody came back as a SUCCESSFUL tool run, emitted `TOOL_INVOKED`,
+  and `reflection.py`'s failure counters never saw it. Fixed.
+- **`/api/tools` is founder-only** — 403 for a guest, 401 unauthenticated. The
+  live registry cannot be checked without Abdullah's token.
+- **Nothing in the dashboard renders `/api/tools`.** These are reachable by an
+  agent and by the API, and invisible in the UI.
+
+### A fifth capability (priority 3) — DONE, one adapter, chosen not counted
+
+100 of 788 probes return usable JSON and most are Games & Comics, Anime and
+Personality quizzes. **Do not pad the count from that list.** The only entries
+that measure something Titan already sells an opinion about were the Mozilla
+scanners.
+
+- The catalogue's Observatory entry points at a GitHub README, and the host
+  that README documents (`http-observatory.security.mozilla.org`) is **DEAD —
+  502 on GET and POST, measured 2026-08-15**. The live service is MDN's v2 API
+  at `observatory-api.mdn.mozilla.net`, and **`GET /api/v2/scan` is a 404** —
+  it answers to POST only. An adapter written from the catalogue would have
+  been a GET against a dead host.
+- `domainsdb.info` was dropped: catalogue says `auth=none`, live returns 401.
+- **`api_runtime` now accepts POST.** Bounded deliberately: GET and POST only,
+  everything else BLOCKED before a connection opens, and **POST never carries
+  a body**. A body would turn the single audited egress into a general-purpose
+  write channel to 1,675 origins.
+- Titan's own site scores **B+ / 80, 9 of 10 tests passed**.
+  `triadthreadstudio.com` returns HTTP 422 — reported as a failed scan, never
+  as a zero. Mozilla serves a **cached** scan, so `scanned_at` always travels
+  with the grade.
+
+### Tooling
+
+- **`mutation_check` round-tripped source through TEXT mode**, which reads CRLF
+  as LF and writes LF back. Backend `.py` are LF so nothing was ever hit, but
+  **frontend `.tsx` are CRLF in the working tree** — mutating one would have
+  rewritten its line endings and then fired its own FATAL restore check. It
+  reads and restores **bytes** now. That is what made the four frontend guards
+  possible.
+- The frontend guards are source-inspection tests (no JS runner in this repo)
+  and **strip `{/* */}` comments first** — the comments explaining them quote
+  the exact class names they assert on.
+
+### Still true, and worth knowing before the next change
+
+- `test_a_failing_processor_reports_the_real_error` takes **~10.8s and a real
+  network path**, which is most of the suite's run-to-run variance (27s–49s
+  observed) and the source of the urllib3 SOCKS warning. Not investigated.
 
 # PROMPT FOR NEXT SESSION
 
