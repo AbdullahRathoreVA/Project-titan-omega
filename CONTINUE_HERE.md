@@ -177,8 +177,17 @@ Every commit was verified live in production before being called done.
    Dockerfile, SSRF guard, token auth, README. It needs a container host with
    ~1GB RAM (Chromium OOMs below that), then two env vars on the Space.
    Nothing else is missing. See `services/renderer/README.md`.
-9. **A phone number and postal address Titan can publish.** Caps its own
-   pages at 89/B and is the last failing check on all 25.
+9. **A postal address Titan can publish** — *partly resolved 2026-08-15.*
+   The mechanism is built and deployed (`core/contact.py`, §10). It ships
+   UNSET, so the pages are still 89/B until Space variables are set.
+   - **Phone: agreed.** `+92 321 8811027` — he chose the international form
+     over `03218811027` and confirmed he is willing to have it public
+     permanently. **Not committed to the repo**: publishing on the website is
+     reversible, a public git history is not, and only the first was agreed.
+   - **Address: still missing.** He gave `52200`, which is a POSTCODE, not an
+     address. Needs `TITAN_STREET`, `TITAN_LOCALITY`, `TITAN_COUNTRY`.
+     **Do not guess which city 52200 is** — Titan refuses to publish a
+     partial address precisely so nobody fills the gap with a plausible one.
 
 ---
 
@@ -479,6 +488,31 @@ scanners.
 - The frontend guards are source-inspection tests (no JS runner in this repo)
   and **strip `{/* */}` comments first** — the comments explaining them quote
   the exact class names they assert on.
+
+### Titan's own contact details — `core/contact.py`
+
+Env-driven single source of truth, rendered into the landing-page footer as
+**visible text** (`_visible_text` strips scripts, so JSON-LD alone would not
+satisfy Titan's own check) and into the Organization node.
+
+- **A partial address is published as NOTHING.** A bare postcode matches
+  neither half of `_has_address` and is not an address a letter can reach,
+  which is the actual §5 DDG obligation. `status()` names the missing vars.
+- Phone and address are independent — different halves of the NAP check.
+- A local-format number is published **verbatim and flagged**, never
+  rewritten: asserting a country code is asserting a country.
+- Turn it on with Space variables `TITAN_PHONE`, `TITAN_STREET`,
+  `TITAN_LOCALITY`, `TITAN_POSTCODE`, `TITAN_COUNTRY`. Verified live in the
+  unset state: `/compliance/de` renders with no `<address>` and no placeholder.
+
+**OPEN, Abdullah's call — `_has_address` trusts any `<address>` element.**
+Found by testing the above: a phone-only block wrapped in `<address>` made
+Titan's own audit report a postal address on a page that has none. Fixed for
+Titan's own pages (the element is emitted only when there is an address in
+it, with a test). **The heuristic is unchanged for CLIENT sites** — a client
+using `<address>` for a phone still scores a pass it may not deserve. Same
+shape as the Cloudflare-beacon false pass. Fixing it lowers scores on
+already-audited sites, so it was not slipped into that commit.
 
 ### Still true, and worth knowing before the next change
 
