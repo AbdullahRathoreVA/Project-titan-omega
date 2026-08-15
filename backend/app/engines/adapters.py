@@ -20,7 +20,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from ..core import tools
+from ..core import api_adapters, tools
 
 TIMEOUT = 20
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -160,6 +160,36 @@ def _crm_sync(**_) -> dict:
                 "source": "compai_crm"}
 
 
+# -------------------------------------------------- keyless data capabilities --
+# The four things Titan can genuinely call today. They live in
+# `core/api_adapters.py`, which owns the provider choices and the evidence for
+# them, and they reach the network only through `api_runtime` (SSRF guard,
+# timeout, bounded read, breaker). What is added here is the AGENT SURFACE:
+# an agent asks a capability for what it wants and never learns which vendor,
+# how many of them, or in what order.
+#
+# `weather.current` is the whole point. "Weather in Sialkot" is one call for
+# the caller and two upstream — geocode the name, then fetch the forecast for
+# the coordinate it returns. The caller sees neither step.
+
+def _weather(place: str = "", latitude=None, longitude=None, **_) -> dict:
+    """Weather by place name, or by coordinate if the caller already has one."""
+    if str(place or "").strip():
+        return api_adapters.weather_for_place(place)
+    if latitude is None or longitude is None:
+        return {"ok": False, "capability": "weather.current",
+                "error": "Give a place name, or both latitude and longitude."}
+    return api_adapters.weather(latitude, longitude)
+
+
+def _exchange_rates(base: str = "USD", symbols=None, **_) -> dict:
+    return api_adapters.exchange_rates(base, list(symbols) if symbols else None)
+
+
+def _geocode(place: str = "", limit: int = 3, **_) -> dict:
+    return api_adapters.geocode(place, limit)
+
+
 # ------------------------------------------------------------- registration --
 def register_all() -> None:
     """Idempotent: safe to call on every boot."""
@@ -212,3 +242,22 @@ def register_all() -> None:
         capability="External long-term agent memory store",
         run=lambda **_: {},
         provenance_key="tencent_memory"))
+
+    # No env_required and no package_required, so these report "ready" — and
+    # unlike everything above, that is not aspirational. They need no key,
+    # which is exactly why they could be verified against the live services
+    # before the adapters were written.
+    tools.register(tools.Tool(
+        name="weather.current",
+        capability="Current weather for a place name or a coordinate",
+        run=_weather))
+
+    tools.register(tools.Tool(
+        name="geo.geocode",
+        capability="Resolve a place name to coordinates, country and timezone",
+        run=_geocode))
+
+    tools.register(tools.Tool(
+        name="finance.exchange_rates",
+        capability="Live exchange rates, with a second provider behind the first",
+        run=_exchange_rates))

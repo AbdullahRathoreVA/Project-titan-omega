@@ -155,6 +155,18 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "../frontend/components/Sidebar.tsx",
      "if (channels.length > 0) {", "if (true) {",
      "collapsed_rail_summary"),
+    # --- agent tool surface ------------------------------------------------
+    ("tools: a self-reported failure is a failure", "app/core/tools.py",
+     'if isinstance(payload, dict) and payload.get("ok") is False:',
+     "if False:", "reports_its_own_failure"),
+    ("tools: weather refuses without a location",
+     "app/engines/adapters.py",
+     "if latitude is None or longitude is None:", "if False:",
+     "refuses_rather_than_guessing"),
+    ("tools: the keyless capabilities stay registered",
+     "app/engines/adapters.py",
+     'name="weather.current",', 'name="weather.unregistered",',
+     "sialkot or keyless_capabilities"),
 ]
 
 

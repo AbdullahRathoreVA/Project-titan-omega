@@ -226,11 +226,26 @@ class Tool:
                       "content being sent."))
 
         try:
-            return _finish(ToolResult(True, self.name, data=self.run(**kwargs)))
+            payload = self.run(**kwargs)
         except Exception as exc:
             return _finish(ToolResult(
                 False, self.name,
                 error=f"{type(exc).__name__}: {str(exc)[:200]}"))
+
+        # An adapter that reports its OWN failure is a failure. This used to
+        # treat "did not raise" as success, which is fine while every adapter
+        # signals by raising — but the API capabilities do not. A provider
+        # being down is a normal outcome for them, not an exception, so they
+        # return {"ok": False, "error": ...}. Under the old rule a weather
+        # lookup that reached nobody came back as a successful tool run whose
+        # data happened to say otherwise, and the failure counters in
+        # reflection.py would never have seen it.
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            return _finish(ToolResult(
+                False, self.name, data=payload,
+                error=str(payload.get("error")
+                          or "The capability reported failure without a reason.")))
+        return _finish(ToolResult(True, self.name, data=payload))
 
 
 # ------------------------------------------------------------------ registry --

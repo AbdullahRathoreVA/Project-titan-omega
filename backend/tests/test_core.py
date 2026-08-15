@@ -6339,3 +6339,99 @@ def test_the_collapsed_rail_summary_never_reports_a_count_it_has_not_got():
     assert "channels.length > 0" in src, "channel counts are no longer guarded"
     assert "heads.length > 0" in src, "agent counts are no longer guarded"
     assert "loading…" in src, "an unloaded rail must say so, not show zeroes"
+
+
+# ── the keyless capabilities on the agent tool surface ─────────────────────
+#
+# The adapters were already tested directly. These test the SURFACE: that an
+# agent reaches them through the one tool interface, and that the interface
+# tells the truth about how the call went. Network is stubbed as above.
+
+_SIALKOT = {
+    "results": [{"name": "Sialkot", "country": "Pakistan", "country_code": "PK",
+                 "admin1": "Punjab", "latitude": 32.4927, "longitude": 74.5313,
+                 "timezone": "Asia/Karachi", "population": 655852}]
+}
+_FORECAST = {
+    "latitude": 32.5, "longitude": 74.5,
+    "current": {"temperature_2m": 34.2, "relative_humidity_2m": 52,
+                "weather_code": 1, "wind_speed_10m": 9.4,
+                "time": "2026-08-15T07:00"},
+}
+
+
+def test_an_agent_asks_for_weather_in_sialkot_and_never_sees_two_providers():
+    """The point of the capability layer. The caller supplies a place name —
+    no coordinate, no geocoder, no ordering of calls — and gets a temperature.
+    Two upstream requests happened; nothing in the request said so."""
+    from app.core import tools as tool_layer
+    from app.engines import adapters
+
+    adapters.register_all()
+    tool = tool_layer.get("weather.current")
+    assert tool is not None, "weather.current is not on the tool surface"
+
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    try:
+        _fake_runtime(mp, {"geocoding-api": (True, _SIALKOT),
+                           "/v1/forecast": (True, _FORECAST)})
+        res = tool.invoke(place="Sialkot")
+    finally:
+        mp.undo()
+
+    assert res.ok is True, res.error
+    assert res.data["place"]["name"] == "Sialkot"
+    assert res.data["place"]["country"] == "Pakistan"
+    assert res.data["weather"]["temperature_c"] == 34.2
+    assert res.data["weather"]["conditions"] == "mainly clear"
+
+
+def test_a_capability_that_reports_its_own_failure_is_not_a_successful_run():
+    """`invoke` used to read "did not raise" as success. These adapters do not
+    raise when a provider is down — that is a normal outcome for them — so a
+    weather lookup that reached nobody came back ok=True with data saying
+    otherwise, and reflection.py's failure counters never saw it."""
+    from app.core import tools as tool_layer
+    from app.engines import adapters
+
+    adapters.register_all()
+
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    try:
+        _fake_runtime(mp, {"geocoding-api": (False, None, "TIMEOUT")})
+        res = tool_layer.get("weather.current").invoke(place="Sialkot")
+    finally:
+        mp.undo()
+
+    assert res.ok is False
+    assert res.error, "a failed tool run must carry a reason"
+    assert res.data.get("ok") is False
+
+
+def test_weather_refuses_rather_than_guessing_a_location():
+    """No place and no coordinate is a question Titan cannot answer. Picking a
+    default city would be a fabricated observation with a real number on it."""
+    from app.core import tools as tool_layer
+    from app.engines import adapters
+
+    adapters.register_all()
+    res = tool_layer.get("weather.current").invoke()
+    assert res.ok is False
+    assert "place name" in res.error
+
+
+def test_the_keyless_capabilities_are_ready_rather_than_aspirational():
+    """Every other tool in the registry is waiting on a key Abdullah does not
+    have. These three need none, which is why they could be verified against
+    the live services at all."""
+    from app.core import tools as tool_layer
+    from app.engines import adapters
+
+    adapters.register_all()
+    for name in ("weather.current", "geo.geocode", "finance.exchange_rates"):
+        tool = tool_layer.get(name)
+        assert tool is not None, f"{name} is not registered"
+        assert tool.status() == "ready", f"{name}: {tool.describe()}"
+        assert tool.outbound is False, f"{name} must not act outside Titan"
