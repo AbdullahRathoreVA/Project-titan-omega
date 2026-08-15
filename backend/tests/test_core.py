@@ -1023,6 +1023,8 @@ def test_every_founder_endpoint_is_hidden_from_guests(monkeypatch):
         # integration audit it reports is 0 adapters. Useful to show a
         # prospect what Titan can reach for.
         "/api/apis", "/api/apis/stats", "/api/apis/capability",
+        "/api/apis/integrated", "/api/apis/live/rates",
+        "/api/apis/live/weather",
         # Demo-safe by substitution or by containing no private data.
         "/api/status", "/api/divisions", "/api/agents", "/api/opportunities",
         "/api/feed", "/api/executions", "/api/connectors", "/api/posts",

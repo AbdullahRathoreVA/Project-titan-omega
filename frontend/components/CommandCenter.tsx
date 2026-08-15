@@ -57,6 +57,7 @@ import { TelegramCenter } from "./TelegramCenter";
 import { JobRadar } from "./JobRadar";
 import { FinanceCenter } from "./FinanceCenter";
 import { CrmLite } from "./CrmLite";
+import ApiCommand from "./ApiCommand";
 import { AICity } from "./AICity";
 import { BootSequence } from "./BootSequence";
 import { KnowledgeGraph } from "./KnowledgeGraph";
@@ -86,7 +87,7 @@ export function CommandCenter() {
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
   const [view, setView] = useState<
-    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm" | "clients" | "seo" | "executive" | "voice"
+    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm" | "clients" | "seo" | "executive" | "voice" | "apis"
   >("universe");
   const [executions, setExecutions] = useState<ExecutionItem[]>([]);
   const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
@@ -360,6 +361,7 @@ export function CommandCenter() {
               ["jobs", "Job Radar", false],
               ["finance", "Finance", false],
               ["crm", "CRM", false],
+              ["apis", "APIs", false],
             ] as const).filter(([, , founderOnly]) => !(founderOnly && isGuest()))
             ).map(([v, label]) => (
               <button
@@ -440,6 +442,8 @@ export function CommandCenter() {
           {view === "finance" && <FinanceCenter />}
 
           {view === "crm" && <CrmLite />}
+
+          {view === "apis" && <ApiCommand />}
 
           {view === "dashboard" && (
           <>

@@ -106,6 +106,21 @@ async function del<T>(path: string): Promise<T | null> {
 }
 
 export const api = {
+  // External API command centre. `get` returns the fallback on any error, so
+  // these pass a shaped failure object rather than null — the panel renders
+  // the reason instead of silently showing nothing.
+  apisIntegrated: () =>
+    get<any>("/apis/integrated", { integrated: { capabilities: [], count: 0, providers: [], note: "" }, catalogued: 0, adapters_written: 0 }),
+  apisRates: (base = "USD", symbols = "PKR,EUR,GBP") =>
+    get<any>(`/apis/live/rates?base=${encodeURIComponent(base)}&symbols=${encodeURIComponent(symbols)}`,
+      { ok: false, error: "Could not reach the rates endpoint." }),
+  apisWeather: (place: string) =>
+    get<any>(`/apis/live/weather?place=${encodeURIComponent(place)}`,
+      { ok: false, error: "Could not reach the weather endpoint." }),
+  apisSearch: (q: string, limit = 8) =>
+    get<any>(`/apis?q=${encodeURIComponent(q)}&limit=${limit}`,
+      { total: 0, results: [] }),
+
   status: () => get<EmpireStatus>("/status", MOCK.status),
   divisions: () => get<DivisionView[]>("/divisions", MOCK.divisions),
   agents: () => get<AgentView[]>("/agents", MOCK.agents),

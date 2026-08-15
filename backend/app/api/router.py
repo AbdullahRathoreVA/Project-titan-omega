@@ -1530,6 +1530,35 @@ def api_catalogue_stats() -> dict:
             "categories": api_registry.categories()}
 
 
+@router.get("/apis/integrated", tags=["system"])
+def api_integrated() -> dict:
+    """What Titan can genuinely CALL, versus what it has merely catalogued.
+
+    The dashboard reads this to show the honest number. It is 4 capabilities
+    against 3 providers, beside 1,675 catalogued entries with 0 adapters.
+    """
+    from ..core import api_adapters, api_registry
+    return {"integrated": api_adapters.integrated(),
+            "catalogued": api_registry.stats()["total"],
+            "adapters_written": api_registry.stats()["adapters_written"]}
+
+
+@router.get("/apis/live/rates", tags=["system"])
+def api_live_rates(base: str = Query(default="USD"),
+                   symbols: str = Query(default="PKR,EUR,GBP")) -> dict:
+    """Live exchange rates through the hardened runtime, with fallback."""
+    from ..core import api_adapters
+    wanted = [s.strip() for s in symbols.split(",") if s.strip()][:12]
+    return api_adapters.exchange_rates(base, wanted)
+
+
+@router.get("/apis/live/weather", tags=["system"])
+def api_live_weather(place: str = Query(..., min_length=2)) -> dict:
+    """Geocode a place name then fetch its weather — two providers, one call."""
+    from ..core import api_adapters
+    return api_adapters.weather_for_place(place)
+
+
 @router.get("/apis/capability", tags=["system"])
 def api_capability(intent: str = Query(..., min_length=2),
                    limit: int = Query(default=5, ge=1, le=25)) -> dict:
