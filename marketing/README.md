@@ -16,7 +16,8 @@ HTTP responses fetched from the backend while the film was being rendered.
 | `FINAL/Titan_Omega_Hero_1920x1080.mp4` | 16:9, 1920×1080 | 32.3s | YouTube · site · investors |
 | `FINAL/Titan_Omega_Square_1080x1080.mp4` | 1:1, 1080×1080 | 18.0s | Feed posts · LinkedIn |
 
-All are H.264 / AAC, 30fps, `+faststart`, with an original score.
+All are H.264 / AAC, 30fps, `+faststart`, with an original score and a
+three-voice cast.
 
 ## The idea
 
@@ -48,7 +49,7 @@ cd frontend && TITAN_API_URL=http://127.0.0.1:8000 npx next dev -p 3000
 
 node marketing/PROJECT/render.mjs vertical /tmp/frames_v
 node marketing/PROJECT/render.mjs hero     /tmp/frames_h
-python marketing/PROJECT/score.py vertical '{...beats...}' 18.0 out.wav
+python marketing/PROJECT/audio_build.py vertical out.wav   # score + voices
 ffmpeg -framerate 30 -i /tmp/frames_v/f%05d.png -i out.wav ... out.mp4
 ```
 
@@ -71,12 +72,38 @@ second cut that plays as energy.
 
 ### The score
 
-`PROJECT/score.py` synthesises the music and sound design from arithmetic —
-there is no library and no stock bed, so every hit is placed on the exact second
-of the cut it belongs to. 72 BPM, D minor. A 41 Hz sub carries the weight, a
-detuned pad carries the harmony, and the UI ticks stand in for the product's own
-`chime()`/`blip()`. The loudest event is the impact on "$0"; the second loudest
-is the 0.55s of true silence immediately before it.
+`PROJECT/score2.py` synthesises the music from arithmetic — no library, no stock
+bed — so every hit lands on the exact second of the cut it belongs to. 72 BPM,
+D minor, progression Dm - Bb - F - C.
+
+The first version was harmonically static: a sub, a pad, some ticks. It had
+weight and no forward motion, and short-form retention research is blunt about
+the cost — most drop-off happens in seconds 0-3 and the audio punch has to
+arrive inside that window, not after a swell into one. v2 adds a hook in the
+first half second, a 16th-note arpeggio for momentum, kick/hat/sub-drop
+percussion, and stacked braam stabs on the refusals. The loudest event is the
+impact on "$0"; the second loudest is the 0.55s of true silence before it.
+
+### The voice cast
+
+`PROJECT/voice.py`. No neural TTS was available: piper and kokoro install from
+PyPI but their weights live on huggingface.co, which this session's egress
+policy blocks. espeak-ng with MBROLA diphone voices from the Ubuntu archive was
+available, and raw it sounds like a screen reader.
+
+So it is not used raw. Titan is an AI command centre, and a *machine* voice is
+on-brand rather than a compromise — the convention of MOTHER in Alien or TARS in
+Interstellar. Three characters, each pitched, filtered and spaced differently:
+
+- **TITAN** — the system. Low, wide, detuned against itself.
+- **FOUNDER** — the human line. Closest to natural, dry, no doubling.
+- **AGENT** — the refusals. Bandlimited like comms, hard-compressed.
+
+`voice.duck()` pulls the music down under speech following the voice's own
+envelope. `audio_build.py` asserts that no line overlaps another, that nothing
+crosses the silence before the impact, and that nothing runs past the end — the
+first pass had a line bleeding straight through that silence, so it is checked
+rather than eyeballed.
 
 ## What is deliberately not in these films
 
