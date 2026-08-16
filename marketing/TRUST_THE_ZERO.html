@@ -861,36 +861,42 @@ text, logos, additional shapes, colour shifts, background motion, stars, grid</p
 <section>
   <div class="sec-head">
     <div class="eyebrow">09</div>
-    <h2>Sound architecture</h2>
+    <h2>Sound architecture <span style="color:var(--emerald);font-size:.7em">— built</span></h2>
   </div>
   <div class="col">
     <p>
-      <b>72 BPM</b> throughout — slow enough that cuts on the beat feel deliberate rather than
-      rhythmic, which is what separates a product film from a trailer. Key: <b>D minor</b>, so the
-      sonic logo can resolve to the tonic.
+      Synthesised from arithmetic in <code>PROJECT/score2.py</code> — no library, no stock bed — so
+      every hit lands on the exact second of the cut it belongs to. <b>72 BPM, D minor</b>,
+      progression <b>Dm · Bb · F · C</b>.
+    </p>
+
+    <div class="kill">
+      <b>What was wrong with the first version.</b> It was harmonically static: one held chord, a
+      sub, some ticks. Weight with no forward motion — and it opened on a slow swell. Short-form
+      retention research is blunt about the cost: most drop-off happens in seconds 0–3, and the
+      audio punch has to arrive <em>inside</em> that window rather than build toward one. A film
+      whose first second is a fade-in has already lost the viewers it was trying to stop.
+    </div>
+
+    <p>
+      <b>Instrumentation.</b> A 28–70Hz sub carrying the weight; a detuned three-voice pad on the
+      progression; a <b>16th-note arpeggio</b> that is the actual engine of the track; kick, hats
+      and sub-drops on the grid; and stacked <b>braam</b> stabs — distorted fifths and octaves with
+      a pitch fall — reserved for the refusals. Risers sweep pitch, brightness and level together,
+      because one moving parameter reads as a fade and three read as tension.
     </p>
     <p>
-      <b>Instrumentation.</b> A sub sine at 40–55Hz carrying all the weight; a single detuned analogue
-      pad; granular processed room tone from the product's own UI clicks; one felt-piano note reserved
-      exclusively for the black at 00:52. No drums until Act 5, and then only a single percussive stab
-      per cut — never a loop.
+      <b>Energy curve.</b> <em>0.0s: the hook lands immediately</em> — sub-drop, a bright tick and a
+      bell, not a swell. Boot: impact, braam, the groove and arp enter. Approach: riser tightens.
+      <b>0.55s of true digital silence before the impact</b>, cut in rather than hoped for. Then the
+      drop — the loudest event in the film, on the frame that reads <code>$0</code>. Refusals: three
+      braams a semitone apart, climbing. Scale: fullest arrangement, arp an octave up. Then
+      everything cuts to black, and the sonic logo resolves D → A.
     </p>
     <p>
-      <b>Energy curve.</b> 0–4s: sub only, ~15%. 4–11s: bass enters on the boot lift, climbs to 55%
-      as the UI resolves. 11–15s: <em>thins deliberately</em> to a single sustained note, ~30% —
-      the drop before the drop. <b>15.0–16.2s: absolute silence.</b> 16.2s: one impact at 100%,
-      then bed at 45%. 22–34s: three stabs, each a semitone up. 34–44s: full arrangement, widest
-      stereo, 80%. 44–52s: narrowing. <b>52s: everything cuts.</b> 52.9s: one felt-piano note.
-      Silence under the URL.
-    </p>
-    <p>
-      <b>UI sound design.</b> Sample the product's real <code>chime()</code>, <code>blip()</code> and
-      <code>tap()</code> from <code>lib/sound.ts</code> rather than a library. Metric cards tick in
-      sequence, quantised to 1/16. Each refusal gets a short dry click — the sound of a door not opening.
-    </p>
-    <p>
-      <b>Sonic logo.</b> Two notes, D → A, on the felt piano with a long tail, under the omega. Four
-      seconds total. Reuse it unchanged on every asset forever; that's what makes it a logo.
+      <b>Verified on the finished masters</b>, not assumed: zero clipped samples, silence intact at
+      6.0–6.4s (vertical) and 10.1–10.5s (hero), and the loudest frame sitting exactly on the impact
+      in both.
     </p>
   </div>
 </section>
@@ -899,10 +905,59 @@ text, logos, additional shapes, colour shifts, background motion, stars, grid</p
 <section>
   <div class="sec-head">
     <div class="eyebrow">10</div>
-    <h2>Voiceover</h2>
+    <h2>The voice cast <span style="color:var(--emerald);font-size:.7em">— built</span></h2>
   </div>
   <div class="col">
-    <p><b>60-second hero.</b> 78 words. Slashes are hard pauses.</p>
+    <p>
+      Three speaking characters, not one narrator. <code>PROJECT/voice.py</code>.
+    </p>
+
+    <div class="note">
+      <b>Why the voices are synthetic on purpose.</b> No neural TTS was reachable here — piper and
+      kokoro install from PyPI, but their weights live on <code>huggingface.co</code>, which this
+      session's egress policy blocks. What the Ubuntu archive does provide is espeak-ng driving
+      MBROLA diphone voices, and raw those sound like a 2010 screen reader. So they are not used
+      raw. Titan is an AI command centre, and a <em>machine</em> voice is on-brand rather than a
+      compromise — the same convention as MOTHER in <em>Alien</em> or TARS in <em>Interstellar</em>.
+      Each line is pitched, filtered, doubled and spaced to read as a designed system voice.
+    </div>
+
+    <div class="stack" style="margin:1.4rem 0">
+      <div class="card">
+        <h3>TITAN — the system</h3>
+        <p>Low, wide, detuned against itself. Chorused so two near-identical copies sit slightly
+        apart, which is what stops it reading as a screen reader. Carries the counts and the verdicts.</p>
+      </div>
+      <div class="card">
+        <h3>FOUNDER — the human line</h3>
+        <p>Closest to natural: least processing, no doubling, short reverb so it sits in a room
+        rather than a hangar. Speaks only the personal lines.</p>
+      </div>
+      <div class="card">
+        <h3>AGENT — the refusals</h3>
+        <p>Bandlimited to 420–3400Hz like comms, hard-compressed, urgent. Reads the 409, the missing
+        self-audit score, and the catalogued-vs-wired ratio.</p>
+      </div>
+    </div>
+
+    <p>
+      <b>The mix.</b> <code>voice.duck()</code> pulls the music down under speech following the
+      voice's own amplitude envelope, so it also rides the gaps between lines. Captions stay in the
+      picture regardless — most feed views are muted, and the voice is there to add weight and a
+      second character, not to read the screen aloud.
+    </p>
+    <p>
+      <b>Two defects the build caught.</b> A line bled straight through the silence before the
+      impact — the strongest moment in the film. And <em>"Revenue. Zero."</em> was landing on the
+      impact stack itself, buried at <b>23% speech-band share</b> against 50%+ everywhere else;
+      moving it just past the transient fixed it and reads better anyway — the hit arrives, then the
+      system names it. <code>audio_build.py</code> now asserts that no line overlaps another,
+      crosses the silence, or runs past the end, so the build fails rather than shipping mud.
+    </p>
+
+    <hr class="soft">
+
+    <p><b>60-second hero — the written script</b>, kept for a human read. 78 words. Slashes are hard pauses.</p>
     <pre>My AI company has made zero dollars.
 
 It has a hundred and two digital employees. Twelve divisions.
@@ -927,7 +982,8 @@ and publishes the score in public. //
 It hasn't earned anything yet.
 That's the first true thing it told me.</pre>
 
-    <p><b>15-second cut.</b> 34 words — the version already rendered runs on captions alone; this is the VO track if you add one.</p>
+    <p><b>18-second cut.</b> 34 words. The rendered film speaks a tightened version of this, split
+    between FOUNDER and TITAN.</p>
     <pre>My AI company has made zero dollars. //
 
 A hundred and two agents. Twelve divisions. //
@@ -1134,26 +1190,26 @@ Trust the zero.</pre>
   </div>
   <div class="col">
     <p>
-      <b>Already done, nothing needed from you.</b> The 15-second cut is rendered and committed at
-      <code>marketing/video/</code> in both 1080×1920 and 540×960, alongside the shot stills and the
-      two capture scripts.
+      <b>Already done, nothing needed from you.</b> All three films are rendered, scored, voiced
+      and committed under <code>marketing/FINAL/</code> as H.264/AAC MP4 — vertical 1080&times;1920
+      (18.0s), hero 1920&times;1080 (32.3s) and square 1080&times;1080 (18.0s). They play natively on
+      iPhone, Android and every platform. Posting captions for all three are in
+      <code>marketing/CAPTIONS.md</code>.
     </p>
     <p>
-      <b>To re-cut after any product change</b> — from a Claude Code session, no desktop:
-      <code>node marketing/director.mjs</code> against a running local instance. The edit is code, so
-      it reproduces exactly and always reflects the current product.
+      <b>To re-cut after any product change</b> — from a Claude Code session, no desktop. Boot the
+      backend and front end, then:
+      <code>node marketing/PROJECT/render.mjs vertical /tmp/frames_v</code>,
+      <code>python marketing/PROJECT/audio_build.py vertical out.wav</code>, and mux with ffmpeg.
+      The edit is code, so it reproduces exactly and always reflects the current product — including
+      the live refusal responses, which are fetched at render time rather than typed in.
     </p>
     <p>
-      <b>WebM, not MP4.</b> The ffmpeg available here is compiled with VP8 only — no H.264 encoder.
-      WebM uploads fine to YouTube, X and LinkedIn. Instagram and TikTok prefer MP4: convert with any
-      browser-based converter (CloudConvert works from a phone), or run
-      <code>ffmpeg -i in.webm -c:v libx264 -crf 20 -pix_fmt yuv420p out.mp4</code> anywhere with a
-      normal ffmpeg build. <b>DESKTOP REQUIRED</b> only if you want to grade or add music in an editor
-      — CapCut mobile handles both, and is the path I'd take.
-    </p>
-    <p>
-      <b>Audio.</b> The cut is silent by design; captions carry it and most feed views are muted.
-      Add the sound bed in CapCut on the phone using the architecture in section 09.
+      <b>Audio is baked in.</b> Nothing to add in an editor. If you want to swap the music or record
+      a human read over it, the score and the voice cast are separate modules
+      (<code>score2.py</code>, <code>voice.py</code>) and the mux is one ffmpeg line.
+      <b>DESKTOP REQUIRED</b> only if you want to grade in a full editor — CapCut mobile is enough
+      for anything else.
     </p>
     <p>
       <b>The one product fix worth making first:</b> the Universe view's overlapping labels at 393px.
