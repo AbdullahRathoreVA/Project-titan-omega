@@ -7,3 +7,6 @@
 *.log
 .env
 .env.local
+
+# Promotional films — never needed by the container build.
+marketing
