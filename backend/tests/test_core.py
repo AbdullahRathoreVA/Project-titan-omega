@@ -6949,6 +6949,217 @@ def test_the_approval_gate_holds_over_http_and_says_why(client, improving):
     assert client.post(f"/api/improve/{pid}/activate").status_code == 200
 
 
+# ── cost-aware model routing ───────────────────────────────────────────────
+#
+# The catalogue is stubbed so prices are deterministic. What is under test is
+# the POLICY, not OpenRouter's price list.
+
+@pytest.fixture()
+def routed(monkeypatch):
+    from app.core import model_catalog, model_router, routing
+
+    model_router.reset()
+    routing.reset()
+    for var in ("TITAN_TIER_CLAUDE", "TITAN_TIER_GROQ", "TITAN_TIER_HERMES",
+                "TITAN_TIER_GEMINI", "TITAN_TIER_OPENAI",
+                "TITAN_AI_DAILY_BUDGET_USD"):
+        monkeypatch.delenv(var, raising=False)
+
+    prices = {"claude-opus-4-8": 0.05, "openai/gpt-oss-120b": 0.001,
+              "gpt-4o-mini": 0.002}
+
+    def fake_estimate(model_id, *, prompt_tokens=None, completion_tokens=None):
+        if model_id not in prices:
+            return {"usd": None, "measured": False, "reason": "not catalogued"}
+        return {"usd": prices[model_id], "measured": True}
+
+    monkeypatch.setattr(model_catalog, "estimate_cost", fake_estimate)
+    yield {"prices": prices}
+    model_router.reset()
+
+
+def test_cheap_work_goes_to_the_cheapest_eligible_provider(routed):
+    from app.core import model_router as mr
+
+    d = mr.decide(mr.Task("extract_fields", tier=mr.FAST),
+                  ["claude", "groq", "openai"], prompt_chars=400)
+    assert d["selected"] == "groq", d["candidates"]
+    assert d["policy"] == "cost-first"
+
+
+def test_a_high_risk_task_is_never_dropped_to_a_cheap_tier(routed):
+    """The security property. A cheaper model is not automatically acceptable
+    for a high-impact action just because it is cheaper."""
+    from app.core import model_router as mr
+
+    d = mr.decide(mr.Task("approve_payout", tier=mr.FAST, high_risk=True),
+                  ["hermes", "groq", "claude"], prompt_chars=400)
+
+    assert d["tier"] == mr.STANDARD, "high risk was served at the FAST floor"
+    assert "hermes" in d["dropped_below_tier"]
+    assert d["selected"] != "hermes"
+
+
+def test_a_premium_task_refuses_rather_than_silently_downgrading(routed):
+    """No eligible provider is a refusal. Quietly serving strategic reasoning
+    from a free rotating catalogue would be the failure this prevents."""
+    from app.core import model_router as mr
+
+    d = mr.decide(mr.Task("strategy", tier=mr.PREMIUM), ["hermes", "groq"])
+    assert d["selected"] is None
+    assert d["order"] == []
+    assert "no provider was eligible" in mr.explain(d).lower()
+
+
+def test_an_unknown_price_is_never_treated_as_free(routed):
+    """The -1 sentinel already taught this repo that an unknown price read as
+    a number goes negative. Unknown has to sort LAST on cost, not first."""
+    from app.core import model_router as mr
+
+    # gemini resolves its model at call time, so it has no id to price.
+    d = mr.decide(mr.Task("extract", tier=mr.FAST),
+                  ["gemini", "groq"], prompt_chars=400)
+
+    costs = {c["provider"]: c["estimated_cost_usd"] for c in d["candidates"]}
+    assert costs["gemini"] is None
+    assert d["selected"] == "groq", "an unpriced provider won a cost decision"
+
+
+def test_a_price_the_catalogue_has_not_measured_is_unknown(monkeypatch):
+    """`measured: False` is the catalogue's own "this is not a real published
+    price" flag. Today it always ships alongside `usd: None`, so reading only
+    `usd` happens to work — mutation testing showed the flag check surviving
+    for exactly that reason. This pins the CONTRACT instead: a number arriving
+    with measured=False is unknown, not a price. Without it, a future catalogue
+    that returns a fallback figure would be believed."""
+    from app.core import model_catalog, model_router as mr
+
+    monkeypatch.setattr(
+        model_catalog, "estimate_cost",
+        lambda model_id, **kw: {"usd": 0.001, "measured": False,
+                                "reason": "fallback guess, not published"})
+
+    assert mr.estimated_cost("groq", 400, 100) is None
+
+
+def test_a_cost_ceiling_refuses_an_unknown_estimate(routed):
+    """A caller asking for a guaranteed ceiling gets a refusal, not a guess."""
+    from app.core import model_router as mr
+
+    d = mr.decide(mr.Task("cheap", tier=mr.FAST, max_cost_usd=0.01),
+                  ["gemini", "claude", "groq"], prompt_chars=400)
+
+    assert d["selected"] == "groq"
+    assert "claude" in d["dropped_over_budget"]   # 0.05 > 0.01
+    assert "gemini" in d["dropped_over_budget"]   # unknown, not assumed cheap
+
+
+def test_estimated_cost_is_never_reported_as_actual(routed):
+    from app.core import model_router as mr
+
+    d = mr.decide(mr.Task("x", tier=mr.FAST), ["groq"], prompt_chars=400)
+    assert d["actual_cost_usd"] is None
+    assert d["estimated_cost_usd"] is not None
+    assert "not measured" in d["actual_cost_note"]
+
+    mr.record("x", "groq", ok=True, latency_ms=10, estimated_cost_usd=0.001)
+    econ = mr.economics()
+    assert econ["actual_spend_usd"] is None
+    assert econ["estimated_spend_usd"] == 0.001
+
+
+def test_unpriced_calls_are_counted_separately_not_as_zero(routed):
+    """Summing an unpriced call as $0 makes an expensive provider look free."""
+    from app.core import model_router as mr
+
+    mr.record("t", "gemini", ok=True, latency_ms=5, estimated_cost_usd=None)
+    econ = mr.economics()
+
+    assert econ["by_provider"]["gemini"]["estimated_cost_usd"] is None
+    assert econ["by_provider"]["gemini"]["unpriced_calls"] == 1
+    assert econ["estimated_spend_usd"] is None
+
+
+def test_routing_is_deterministic(routed):
+    from app.core import model_router as mr
+
+    task = mr.Task("same", tier=mr.FAST)
+    chain = ["claude", "groq", "openai"]
+    first = mr.decide(task, chain, prompt_chars=400)["order"]
+    for _ in range(5):
+        assert mr.decide(task, chain, prompt_chars=400)["order"] == first
+
+
+def test_the_router_cannot_reach_any_permission_or_approval_gate():
+    """Choosing a provider is not choosing whether an action is allowed. The
+    AST is parsed rather than grepped — the module's docstring discusses
+    approval gates, so a substring check would fail on the prose."""
+    import ast
+    import inspect
+    from app.core import model_router
+
+    tree = ast.parse(inspect.getsource(model_router))
+    banned = {"approve", "approve_tool", "require_owner", "owns", "publish",
+              "activate", "apply", "invoke"}
+    reached = sorted({n.attr for n in ast.walk(tree)
+                      if isinstance(n, ast.Attribute) and n.attr in banned})
+    assert not reached, f"model_router reaches {reached}"
+
+
+def test_no_budget_configured_is_reported_as_absent_not_as_zero(routed):
+    from app.core import model_router as mr
+
+    status = mr.budget_status()
+    assert status["configured"] is False
+    assert status["limit_usd"] is None
+
+
+def test_a_malformed_budget_does_not_silently_become_a_limit(routed, monkeypatch):
+    from app.core import model_router as mr
+
+    monkeypatch.setenv("TITAN_AI_DAILY_BUDGET_USD", "cheap please")
+    status = mr.budget_status()
+    assert status["configured"] is False and status["limit_usd"] is None
+
+
+def test_the_router_survives_hostile_input(routed):
+    """Adversarial pass. Nothing here may raise — llm.complete() must never
+    explode because a caller passed nonsense."""
+    from app.core import model_router as mr
+
+    for chain in ([], ["not-a-provider"], ["groq", "groq"]):
+        d = mr.decide(mr.Task("x", tier=mr.FAST), chain)
+        assert isinstance(d["order"], list)
+        mr.explain(d)
+
+    # A tier nobody defined must not crash the floor calculation.
+    weird = mr.Task("x", tier="galaxy-brain")
+    assert mr.provider_tier("nonexistent") == mr.FAST
+    try:
+        mr.decide(weird, ["groq"])
+    except ValueError:
+        pass          # an unknown tier is allowed to be rejected, not to hang
+
+    # Extreme sizes must not produce a negative or absurd estimate.
+    d = mr.decide(mr.Task("x", tier=mr.FAST), ["groq"],
+                  prompt_chars=10_000_000, max_tokens=1)
+    cost = d["estimated_cost_usd"]
+    assert cost is None or cost >= 0
+
+
+def test_an_existing_call_site_keeps_working_without_a_task(routed, monkeypatch):
+    """25 call sites pass no task. They must behave exactly as before."""
+    from app.core import llm
+
+    monkeypatch.setenv("GROQ_API_KEY", "x")
+    monkeypatch.setattr(llm, "_DISPATCH",
+                        {"groq": lambda s, p, m: "answer"}, raising=False)
+    assert llm.complete("sys", "prompt") == "answer"
+
+    from app.core import model_router as mr
+    assert "unspecified" in mr.economics()["by_task"]
+
+
 # ── approval centre (brief §24) ────────────────────────────────────────────
 
 def test_the_approval_centre_cannot_approve_anything():

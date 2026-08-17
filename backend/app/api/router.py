@@ -930,6 +930,18 @@ def tools_invoke(name: str, payload: dict | None = None) -> dict:
     return tool.invoke(**(payload or {})).as_dict()
 
 
+@router.get("/economics", tags=["system"])
+def ai_economics() -> dict:
+    """Cost and reliability per task and per provider, from counted calls.
+
+    Every cost here is ESTIMATED — no provider returns token usage through
+    `llm.complete()`, so actual spend is reported as null rather than as an
+    estimate wearing a different label.
+    """
+    from ..core import model_router
+    return model_router.economics()
+
+
 @router.get("/approvals", tags=["system"])
 def approvals_pending() -> dict:
     """Everything waiting on a human, across every surface.

@@ -60,6 +60,8 @@ _SENSITIVE_PREFIXES = (
     # and live call details. Every item is either his private business or a
     # paying client's.
     "/api/approvals",
+    # AI spend and per-provider reliability is Abdullah's operating cost.
+    "/api/economics",
     # Client management. This one is the worst of the set: it is not Abdullah's
     # data, it is his CLIENTS' — business names, websites, contact details and
     # their audit findings. Leaking a paying client's information to a public

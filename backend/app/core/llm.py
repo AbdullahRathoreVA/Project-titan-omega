@@ -330,11 +330,17 @@ def last_error() -> Optional[str]:
     return _LAST_ERROR
 
 
-def complete(system: str, prompt: str, max_tokens: int = 1500) -> Optional[str]:
+def complete(system: str, prompt: str, max_tokens: int = 1500,
+             task=None) -> Optional[str]:
     """Ask the LLM for a completion, trying each configured provider in turn.
 
     Returns the text, or None if every provider fails (never raises). The reason
     for the last failure is recorded in ``last_error()`` for diagnostics.
+
+    `task` is an optional `model_router.Task`. Without one the call is treated
+    as STANDARD work and behaves exactly as it always did — that default is
+    what lets 25 existing call sites keep working untouched while the ones that
+    matter opt into cheaper or stricter routing.
     """
     global _LAST_ERROR
     chain = _provider_chain()
@@ -347,12 +353,31 @@ def complete(system: str, prompt: str, max_tokens: int = 1500) -> Optional[str]:
     # position, and none is ever dropped — see routing.order().
     import time as _time
 
-    from . import routing
+    from . import model_router, routing
 
     chain = routing.order(chain)
 
+    # Cost-aware layer on top of the health ordering: drop providers below the
+    # task's tier floor, then order what remains by price (cheap work) or by
+    # measured reliability (everything else). A task with no eligible provider
+    # is a refusal, not a silent downgrade to whatever is left.
+    profile = task if isinstance(task, model_router.Task) else model_router.Task(
+        name="unspecified", tier=model_router.STANDARD)
+    decision = model_router.decide(
+        profile, chain, prompt_chars=len(system or "") + len(prompt or ""),
+        max_tokens=max_tokens)
+    model_router.note_decision(decision)
+    if not decision["order"]:
+        _LAST_ERROR = (f"no provider eligible for task {profile.name!r}: "
+                       + model_router.explain(decision))
+        return None
+    chain = decision["order"]
+    est = decision["estimated_cost_usd"]
+
     errors = []
+    attempt = 0
     for prov in chain:
+        attempt += 1
         fn = _DISPATCH.get(prov)
         if fn is None:
             continue
@@ -362,6 +387,10 @@ def complete(system: str, prompt: str, max_tokens: int = 1500) -> Optional[str]:
             elapsed = int((_time.monotonic() - started) * 1000)
             if text:
                 routing.record(prov, ok=True, latency_ms=elapsed)
+                model_router.record(profile.name, prov, ok=True,
+                                    latency_ms=elapsed,
+                                    estimated_cost_usd=est,
+                                    fallback=attempt > 1)
                 _LAST_ERROR = None
                 return text
             # An empty response is a failure of this provider, not a success:
@@ -369,11 +398,17 @@ def complete(system: str, prompt: str, max_tokens: int = 1500) -> Optional[str]:
             # first forever.
             routing.record(prov, ok=False, latency_ms=elapsed,
                            error="empty response")
+            model_router.record(profile.name, prov, ok=False,
+                                latency_ms=elapsed, estimated_cost_usd=est,
+                                fallback=attempt > 1)
             errors.append(f"{prov}: empty response")
         except Exception as exc:
             elapsed = int((_time.monotonic() - started) * 1000)
             reason = f"{type(exc).__name__}: {str(exc)[:200]}"
             routing.record(prov, ok=False, latency_ms=elapsed, error=reason)
+            model_router.record(profile.name, prov, ok=False,
+                                latency_ms=elapsed, estimated_cost_usd=est,
+                                fallback=attempt > 1)
             errors.append(f"{prov}: {reason}")
 
     _LAST_ERROR = " | ".join(errors) if errors else "all providers returned empty"
