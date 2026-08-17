@@ -74,6 +74,16 @@ const CSP = [
   "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
+  // Audio was blocked in production and nobody noticed, because a blocked
+  // media load fails silently — the boot chime, speak(), speakPremium() and
+  // the Urdu voice assistant all went quiet. `media-src` was simply absent, so
+  // it fell back to `default-src 'self'`, and Titan generates its audio as
+  // `data:audio/wav` (browser speech) and `blob:` (fetched TTS) — neither of
+  // which is 'self'. Same two schemes img-src already allows, and for the same
+  // reason: the bytes are produced by this page, not fetched from a stranger.
+  // Found in the browser console, not by a test: no test can see a CSP header
+  // that the Worker adds in front of the app.
+  "media-src 'self' data: blob:",
   "font-src 'self' data:",
   "connect-src 'self'",
   "worker-src 'self'",
