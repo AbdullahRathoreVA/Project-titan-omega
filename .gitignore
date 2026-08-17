@@ -29,3 +29,9 @@ next-env.d.ts
 # Marker written while a mutation is live in the source; a killed run leaves it
 # behind on purpose so the next run refuses to start.
 backend/evaluation/.mutation-in-progress
+
+# Wrangler's local state, created by `npx wrangler deploy`. Not build output:
+# .wrangler/cache/wrangler-account.json holds the Cloudflare ACCOUNT ID, which
+# has no business in a public git history. The Worker source that matters is
+# deploy/cloudflare-worker.js and wrangler.toml, both tracked.
+.wrangler/
