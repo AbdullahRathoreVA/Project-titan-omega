@@ -260,6 +260,24 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      '"estimated_cost_usd": (round(row["estimated_cost_usd"], 6)\n                               if row["priced_calls"] else None),',
      '"estimated_cost_usd": round(row["estimated_cost_usd"], 6),',
      "unpriced_calls"),
+    # --- customers screen ---------------------------------------------------
+    # The grant flag is the whole difference between a pilot seat and revenue.
+    # Both halves are mutated: the reader (is the flag consulted at all) and the
+    # consequence (does consulting it actually change the count).
+    ("customers: a granted seat is not a paying customer",
+     "app/core/analytics.py",
+     "is_paying = on_paid_plan and not is_granted",
+     "is_paying = on_paid_plan", "granted_seat_is_never_counted"),
+    ("customers: the grant marker is actually read back",
+     "app/core/analytics.py",
+     'return str(acct.get("subscription_id", "")).startswith("granted")',
+     "return False",
+     "granted_seat_is_never_counted or bought_seat_is_still"),
+    ("customers: the tab stays founder-only",
+     "../frontend/components/CommandCenter.tsx",
+     '["customers", "Customers", true],',
+     '["customers", "Customers", false],',
+     "customers_screen_is_reachable"),
 ]
 
 

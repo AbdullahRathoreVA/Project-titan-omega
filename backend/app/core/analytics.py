@@ -111,19 +111,40 @@ def _storage_warning() -> Optional[str]:
             f"or point TITAN_STATE_FILE at a real volume to keep this history.")
 
 
-def report(days: int = 30, recent: int = 40) -> dict:
-    """Everything the founder needs to see about real usage, in one payload."""
+def _is_granted(acct: dict) -> bool:
+    """Was this seat handed out by the founder, or bought?
+
+    ``POST /api/founder/accounts`` records a grant by writing ``granted`` (or
+    ``granted:<note>``) into ``subscription_id``, and its own response warns
+    that a pile of grants would make MRR look real. **Nothing ever read that
+    flag back.** A granted Enterprise seat was active on a paid plan, so it
+    counted as a paying customer in the funnel and added its list price to
+    committed MRR. Provisioning a single pilot customer would have made this
+    dashboard report revenue that nobody was ever charged.
+    """
+    return str(acct.get("subscription_id", "")).startswith("granted")
+
+
+def accounts_snapshot() -> dict:
+    """Every account as one row, plus the counts derived from those rows.
+
+    Extracted from ``report()`` so the customers screen and the funnel cannot
+    disagree about what plan somebody is on: there is exactly one place in the
+    codebase that shapes an account row.
+    """
     from . import billing, clients as client_registry
+    from ..engines import demo_workspace as _demo
 
     now = time.time()
-    window = max(1, days) * DAY
     logged = _by_email()
 
     accounts: list[dict] = []
     by_plan: dict[str, int] = {}
     by_status: dict[str, int] = {}
     paying = 0
+    granted_paid_plans = 0
     committed_usd = 0.0
+    granted_usd = 0.0
 
     with billing._lock:                       # noqa: SLF001 — same package
         raw = {k: dict(v) for k, v in billing._accounts.items()}   # noqa: SLF001
@@ -141,7 +162,6 @@ def report(days: int = 30, recent: int = 40) -> dict:
         # account is not a business the person can use, and a seeded demo site
         # is not a business at all — counting either would make the funnel
         # describe something other than real usage.
-        from ..engines import demo_workspace as _demo
         live_clients = []
         for cid in cids:
             row = client_registry.public(cid)
@@ -156,10 +176,18 @@ def report(days: int = 30, recent: int = 40) -> dict:
 
         by_plan[plan_key] = by_plan.get(plan_key, 0) + 1
         by_status[status] = by_status.get(status, 0) + 1
-        is_paying = plan_key != "free" and status == "active"
+        is_granted = _is_granted(acct)
+        on_paid_plan = plan_key != "free" and status == "active"
+        # A granted seat is active on a paid plan and has paid nothing. Folding
+        # it into `paying` is precisely the invented number this codebase exists
+        # to avoid, so it is counted on its own and kept out of revenue.
+        is_paying = on_paid_plan and not is_granted
         if is_paying:
             paying += 1
             committed_usd += plan.price_usd if plan else 0.0
+        elif on_paid_plan:
+            granted_paid_plans += 1
+            granted_usd += plan.price_usd if plan else 0.0
 
         last_seen = log.get("last")
         accounts.append({
@@ -169,6 +197,11 @@ def report(days: int = 30, recent: int = 40) -> dict:
             "price_usd": plan.price_usd if plan else 0.0,
             "status": status,
             "paying": is_paying,
+            # Its own column on the customers screen: the founder has to be
+            # able to tell a pilot seat from a customer at a glance.
+            "granted": is_granted,
+            "grant_note": (str(acct.get("subscription_id", "")).partition(":")[2]
+                           if is_granted else ""),
             "signed_up_at": created,
             "days_since_signup": round((now - created) / DAY, 1),
             "usage": usage,
@@ -186,6 +219,36 @@ def report(days: int = 30, recent: int = 40) -> dict:
         })
 
     accounts.sort(key=lambda a: a["signed_up_at"], reverse=True)
+    return {
+        "accounts": accounts,
+        "by_plan": dict(sorted(by_plan.items(), key=lambda kv: -kv[1])),
+        "by_status": dict(sorted(by_status.items(), key=lambda kv: -kv[1])),
+        "paying": paying,
+        "granted_paid_plans": granted_paid_plans,
+        "committed_usd": round(committed_usd, 2),
+        "granted_list_value_usd": round(granted_usd, 2),
+    }
+
+
+def storage_warning() -> Optional[str]:
+    """Public reader. The customers screen has to be able to say out loud
+    whether the accounts it is listing survive a rebuild."""
+    return _storage_warning()
+
+
+def report(days: int = 30, recent: int = 40) -> dict:
+    """Everything the founder needs to see about real usage, in one payload."""
+    from . import billing
+
+    now = time.time()
+    window = max(1, days) * DAY
+
+    snap = accounts_snapshot()
+    accounts = snap["accounts"]
+    by_plan = snap["by_plan"]
+    by_status = snap["by_status"]
+    paying = snap["paying"]
+    committed_usd = snap["committed_usd"]
     total = len(accounts)
 
     # ---------------------------------------------------------------- funnel --
@@ -246,6 +309,14 @@ def report(days: int = 30, recent: int = 40) -> dict:
         "collectable": processor_ready,
         "paying_accounts": paying,
         "committed_mrr_usd": round(committed_usd, 2) if processor_ready else None,
+        # Seats handed out by the founder, kept BESIDE mrr rather than inside
+        # it. The list value of a free seat is what that plan would have cost,
+        # not money anybody was charged.
+        "granted_paid_seats": snap["granted_paid_plans"],
+        "granted_list_value_usd": snap["granted_list_value_usd"],
+        "granted_note": (
+            "Granted seats are excluded from paying accounts and from MRR. "
+            "Their list value is what those plans would cost, not revenue."),
         "note": (
             "Sum of list prices for accounts marked active on a paid plan. "
             "This is what they agreed to pay, not what has cleared."
@@ -263,6 +334,7 @@ def report(days: int = 30, recent: int = 40) -> dict:
             "accounts": total,
             "signed_up_in_window": in_window,
             "paying": paying,
+            "granted_paid_plans": snap["granted_paid_plans"],
             "active_7d": active,
             "dormant_30d": dormant,
             "by_plan": dict(sorted(by_plan.items(), key=lambda kv: -kv[1])),

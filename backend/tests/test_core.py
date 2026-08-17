@@ -3401,6 +3401,136 @@ def test_account_granting_is_hidden_from_guests(client, isolated_billing,
     assert r.status_code == 403
 
 
+# ── the customers screen ───────────────────────────────────────────────────
+# The POST above worked for a long time with no UI at all — the first
+# Enterprise seat on this platform was granted from a browser console. These
+# cover the read side, and the honesty of what it reports.
+
+def test_the_customers_list_shows_every_account_with_plan_and_status(
+        client, isolated_billing):
+    client.post("/api/founder/accounts",
+                json={"email": "shop@zashmart.test", "plan": "enterprise",
+                      "note": "uncle's shop"})
+    r = client.get("/api/founder/accounts")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    row = next(a for a in body["accounts"] if a["email"] == "shop@zashmart.test")
+    assert row["plan"] == "enterprise"
+    assert row["status"] == "active"
+    assert body["counts"]["total"] == 1
+
+
+def test_the_customers_list_never_serves_a_password_hash(client,
+                                                         isolated_billing):
+    """The raw account record carries `_pwhash` and `_salt`. Serving either to
+    a screen puts an offline-crackable credential in a browser tab."""
+    created = client.post("/api/founder/accounts",
+                          json={"email": "hash@example.com",
+                                "plan": "student"}).json()
+    raw = client.get("/api/founder/accounts").text
+    assert "_pwhash" not in raw and "_salt" not in raw
+    # The one-time password is shown by the POST and must never be readable
+    # back afterwards — not even by the founder.
+    assert created["password"] not in raw
+
+
+def test_a_granted_seat_is_never_counted_as_a_paying_customer(
+        client, isolated_billing):
+    """The defect this screen exposed.
+
+    A grant writes "granted" into `subscription_id`, and nothing ever read it
+    back. A free Enterprise seat was active on a paid plan, so it counted as a
+    PAYING customer in the funnel and its list price was added to committed
+    MRR. Provisioning one pilot customer would have made the founder's own
+    dashboard report revenue that nobody was ever charged."""
+    client.post("/api/founder/accounts",
+                json={"email": "pilot@example.com", "plan": "enterprise",
+                      "note": "case study"})
+    body = client.get("/api/founder/accounts").json()
+    row = body["accounts"][0]
+    assert row["granted"] is True
+    assert row["paying"] is False
+    assert row["grant_note"] == "case study"
+    assert body["counts"]["paying"] == 0
+    assert body["counts"]["granted_paid_plans"] == 1
+
+    from app.core import analytics
+    rep = analytics.report()
+    assert rep["totals"]["paying"] == 0
+    assert rep["totals"]["granted_paid_plans"] == 1
+    assert {s["step"]: s["count"] for s in rep["funnel"]}["Is paying"] == 0
+    assert rep["revenue"]["granted_paid_seats"] == 1
+    assert rep["revenue"]["granted_list_value_usd"] > 0
+
+
+def test_a_bought_seat_is_still_counted_as_paying(client, isolated_billing):
+    """The mirror of the above. Excluding grants must not quietly exclude real
+    customers — a subscription id from a processor does not start with
+    "granted", and the day Paddle is configured this is the row that matters."""
+    from app.core import billing
+    billing.signup("real@example.com", "hunter2hunter2", "free")
+    billing.set_plan("real@example.com", "enterprise",
+                     subscription_id="sub_paddle_live_001", status="active")
+    body = client.get("/api/founder/accounts").json()
+    row = next(a for a in body["accounts"] if a["email"] == "real@example.com")
+    assert row["granted"] is False
+    assert row["paying"] is True
+    assert body["counts"]["paying"] == 1
+    assert body["counts"]["granted_paid_plans"] == 0
+
+
+def test_the_customers_form_can_only_offer_plans_billing_accepts(
+        client, isolated_billing):
+    """A dropdown offering a plan the POST refuses is a 400 the founder cannot
+    explain. Both sides read `billing.PLANS`."""
+    from app.core import billing
+    offered = [p["key"]
+               for p in client.get("/api/founder/accounts").json()["plans"]]
+    assert offered == list(billing.ORDER)
+    for key in offered:
+        assert key in billing.PLANS
+
+
+def test_the_customers_list_is_hidden_from_guests(client, isolated_billing,
+                                                  monkeypatch):
+    """Every row is a real person's email address and there is no demo-safe
+    version of a customer list."""
+    client.post("/api/founder/accounts",
+                json={"email": "private@example.com", "plan": "enterprise"})
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
+    tok = client.post("/api/demo/enter").json()["token"]
+    r = client.get("/api/founder/accounts",
+                   headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 403
+    assert "private@example.com" not in r.text
+
+
+def test_the_customers_screen_and_the_funnel_read_the_same_rows(
+        client, isolated_billing):
+    """Two screens deriving "what plan is this person on" separately is how
+    they start disagreeing. `accounts_snapshot()` is the one row builder."""
+    client.post("/api/founder/accounts",
+                json={"email": "one@example.com", "plan": "student"})
+    from app.core import analytics
+    listed = client.get("/api/founder/accounts").json()["accounts"]
+    funnelled = analytics.report()["accounts"]
+    key = lambda a: (a["email"], a["plan"], a["status"], a["granted"])  # noqa: E731
+    assert [key(a) for a in listed] == [key(a) for a in funnelled]
+
+
+def test_the_customers_screen_is_reachable_from_the_dashboard():
+    """A backend capability with no discoverable front end is one the founder
+    has to open a browser console to use — which is how the first Enterprise
+    seat was actually created. The tab must exist, must be founder-only, and
+    the component must actually render."""
+    src = _jsx_without_comments("CommandCenter.tsx")
+    assert '["customers", "Customers", true]' in src, (
+        "no founder-only Customers tab in the view switcher — a `false` here "
+        "would show a demo visitor a tab listing real customer emails")
+    assert "<Customers" in src, "the Customers tab renders nothing"
+
+
 # ── visitor insights ───────────────────────────────────────────────────────
 
 def test_device_os_and_browser_are_classified(isolated_traffic):

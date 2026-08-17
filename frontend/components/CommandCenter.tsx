@@ -58,6 +58,7 @@ import { JobRadar } from "./JobRadar";
 import { FinanceCenter } from "./FinanceCenter";
 import { CrmLite } from "./CrmLite";
 import ApiCommand from "./ApiCommand";
+import Customers from "./Customers";
 import { AICity } from "./AICity";
 import { BootSequence } from "./BootSequence";
 import { KnowledgeGraph } from "./KnowledgeGraph";
@@ -87,7 +88,7 @@ export function CommandCenter() {
   const [nextPost, setNextPost] = useState<NextPostType | null>(null);
   const [online, setOnline] = useState(false);
   const [view, setView] = useState<
-    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm" | "clients" | "seo" | "executive" | "voice" | "apis"
+    "universe" | "dashboard" | "mission" | "graph" | "city" | "warroom" | "telegram" | "jobs" | "finance" | "crm" | "clients" | "customers" | "seo" | "executive" | "voice" | "apis"
   >("universe");
   const [executions, setExecutions] = useState<ExecutionItem[]>([]);
   const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
@@ -382,6 +383,12 @@ export function CommandCenter() {
               ["clients", "Clients", false],
               ["seo", "SEO", false],
               ["executive", "Executive", true],
+              // Founder-only, and it must stay that way: every row is a real
+              // customer's email address and there is no demo-safe substitute
+              // for a customer list. The backend refuses a guest regardless
+              // (/api/founder is registered sensitive) — this only stops the
+              // tab appearing and producing a 403 nobody can explain.
+              ["customers", "Customers", true],
               // Was founder-only because /api/voice is guest-blocked and had
               // no demo substitute, so the tab could only have produced a wall
               // of 403s. It has one now (demo_data serves sample sessions
@@ -467,6 +474,8 @@ export function CommandCenter() {
           {view === "seo" && <SeoCommand />}
 
           {view === "executive" && <ExecutiveCommand />}
+
+          {view === "customers" && <Customers />}
 
           {view === "voice" && <VoiceAgents />}
 

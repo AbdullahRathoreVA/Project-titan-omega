@@ -1518,6 +1518,48 @@ def founder_analytics(days: int = Query(default=30, ge=1, le=365),
     return analytics.report(days=days, recent=recent)
 
 
+@router.get("/founder/accounts", tags=["executive"])
+def founder_list_accounts() -> dict:
+    """Every customer, with the plan and status the founder acts on.
+
+    `POST /api/founder/accounts` has worked for a long time with nothing to
+    show what it created — the first Enterprise seat on this platform was
+    granted from a browser console. This is the read side.
+
+    It serves the SAME rows as the funnel (`analytics.accounts_snapshot`)
+    rather than re-deriving them, so the customers screen and the funnel cannot
+    disagree about what plan somebody is on.
+
+    Founder-only by construction: `/api/founder` is registered in
+    `demo_data._SENSITIVE_PREFIXES`, so a demo visitor is refused outright
+    rather than served a sample. Every row is a real person's email address.
+    """
+    from ..core import analytics, billing
+
+    snap = analytics.accounts_snapshot()
+    return {
+        "accounts": snap["accounts"],
+        "counts": {
+            "total": len(snap["accounts"]),
+            "paying": snap["paying"],
+            "granted_paid_plans": snap["granted_paid_plans"],
+            "by_plan": snap["by_plan"],
+            "by_status": snap["by_status"],
+        },
+        # Read from the catalogue billing actually enforces, so the form cannot
+        # offer a plan the POST would refuse.
+        "plans": [{"key": k, "name": billing.PLANS[k].name,
+                   "price_usd": billing.PLANS[k].price_usd}
+                  for k in billing.ORDER],
+        "processor": billing.processor_name(),
+        "billable": billing.configured(),
+        # These accounts are only as durable as the state file. Saying so on the
+        # screen that creates them is the difference between a customer list and
+        # a customer list that quietly disappears on the next rebuild.
+        "storage_warning": analytics.storage_warning(),
+    }
+
+
 class GrantIn(BaseModel):
     email: str = Field(..., min_length=5)
     password: str = Field(default="", min_length=0)
