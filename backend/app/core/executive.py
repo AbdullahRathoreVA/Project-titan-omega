@@ -25,7 +25,7 @@ from ..domain.enums import (
 from ..domain.network import AGENTS_BY_ID, division_summary
 from ..engines import opportunity
 from ..store import STORE, Store, now
-from . import llm
+from . import llm, model_router
 
 
 # --- Empire snapshot ------------------------------------------------------
@@ -251,6 +251,7 @@ def route_command(text: str, store: Store = STORE) -> dict:
 def _command_reply(text: str, division: str, head_name: str) -> str:
     """Craft the operator-facing reply — with Claude when available, else canned."""
     smart = llm.complete(
+        task=model_router.EXECUTIVE,
         system=(
             f"You are the {head_name}, head of the {division} division inside Titan "
             "Omega, an autonomous company OS reporting to the founder. Reply in 2–3 "

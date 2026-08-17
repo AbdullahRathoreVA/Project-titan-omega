@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Dict
 
-from ..core import llm
+from ..core import llm, model_router
 from ..store import STORE, Store, now
 
 SECTIONS = ["BLOG", "LINKEDIN", "XTHREAD", "INSTAGRAM", "EMAIL", "SHORTS"]
@@ -34,6 +34,7 @@ _PROMPT = (
 def repurpose(idea: str, lang: str = "en", store: Store = STORE) -> Dict[str, str]:
     lang_name = "Urdu (اردو)" if lang == "ur" else "English"
     raw = llm.complete(
+        task=model_router.REPURPOSE,
         system=_PROMPT + f" Write everything in {lang_name}.",
         prompt=f"The idea: {idea.strip()}",
         max_tokens=1900,

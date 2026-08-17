@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import subprocess
 import sys
+from typing import Optional
 
 # (label, file, anchor, replacement, pytest -k selector)
 MUTANTS: list[tuple[str, str, str, str, str]] = [
@@ -223,9 +225,13 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      '"oldest_seconds": max(ages) if ages else None,',
      '"oldest_seconds": max(ages) if ages else 0.0,',
      "empty_queue_reports_none"),
+    # Single line on purpose. The first version of this anchor spanned two
+    # lines and never matched — the continuation indent in the MUTANTS entry
+    # did not equal the indent in the source, so it reported "stale" rather
+    # than failing, and the guard silently went untested. Appending to a
+    # throwaway list keeps the syntax valid and leaves `errors` empty.
     ("approvals: a broken surface is reported", "app/core/approvals.py",
-     'errors.append({"surface": name,\n                           "error"',
-     'pass  # (\n            "error"',
+     'errors.append({"surface": name,', '[].append({"surface": name,',
      "cannot_report_is_listed"),
     ("voice: pending tool calls are enumerable",
      "app/core/voice_sessions.py",
@@ -261,9 +267,45 @@ def _digest(path: str) -> str:
     return hashlib.sha256(io.open(path, "rb").read()).hexdigest()
 
 
+# A run that COMPLETES restores byte-for-byte and proves it. A run that is
+# KILLED does not — SIGKILL does not run `finally`, so the mutant stays in the
+# source and the next run reports its anchor as merely "stale". That happened:
+# a wait loop killed a run, `pass  # (` sat in approvals.py, and the only
+# symptom was a SKIP line. This marker closes it. It names the file being
+# mutated for the whole window the mutation exists, so an interrupted run is
+# LOUD on the next start instead of silent.
+_MARKER = os.path.join(os.path.dirname(__file__), ".mutation-in-progress")
+
+
+def _claim(path: str) -> None:
+    io.open(_MARKER, "w", encoding="utf-8").write(path)
+
+
+def _release() -> None:
+    try:
+        os.remove(_MARKER)
+    except OSError:
+        pass
+
+
+def _check_previous_run() -> Optional[str]:
+    """The file a killed run was holding, if there was one."""
+    if not os.path.isfile(_MARKER):
+        return None
+    return io.open(_MARKER, encoding="utf-8").read().strip() or "unknown"
+
+
 def run(only: str = "") -> int:
     survived: list[str] = []
     skipped: list[str] = []
+
+    held = _check_previous_run()
+    if held:
+        print(f"FATAL: a previous run was interrupted while mutating {held}.\n"
+              f"That file may still contain a mutation — SIGKILL does not run\n"
+              f"`finally`. Restore it (`git checkout -- {held}`), confirm\n"
+              f"`git diff` is clean, then delete {_MARKER} and re-run.")
+        return 2
 
     for label, path, anchor, replacement, selector in MUTANTS:
         if only and only not in label:
@@ -283,6 +325,7 @@ def run(only: str = "") -> int:
             skipped.append(label)
             continue
 
+        _claim(path)
         io.open(path, "wb").write(
             original.replace(anchor, replacement, 1).encode("utf-8"))
         try:
@@ -302,6 +345,7 @@ def run(only: str = "") -> int:
                 print(f"\nFATAL: {path} was not restored byte-for-byte. "
                       f"Restore it from git before doing anything else.")
                 return 2
+            _release()
 
         print(f"{'CAUGHT  ' if caught else 'SURVIVED'} {label}")
         if not caught:

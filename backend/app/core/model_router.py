@@ -94,6 +94,20 @@ class Task:
         return self.tier
 
 
+# Named profiles, so a call site declares WHAT IT IS rather than repeating a
+# policy. Anything not listed here is STANDARD — which is the old behaviour
+# exactly, so an untagged call site is unchanged rather than degraded.
+PROFILES: dict[str, "Task"] = {}
+
+
+def _profile(name: str, tier: str = STANDARD, *, high_risk: bool = False,
+             max_cost_usd: Optional[float] = None) -> "Task":
+    task = Task(name=name, tier=tier, high_risk=high_risk,
+                max_cost_usd=max_cost_usd)
+    PROFILES[name] = task
+    return task
+
+
 def provider_tier(provider: str) -> str:
     """DECLARED tier for a provider. Env override wins."""
     override = os.getenv(f"TITAN_TIER_{provider.upper()}", "").strip().lower()
@@ -387,3 +401,33 @@ def reset() -> None:
     with _lock:
         _stats.clear()
         del _decisions[:]
+
+
+# --- the declared profiles --------------------------------------------------
+# Tagged where the tier genuinely differs from STANDARD. A call site left
+# untagged is STANDARD by design, not by omission, and behaves as it always
+# has — which is why this could be rolled out without touching every caller.
+
+# Cheap, frequent, structurally simple. This is where the money comes off the
+# bill: short transformations that a premium model adds nothing to.
+KEYWORDS = _profile("keywords", FAST)
+CAPTION = _profile("caption", FAST)
+FORMAT_REPORT = _profile("format_report", FAST)
+FORMAT_ANSWER = _profile("format_answer", FAST)
+SCORE_LEADS = _profile("score_leads", FAST)
+REPURPOSE = _profile("repurpose", FAST)
+
+# Normal agent work. Explicit rather than defaulted, so the intent is readable.
+OUTREACH_DRAFT = _profile("outreach_draft", STANDARD)
+JOB_PROPOSAL = _profile("job_proposal", STANDARD)
+
+# Spoken to a client's own callers. The verification layer already refuses an
+# invented figure here; high_risk stops the ROUTER from ever serving it off the
+# cheap tier to save a fraction of a cent. A wrong closing time sends a
+# customer to a locked door.
+VOICE_ANSWER = _profile("voice_answer", STANDARD, high_risk=True)
+
+# Abdullah's own business intelligence and the client-facing SEO report. Worth
+# the strongest model configured; both are read and acted on.
+EXECUTIVE = _profile("executive_command", PREMIUM)
+SEO_REPORT = _profile("seo_report", PREMIUM)

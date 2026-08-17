@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from ..core import llm
+from ..core import llm, model_router
 from ..store import STORE, Store, now
 from . import news, research
 
@@ -86,6 +86,7 @@ def growth_cycle(store: Store = STORE) -> dict:
     )
 
     kw_raw = llm.complete(
+        task=model_router.KEYWORDS,
         system=(
             "List 8 specific, high-intent SEO keywords Abdullah should target for Career "
             "Mind AI (student career platform) and his Upwork AI gigs. Output ONLY a "
@@ -235,6 +236,7 @@ def seo_report(keyword: str = "", store: Store = STORE) -> dict:
     )
 
     report = llm.complete(
+        task=model_router.SEO_REPORT,
         system=(
             f"You are an SEO strategist. For the keyword '{kw}', use the live results to: "
             "(1) identify who currently ranks and why, (2) find concrete content/keyword "

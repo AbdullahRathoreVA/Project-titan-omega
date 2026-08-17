@@ -19,7 +19,7 @@ import os
 from typing import List, Optional
 
 from ..connectors.github import _verify
-from ..core import executive, llm
+from ..core import executive, llm, model_router
 from ..store import STORE, Store, now
 from . import news, opportunity, publisher, research
 
@@ -114,6 +114,7 @@ def _fmt_opps(store: Store) -> str:
 def _fmt_report(store: Store) -> str:
     s = executive.empire_status(store)
     brief = llm.complete(
+        task=model_router.FORMAT_REPORT,
         system=(
             "You are Titan, Abdullah's AI chief of staff. Write a compact weekly report "
             "for Telegram (max 12 short lines): earnings, agent activity, top 3 focus "
@@ -149,6 +150,7 @@ def _fmt_ask(arg: str, store: Store) -> str:
         return "Usage: /ask <your question>"
     s = executive.empire_status(store)
     ans = llm.complete(
+        task=model_router.FORMAT_ANSWER,
         system=(
             "You are Titan, Abdullah's AI chief of staff, replying on Telegram. Address "
             "him simply as 'Abdullah'. Be concise (max 8 lines), concrete, plain text. "

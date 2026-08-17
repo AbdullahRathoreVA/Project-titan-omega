@@ -32,7 +32,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from ..core import llm
+from ..core import llm, model_router
 from . import client_seo
 
 # Severity order for picking what to lead with. Legal first, deliberately:
@@ -169,6 +169,7 @@ def draft(lead: dict, res: dict, lang: str = "en") -> dict:
         for f in res["findings"])
 
     body = llm.complete(
+        task=model_router.OUTREACH_DRAFT,
         system=("You write short, specific B2B outreach for Abdullah, who sells "
                 "SEO and legal-compliance audits. Rules you must follow: use "
                 "ONLY the findings given — never add a problem that is not "

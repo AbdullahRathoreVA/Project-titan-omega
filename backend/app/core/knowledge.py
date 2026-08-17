@@ -388,7 +388,7 @@ def search(client_id: str, question: str, k: int = 3) -> dict:
 
 def answer(client_id: str, question: str, lang: str = "en") -> dict:
     """Retrieve, then let the model speak — strictly from what was retrieved."""
-    from . import llm
+    from . import llm, model_router
 
     found = search(client_id, question)
     if not found["ok"]:
@@ -406,6 +406,7 @@ def answer(client_id: str, question: str, lang: str = "en") -> dict:
         source="the business's own website", client_id=client_id)
 
     reply = llm.complete(
+        task=model_router.VOICE_ANSWER,
         system=("You answer as the business itself, on the phone. Use ONLY the "
                 "numbered passages provided — they are quoted from that "
                 "business's own website. If they do not contain the answer, "

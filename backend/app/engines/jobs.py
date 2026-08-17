@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from ..core import llm
+from ..core import llm, model_router
 from ..store import STORE, Store, now
 from . import research
 
@@ -114,6 +114,7 @@ def mark_applied(job_id: str, store: Store = STORE) -> Optional[dict]:
 def proposal(title: str, url: str, why: str = "", store: Store = STORE) -> str:
     """Draft a tailored, truthful proposal/cover letter for one listing."""
     text = llm.complete(
+        task=model_router.JOB_PROPOSAL,
         system=(
             "Write a short, specific proposal/cover letter (120-180 words) for the job "
             "below, from Abdullah. Rules: 100% truthful to his profile, mention ONE "

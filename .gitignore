@@ -25,3 +25,7 @@ next-env.d.ts
 .idea/
 .vscode/
 *.log
+
+# Marker written while a mutation is live in the source; a killed run leaves it
+# behind on purpose so the next run refuses to start.
+backend/evaluation/.mutation-in-progress

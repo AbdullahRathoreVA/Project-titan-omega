@@ -19,7 +19,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..core import auth, demo_data, executive, llm
+from ..core import auth, demo_data, executive, llm, model_router
 from ..engines import deliverables, news, opportunity, publisher, research
 from ..store import STORE, Store, now
 
@@ -97,6 +97,7 @@ def find_leads(req: LeadRequest) -> dict:
     if results:
         src = "\n".join(f"- {r['title']} | {r['url']}\n  {r['content']}" for r in results)
         content = llm.complete(
+            task=model_router.SCORE_LEADS,
             system=(
                 "You are Abdullah's lead-generation analyst. From these LIVE web results, "
                 "extract concrete leads (organisations / people / places) he can reach to "
@@ -227,6 +228,7 @@ def _build_next_post(
         )
 
     caption = llm.complete(
+        task=model_router.CAPTION,
         system=(
             "Write ONE scroll-stopping social media caption (max 200 characters). Sound "
             "like a REAL PERSON sharing a genuine win or tip — not an ad and not corporate. "
