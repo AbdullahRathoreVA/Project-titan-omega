@@ -75,8 +75,12 @@ _SENSITIVE_PREFIXES = (
     "/api/founder",
     # Voice sessions carry live transcripts — what a caller actually said, in
     # their own words, plus whatever number or handle they were reached on.
-    # That is the most sensitive data Titan holds. No demo substitute exists
-    # and none should: blocked outright.
+    # That is the most sensitive data Titan holds, so the whole prefix stays
+    # blocked. Two read-only endpoints (/live, /sessions) are SUBSTITUTED with
+    # sample sessions; everything else under here — transcripts above all —
+    # is still refused outright. Before the substitute existed the Voice tab
+    # had to be hidden from the demo entirely, which lost the pitch for a
+    # headline feature.
     "/api/voice",
 )
 
@@ -403,6 +407,17 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
             if c["id"] == cid:
                 return c
         return _sample_clients()["clients"][0]
+
+    # Voice. Guest-blocked like the rest of /api/voice, but SUBSTITUTED
+    # rather than refused: without this the tab had to be hidden from the
+    # demo entirely, which lost the pitch for a headline feature. Rendered
+    # through the real summariser so it cannot drift from the live shape.
+    if path == "/api/voice/live":
+        from . import voice_sessions
+        return voice_sessions.summarise(voice_sessions.demo_rows())
+    if path == "/api/voice/sessions":
+        from . import voice_sessions
+        return voice_sessions.demo_rows()
 
     if path == "/api/leads":
         # Built with the REAL funnel helper, not a copy of it. When the live

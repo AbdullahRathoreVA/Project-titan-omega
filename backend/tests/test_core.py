@@ -2556,7 +2556,24 @@ def test_voice_sessions_are_never_served_to_the_public_demo(
     monkeypatch.setenv("TITAN_SECRET", "unit-test-secret")
     tok = client.post("/api/demo/enter").json()["token"]
     h = {"Authorization": f"Bearer {tok}"}
-    assert client.get("/api/voice/live", headers=h).status_code == 403
+    # /live and the sessions LIST are substituted rather than refused, so the
+    # demo can show a headline feature instead of hiding the tab. The guarantee
+    # is stronger than a 403: the guest gets sample rows, and the real session
+    # must not appear anywhere in the response.
+    live = client.get("/api/voice/live", headers=h)
+    assert live.status_code == 200
+    assert sid not in live.text, "a real session id reached the public demo"
+    assert "card number" not in live.text
+    assert live.json()["active"], "the demo must actually show something"
+    assert all(row["id"].startswith("demo-")
+               for row in live.json()["active"]), live.json()["active"]
+
+    listed = client.get("/api/voice/sessions", headers=h)
+    assert listed.status_code == 200
+    assert sid not in listed.text, "a real session leaked into the demo list"
+
+    # The TRANSCRIPT is still refused outright. That is the line that does not
+    # move: it is what the caller actually said, in their own words.
     r = client.get(f"/api/voice/sessions/{sid}", headers=h)
     assert r.status_code == 403
     assert "card number" not in r.text

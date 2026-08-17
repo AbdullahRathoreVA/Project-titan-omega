@@ -379,7 +379,17 @@ def live() -> dict:
     """
     with _lock:
         rows = [_public_locked(s) for s in _sessions.values()]
+    return summarise(rows)
 
+
+def summarise(rows: list) -> dict:
+    """Turn session rows into the live payload.
+
+    Split out of `live()` so the public DEMO can render the same shape from
+    sample rows without a hand-written copy of this structure. A copy drifts:
+    the moment a field is added here the demo would render `undefined` for it,
+    and the demo is the screen prospects are actually shown.
+    """
     active = [r for r in rows if r["state"] != ENDED]
     by_state = {st: sum(1 for r in rows if r["state"] == st) for st in STATES}
     by_channel: dict[str, int] = {}
@@ -432,6 +442,35 @@ def live() -> dict:
                       "claim a measurement that was never taken."),
         "channels_supported": list(CHANNELS),
     }
+
+
+def demo_rows() -> list:
+    """Sample sessions for the PUBLIC demo, in `_public_locked` shape.
+
+    A prospect could not see Voice at all before this: `/api/voice` is
+    guest-blocked and, unlike `/api/admin/clients`, nobody had written it a
+    demo-safe substitute — so the tab was hidden rather than serving a wall of
+    403s. Voice is a headline feature, so hiding it lost the pitch.
+
+    Everything here is obviously sample data for a fictional shop. No real
+    caller number, no real transcript, no real client. It is fed through the
+    REAL `summarise()`, so it can never drift from the live shape.
+    """
+    now = _now()
+    return [
+        {"id": "demo-1", "channel": "phone", "agent": "titan-voice",
+         "language": "en", "caller": "+00 000 0000 (sample)",
+         "state": LISTENING, "started_at": now - 42, "ended_at": None,
+         "duration_s": 42.0, "turns": 6, "tools": 1,
+         "pending_approvals": 1, "escalated": False, "escalation": None,
+         "avg_thinking_ms": 610.0, "cost_usd": None, "error": None},
+        {"id": "demo-2", "channel": "web", "agent": "titan-voice",
+         "language": "ur", "caller": "web visitor (sample)",
+         "state": ENDED, "started_at": now - 900, "ended_at": now - 780,
+         "duration_s": 120.0, "turns": 11, "tools": 2,
+         "pending_approvals": 0, "escalated": False, "escalation": None,
+         "avg_thinking_ms": 540.0, "cost_usd": None, "error": None},
+    ]
 
 
 def history(limit: int = 50) -> list[dict]:

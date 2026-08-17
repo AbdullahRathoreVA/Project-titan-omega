@@ -382,10 +382,13 @@ export function CommandCenter() {
               ["clients", "Clients", false],
               ["seo", "SEO", false],
               ["executive", "Executive", true],
-              // Founder-only: sessions carry live transcripts, and /api/voice
-              // is registered sensitive server-side. Showing the tab to a
-              // guest would only produce a wall of 403s.
-              ["voice", "Voice", true],
+              // Was founder-only because /api/voice is guest-blocked and had
+              // no demo substitute, so the tab could only have produced a wall
+              // of 403s. It has one now (demo_data serves sample sessions
+              // through the real summariser), so the demo can show the feature
+              // prospects are actually being sold. Transcripts stay founder-
+              // only — the substitute covers /live and /sessions, nothing else.
+              ["voice", "Voice", false],
               ["graph", "Graph", false],
               ["city", "AI City", false],
               ["warroom", "War Room", false],
