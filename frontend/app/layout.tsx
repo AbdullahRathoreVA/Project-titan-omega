@@ -23,6 +23,15 @@ export const metadata: Metadata = {
     title: "Titan Omega",
     statusBarStyle: "black-translucent",
   },
+  // `appleWebApp.capable` emits only `apple-mobile-web-app-capable`, which
+  // Chrome now warns is deprecated in favour of the standard name. Both are
+  // shipped rather than swapped: the Apple tag is still what iOS Safari reads
+  // for standalone mode, and dropping it would break "Add to Home Screen" on
+  // the platform this dashboard was fixed for. Warning seen in the console,
+  // not by a test.
+  other: {
+    "mobile-web-app-capable": "yes",
+  },
   openGraph: {
     type: "website",
     url: SITE,
