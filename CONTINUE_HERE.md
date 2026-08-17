@@ -152,6 +152,19 @@ Every commit was verified live in production before being called done.
 
 ---
 
+## 3b. PARKED — the "Autonomous Revenue Engine" brief
+
+Abdullah wrote a 52-section brief (2026-08-15) to turn Titan into an autonomous
+business OS, and **asked for it to be parked, not executed**. It is mapped
+section-by-section against the repository in
+`docs/PARKED_AUTONOMOUS_REVENUE_ENGINE.md`, with an un-park trigger.
+
+Short version: a large part is already built, and most of the rest **cannot be
+built honestly with zero customers** — ROI attribution, churn, CAC ranking and
+experimentation all need real data, so building them now would force exactly
+the fabricated numbers the brief itself forbids. **Do not start it.** The
+highest-value action is Paddle, which is blocked on him.
+
 ## 4. BLOCKED — needs Abdullah, not engineering
 
 1. **Payment. Nothing can be sold.** `PADDLE_API_KEY` +
