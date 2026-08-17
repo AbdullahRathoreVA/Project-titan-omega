@@ -930,6 +930,19 @@ def tools_invoke(name: str, payload: dict | None = None) -> dict:
     return tool.invoke(**(payload or {})).as_dict()
 
 
+@router.get("/approvals", tags=["system"])
+def approvals_pending() -> dict:
+    """Everything waiting on a human, across every surface.
+
+    Read-only by design. Approving happens on each item's own endpoint, which
+    enforces rules this list does not know — a site fix whose page changed
+    since it was proposed is refused there, and an improvement that measured
+    worse is refused there. A central approve-all would delete those checks.
+    """
+    from ..core import approvals
+    return approvals.pending(STORE)
+
+
 # --- self-improvement -----------------------------------------------------
 # Abdullah IS the approval step, so these have to exist for the loop to close.
 # Everything here is founder-only: `approve` changes how a live product

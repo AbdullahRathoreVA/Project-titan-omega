@@ -891,6 +891,18 @@ def get(fix_id: str) -> Optional[dict]:
         return dict(fix) if fix else None
 
 
+def awaiting_approval() -> list[dict]:
+    """Every proposed fix across every client, oldest first.
+
+    For the approval centre, which needs the whole queue rather than one
+    client's slice. Read-only: approving still goes through `approve()`, which
+    is where the staleness check and the named-approver rule live."""
+    with _lock:
+        ids = [f["id"] for f in _fixes.values() if f["status"] == PROPOSED]
+    rows = [public(i) for i in ids]
+    return sorted([r for r in rows if r], key=lambda r: r["created_at"])
+
+
 def summary(client_id: str = "") -> dict:
     """Counts by status. Never a success rate — see the note."""
     with _lock:

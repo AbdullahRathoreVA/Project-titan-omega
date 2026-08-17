@@ -6949,6 +6949,107 @@ def test_the_approval_gate_holds_over_http_and_says_why(client, improving):
     assert client.post(f"/api/improve/{pid}/activate").status_code == 200
 
 
+# ── approval centre (brief §24) ────────────────────────────────────────────
+
+def test_the_approval_centre_cannot_approve_anything():
+    """The whole design. Each surface's own approve() carries rules this list
+    does not know — site_fix refuses a proposal whose page changed, improve
+    refuses a regression. A central approve-all would silently delete the
+    checks this screen exists to advertise. Asserted by source inspection, the
+    same way outreach's inability to send is asserted."""
+    import ast
+    import inspect
+    from app.core import approvals
+
+    # Parsed, not grepped. The module's own docstring explains why it cannot
+    # approve and therefore CONTAINS the strings "site_fix.approve" and
+    # "improve.approve" — a substring check fails on the explanation while
+    # proving nothing about the code. The AST only sees real attribute access.
+    tree = ast.parse(inspect.getsource(approvals))
+
+    banned = {"approve", "approve_tool", "publish", "apply", "activate",
+              "rollback", "reject"}
+    reached = sorted({n.attr for n in ast.walk(tree)
+                      if isinstance(n, ast.Attribute) and n.attr in banned})
+    assert not reached, f"approvals.py calls {reached}"
+
+    defined = sorted({n.name for n in ast.walk(tree)
+                      if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                      and any(b in n.name for b in ("approve", "publish"))})
+    assert not defined, f"approvals.py defines {defined}"
+
+
+def test_the_queue_shows_everything_waiting_across_surfaces(improving):
+    """One screen, or the operator works one surface and forgets the others."""
+    from app.core import approvals, improve, voice_sessions
+
+    improving["scores"].update({0.60: 5, 0.70: 1})
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Measured better.")
+    improve.evaluate(p["id"])
+
+    sid = voice_sessions.start(channel="phone")["id"]
+    tool = voice_sessions.record_tool(
+        sid, sorted(voice_sessions.SENSITIVE_TOOLS)[0], "args")
+
+    out = approvals.pending()
+    ids = [i["id"] for i in out["items"]]
+
+    assert p["id"] in ids, "an evaluated improvement is not in the queue"
+    assert f"{sid}:{tool['id']}" in ids, "a pending tool call is not in the queue"
+    assert out["count"] == len(out["items"])
+    assert out["by_surface"].get("improve") == 1
+    assert not out["errors"], out["errors"]
+
+    # Every item must say where to go to approve it, or the screen is a
+    # dead end.
+    for item in out["items"]:
+        assert item["approve_with"].startswith("POST /api/")
+        assert item["risk"]
+
+
+def test_a_measured_regression_is_never_offered_for_approval(improving):
+    """improve.approve() refuses it, so listing it would be an invitation to
+    a dead end."""
+    from app.core import approvals, improve
+
+    improving["scores"].update({0.60: 1, 0.70: 4})
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="A hunch.")
+    assert improve.evaluate(p["id"])["regression"] is True
+
+    assert p["id"] not in [i["id"] for i in approvals.pending()["items"]]
+
+
+def test_an_empty_queue_reports_none_not_zero_for_the_oldest_wait(monkeypatch):
+    """There is no oldest item when nothing is waiting, and 0 seconds would
+    read as 'something just arrived'. The sources are emptied explicitly rather
+    than hoping the queue happens to be empty — a test that only asserts
+    sometimes protects nothing."""
+    from app.core import approvals, improve, site_fix, voice_sessions
+
+    monkeypatch.setattr(site_fix, "awaiting_approval", lambda: [])
+    monkeypatch.setattr(voice_sessions, "awaiting_approval", lambda: [])
+    monkeypatch.setattr(improve, "listing", lambda **kw: [])
+
+    out = approvals.pending()
+    assert out["count"] == 0
+    assert out["oldest_seconds"] is None
+    assert out["by_surface"] == {}
+
+
+def test_a_surface_that_cannot_report_is_listed_not_hidden(monkeypatch):
+    """A queue that hides its own gaps is worse than no queue."""
+    from app.core import approvals, site_fix
+
+    def boom():
+        raise RuntimeError("storage gone")
+
+    monkeypatch.setattr(site_fix, "awaiting_approval", boom)
+    out = approvals.pending()
+
+    assert any(e["surface"] == "site_fix" for e in out["errors"])
+    assert "storage gone" in str(out["errors"])
+
+
 def test_the_engine_does_not_claim_it_can_change_its_own_source():
     """Deploying a code change needs a git push and a rebuild, and the
     container has no git credentials. Saying otherwise would be the overclaim

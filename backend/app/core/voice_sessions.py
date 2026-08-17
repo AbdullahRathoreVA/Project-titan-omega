@@ -333,6 +333,30 @@ def public(sid: str) -> dict:
         return _public_locked(s) if s else {}
 
 
+def awaiting_approval() -> list[dict]:
+    """Every sensitive tool call sitting in `pending`, oldest first.
+
+    `live()` reports `tools` as a COUNT, which is right for the 3D screen and
+    useless for an approval queue — you cannot approve a number. This returns
+    the calls themselves, still without touching the transcript."""
+    out = []
+    with _lock:
+        for s in _sessions.values():
+            for call in s["tools"]:
+                if call["status"] != "pending":
+                    continue
+                out.append({
+                    "session_id": s["id"],
+                    "call_id": call["id"],
+                    "name": call["name"],
+                    "args_summary": call["args_summary"],
+                    "started_at": call["started_at"],
+                    "channel": s["channel"],
+                    "caller": s["caller"],
+                })
+    return sorted(out, key=lambda c: c["started_at"])
+
+
 def transcript(sid: str) -> dict:
     """Full replay payload: turns, tools and the state timeline."""
     with _lock:

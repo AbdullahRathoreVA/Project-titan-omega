@@ -216,6 +216,21 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "outside_its_registered_bounds"),
     ("params: overrides are re-applied at boot", "app/main.py",
      "_params.apply_stored()", "pass", "actually_called_at_boot"),
+    # --- approval centre ---------------------------------------------------
+    ("approvals: a measured regression is never queued", "app/core/approvals.py",
+     'if row.get("regression"):', "if False:", "never_offered_for_approval"),
+    ("approvals: an empty queue reports None not zero", "app/core/approvals.py",
+     '"oldest_seconds": max(ages) if ages else None,',
+     '"oldest_seconds": max(ages) if ages else 0.0,',
+     "empty_queue_reports_none"),
+    ("approvals: a broken surface is reported", "app/core/approvals.py",
+     'errors.append({"surface": name,\n                           "error"',
+     'pass  # (\n            "error"',
+     "cannot_report_is_listed"),
+    ("voice: pending tool calls are enumerable",
+     "app/core/voice_sessions.py",
+     'if call["status"] != "pending":', "if True:",
+     "queue_shows_everything"),
 ]
 
 

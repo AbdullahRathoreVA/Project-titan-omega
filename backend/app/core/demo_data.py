@@ -56,6 +56,10 @@ _SENSITIVE_PREFIXES = (
     # route under this changes — or is one call away from changing — how the
     # live product behaves. There is no demo-safe version of an approval.
     "/api/improve",
+    # The approval queue lists real client sites, real proposed edits to them
+    # and live call details. Every item is either his private business or a
+    # paying client's.
+    "/api/approvals",
     # Client management. This one is the worst of the set: it is not Abdullah's
     # data, it is his CLIENTS' — business names, websites, contact details and
     # their audit findings. Leaking a paying client's information to a public
