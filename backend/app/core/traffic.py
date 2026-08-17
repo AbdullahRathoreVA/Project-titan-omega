@@ -67,7 +67,12 @@ def _daily_salt(day: str) -> str:
     with _lock:
         if _salt_day != day:
             _salt_day = day
-            _salt = os.getenv("TITAN_SECRET", "") + secrets.token_hex(16)
+            # Through the one door (core/appsecret.py) like every other reader.
+            # The random half already carries the entropy; routing this one too
+            # is what lets a test assert that exactly ONE module reads
+            # TITAN_SECRET from the environment.
+            from . import appsecret
+            _salt = appsecret.value() + secrets.token_hex(16)
         return _salt
 
 

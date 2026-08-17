@@ -42,8 +42,13 @@ SESSION_TTL = 7 * 24 * 3600      # a week; they are business owners, not attacke
 
 
 def _secret() -> str:
-    # Reuse the app secret when present so tokens die on credential rotation.
-    return os.getenv("TITAN_SECRET", os.getenv("TITAN_TOKEN", "titan-dev-secret"))
+    # Reuse the app secret so tokens die on credential rotation. This used to
+    # fall back to TITAN_TOKEN and then to "titan-dev-secret" — a THIRD
+    # published default, different from the two in auth.py and sessions.py, so
+    # the same deployment could be signing different token kinds with different
+    # public keys. One door now: core/appsecret.py.
+    from . import appsecret
+    return appsecret.value()
 
 
 def _hash_password(password: str, salt: str) -> str:

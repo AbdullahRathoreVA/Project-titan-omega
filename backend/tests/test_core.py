@@ -7065,6 +7065,106 @@ def test_apply_stored_is_actually_called_at_boot():
         "activated improvement will silently revert on the next rebuild")
 
 
+# ── the deployment secret ──────────────────────────────────────────────────
+# TITAN_SECRET had four different fallbacks in four files, all of them in the
+# public git history. With the variable unset, session tokens were signed with
+# a key anyone could read — and the WordPress credential vault was encrypted
+# with one.
+
+def test_production_refuses_to_start_without_a_secret(monkeypatch):
+    """A silent fallback is how a deployment ends up signing real founder
+    sessions with a published key and nobody ever finds out."""
+    from app.core import appsecret
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.delenv("TITAN_SECRET", raising=False)
+
+    assert appsecret.configured() is False
+    with pytest.raises(appsecret.MissingSecret):
+        appsecret.verify_at_startup()
+    with pytest.raises(appsecret.MissingSecret):
+        appsecret.value()
+
+
+def test_a_secret_printed_in_the_repository_is_not_a_secret(monkeypatch):
+    """Setting TITAN_SECRET to one of the historical fallbacks is exactly as
+    public as leaving it unset, so it must not count as configured."""
+    from app.core import appsecret
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    for published in appsecret.PUBLISHED_DEFAULTS:
+        monkeypatch.setenv("TITAN_SECRET", published)
+        assert appsecret.configured() is False, published
+        with pytest.raises(appsecret.MissingSecret):
+            appsecret.verify_at_startup()
+        assert appsecret.status()["using_published_default"] is True
+
+
+def test_a_real_secret_starts_normally(monkeypatch):
+    from app.core import appsecret
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "a-genuinely-random-deployment-secret")
+    appsecret.verify_at_startup()          # must not raise
+    assert appsecret.configured() is True
+    assert appsecret.value() == "a-genuinely-random-deployment-secret"
+
+
+def test_local_development_still_opens_without_a_secret(monkeypatch):
+    """Auth is off locally by design. Requiring a secret there would just make
+    the dashboard harder to run, and there is nothing to protect."""
+    from app.core import appsecret
+    monkeypatch.delenv("TITAN_REQUIRE_AUTH", raising=False)
+    monkeypatch.delenv("TITAN_SECRET", raising=False)
+    appsecret.verify_at_startup()          # must not raise
+    assert appsecret.value() == appsecret.DEV_SECRET
+    assert "not-a-production-secret" in appsecret.value()
+
+
+def test_the_secret_status_never_reveals_the_secret(monkeypatch):
+    """A status endpoint that leaks the key it is describing would be a
+    remarkable own goal."""
+    from app.core import appsecret
+    monkeypatch.setenv("TITAN_SECRET", "super-secret-value-do-not-print")
+    blob = repr(appsecret.status())
+    assert "super-secret-value-do-not-print" not in blob
+
+
+def test_only_one_module_reads_the_secret_from_the_environment():
+    """The whole point of the module. Four files reading TITAN_SECRET meant
+    four different fallbacks, so the same deployment could sign different token
+    kinds with different published keys."""
+    import pathlib
+    import re as _re
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    offenders = []
+    for path in root.rglob("*.py"):
+        if path.name == "appsecret.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        code = "\n".join(_re.sub(r"#.*$", "", line)
+                         for line in text.splitlines())
+        if _re.search(r"getenv\(\s*[\"']TITAN_SECRET", code):
+            offenders.append(str(path.relative_to(root)))
+    assert not offenders, (
+        "these modules read TITAN_SECRET directly instead of going through "
+        f"core/appsecret.py: {offenders}")
+
+
+def test_the_secret_check_is_actually_wired_into_the_lifespan():
+    """Same defect shape as knowledge.backfill() and params.apply_stored():
+    a function that exists, is tested, and is never called. Comments are
+    stripped first because the comment above the call names it."""
+    import inspect
+    import re as _re
+
+    from app import main
+
+    src = inspect.getsource(main.lifespan)
+    code = "\n".join(_re.sub(r"#.*$", "", line) for line in src.splitlines())
+    assert _re.search(r"\bverify_at_startup\s*\(", code), (
+        "the startup secret check is no longer CALLED — production can boot "
+        "signing sessions with a key that is published in this repository")
+
+
 def test_the_approval_gate_holds_over_http_and_says_why(client, improving):
     """The module-level tests prove the gate. This proves it survives the API
     layer, and that the refusal REASON reaches the caller instead of being

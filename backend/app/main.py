@@ -172,6 +172,14 @@ async def _heartbeat_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # FIRST, before anything is loaded or served. A deployment that enforces
+    # authentication and has no usable TITAN_SECRET must not answer a single
+    # request: it would be signing founder sessions, and encrypting the
+    # WordPress credential vault, with a key printed in the public repository.
+    # Deliberately NOT wrapped in contextlib.suppress — this one is meant to
+    # stop the boot. See core/appsecret.py.
+    from .core import appsecret as _appsecret
+    _appsecret.verify_at_startup()
     seed(STORE)
     persistence.load(STORE)
     opportunity.discover(STORE)

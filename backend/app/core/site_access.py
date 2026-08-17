@@ -57,7 +57,13 @@ def _key() -> bytes:
         except Exception:
             pass
         return base64.urlsafe_b64encode(hashlib.sha256(raw.encode()).digest())
-    seed = os.getenv("TITAN_SECRET", "titan-omega-change-me")
+    # Through the one door. The fallback that used to sit here meant that on a
+    # deployment with TITAN_SECRET unset, the vault holding OTHER PEOPLE'S
+    # WordPress credentials was encrypted with a key derived from a string in
+    # the public repository. The derivation is unchanged, so a deployment that
+    # already sets TITAN_SECRET keeps decrypting everything it stored before.
+    from . import appsecret
+    seed = appsecret.value()
     return base64.urlsafe_b64encode(hashlib.sha256(
         ("credential:" + seed).encode()).digest())
 

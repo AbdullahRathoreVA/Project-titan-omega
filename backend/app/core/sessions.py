@@ -55,7 +55,10 @@ _revoked: dict[str, float] = {}
 
 
 def _secret() -> bytes:
-    return os.getenv("TITAN_SECRET", "titan-omega-change-me").encode()
+    # One door — see core/appsecret.py. Signing sessions with a fallback that
+    # is printed in the repository makes every token forgeable.
+    from . import appsecret
+    return appsecret.key()
 
 
 def _b64(raw: bytes) -> str:

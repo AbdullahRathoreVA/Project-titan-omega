@@ -42,8 +42,13 @@ def using_demo_credentials() -> bool:
 
 
 def _secret() -> bytes:
-    # A stable per-deploy secret keeps tokens valid across requests.
-    return os.getenv("TITAN_SECRET", "titan-omega-change-me").encode()
+    # A stable per-deploy secret keeps tokens valid across requests. Read
+    # through core.appsecret, which is the ONLY module allowed to touch
+    # TITAN_SECRET: the fallback that used to live here ("titan-omega-change-me")
+    # is in the public git history, so on a deployment with the variable unset
+    # anyone could mint a founder token.
+    from . import appsecret
+    return appsecret.key()
 
 
 def make_token(username: str) -> str:
