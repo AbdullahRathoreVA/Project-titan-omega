@@ -7065,6 +7065,150 @@ def test_apply_stored_is_actually_called_at_boot():
         "activated improvement will silently revert on the next rebuild")
 
 
+# ── identity: real accounts, roles and sessions ────────────────────────────
+
+@pytest.fixture
+def identities(monkeypatch, tmp_path):
+    """A real SQLite file per test.
+
+    `identity` goes through `db.connect`, which reopens when the path changes,
+    so pointing STATE_FILE at a temp file isolates one test's users from
+    another's. Hashing is lowered to 1000 rounds: production cost would add
+    ~0.4s to every login in the suite, and because the count is stored INSIDE
+    the hash this still exercises the real code path — which is the entire
+    point of the format.
+    """
+    from app import persistence
+    from app.core import db, identity
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "state.db"))
+    monkeypatch.setattr(identity, "ITERATIONS", 1000)
+    db.connect(persistence.STATE_FILE)
+    yield identity
+
+
+def test_a_person_can_register_and_sign_in(identities):
+    user = identities.create("owner@zashmart.test", "a-real-password-123")
+    assert user["email"] == "owner@zashmart.test"
+    assert user["role"] == identities.MEMBER
+    assert user["status"] == identities.ACTIVE
+
+    token = identities.authenticate("owner@zashmart.test", "a-real-password-123")
+    assert token
+    assert identities.resolve(token)["email"] == "owner@zashmart.test"
+
+
+def test_the_password_is_never_stored_and_never_returned(identities):
+    """The public record is an allow-list. The only way to leak the hash is to
+    add it to `_row_to_public`."""
+    user = identities.create("a@example.com", "correct-horse-battery")
+    assert "pwhash" not in user and "password" not in user
+
+    row = identities._conn().execute(
+        "SELECT pwhash FROM users WHERE email=?", ("a@example.com",)).fetchone()
+    stored = row["pwhash"]
+    assert "correct-horse-battery" not in stored
+    assert stored.startswith("pbkdf2_sha256$")
+    assert identities.verify_password("correct-horse-battery", stored)
+    assert not identities.verify_password("wrong", stored)
+
+
+def test_the_cost_travels_with_the_hash(identities):
+    """Raising the iteration count must not invalidate every stored password.
+    A bare constant would do exactly that the day somebody edited it."""
+    cheap = identities.hash_password("a-real-password-123", iterations=1000)
+    assert cheap.split("$")[1] == "1000"
+    # The deployment raises its cost; the old hash must still verify.
+    identities.ITERATIONS = 5000
+    try:
+        assert identities.verify_password("a-real-password-123", cheap)
+        fresh = identities.hash_password("a-real-password-123")
+        assert fresh.split("$")[1] == "5000"
+    finally:
+        identities.ITERATIONS = 1000
+
+
+def test_an_unknown_email_still_costs_a_hash(identities, monkeypatch):
+    """A fast no for unknown addresses and a slow no for known ones tells an
+    attacker exactly who has an account here. Asserted by counting the work,
+    not by timing it — a timing assertion would be flaky."""
+    identities.create("known@example.com", "a-real-password-123")
+
+    calls = []
+    real = identities.verify_password
+    monkeypatch.setattr(identities, "verify_password",
+                        lambda pw, stored: calls.append(1) or real(pw, stored))
+
+    assert identities.authenticate("nobody@example.com", "whatever") is None
+    assert calls, "no hash was computed for an unknown email — the response " \
+                  "time now advertises which addresses are registered"
+
+
+def test_a_disabled_account_cannot_sign_in_with_the_right_password(identities):
+    identities.create("gone@example.com", "a-real-password-123")
+    assert identities.set_status("gone@example.com", identities.DISABLED)
+    assert identities.authenticate("gone@example.com",
+                                   "a-real-password-123") is None
+
+
+def test_disabling_someone_revokes_a_session_they_already_hold(identities):
+    """A signature that stays valid for a fortnight is not a revocation."""
+    identities.create("bye@example.com", "a-real-password-123")
+    token = identities.authenticate("bye@example.com", "a-real-password-123")
+    assert identities.resolve(token)
+
+    identities.set_status("bye@example.com", identities.DISABLED)
+    assert identities.resolve(token) is None
+
+
+def test_the_same_email_cannot_register_twice(identities):
+    identities.create("dup@example.com", "a-real-password-123")
+    with pytest.raises(identities.IdentityError):
+        identities.create("dup@example.com", "another-password-456")
+
+
+def test_email_is_normalised_so_case_does_not_lock_anyone_out(identities):
+    identities.create("  Owner@ZashMart.TEST ", "a-real-password-123")
+    assert identities.authenticate("owner@zashmart.test",
+                                   "a-real-password-123")
+
+
+def test_an_unknown_role_is_refused_not_stored(identities):
+    """A typo becoming a new privilege level is how authorisation bugs start."""
+    with pytest.raises(identities.IdentityError):
+        identities.create("x@example.com", "a-real-password-123",
+                          role="superadmin")
+    identities.create("y@example.com", "a-real-password-123")
+    with pytest.raises(identities.IdentityError):
+        identities.set_role("y@example.com", "root")
+    assert identities.get("y@example.com")["role"] == identities.MEMBER
+
+
+def test_a_short_password_is_refused_with_a_reason(identities):
+    with pytest.raises(identities.IdentityError) as e:
+        identities.create("z@example.com", "short")
+    assert str(identities.MIN_PASSWORD) in str(e.value)
+
+
+def test_a_bad_email_is_refused(identities):
+    for bad in ("", "   ", "not-an-email", "no@domain", "two@@at.com"):
+        with pytest.raises(identities.IdentityError):
+            identities.create(bad, "a-real-password-123")
+
+
+def test_roles_are_a_closed_set(identities):
+    """If this grows, it grows deliberately — a role is a privilege level."""
+    assert identities.ROLES == {"founder", "member"}
+
+
+def test_identity_says_whether_it_survives_a_rebuild(identities):
+    """These are login credentials. A screen that lists them has to be able to
+    say whether they are still there after the next deploy."""
+    stats = identities.stats()
+    assert stats["users"] == 0
+    assert stats["algorithm"] == "pbkdf2_sha256"
+    assert "durable" in stats
+
+
 # ── the deployment secret ──────────────────────────────────────────────────
 # TITAN_SECRET had four different fallbacks in four files, all of them in the
 # public git history. With the variable unset, session tokens were signed with

@@ -38,7 +38,7 @@ import threading
 import time
 from typing import Any, Optional
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _lock = threading.RLock()
 _conn: Optional[sqlite3.Connection] = None
@@ -132,6 +132,34 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE UNIQUE INDEX IF NOT EXISTS proposals_one_open_per_param
             ON proposals (param)
             WHERE status IN ('proposed', 'evaluated', 'approved', 'active');
+    """),
+    # Real identity. Until now "authentication" was a single operator gate:
+    # one username and one password compared in plaintext against environment
+    # variables, with `founder`/`titan` as the fallback. There was no concept
+    # of a person, so there was nothing for a role or an organisation to hang
+    # off — see core/identity.py.
+    #
+    # A table rather than another JSON blob in `state`, for the reason the queue
+    # got one: a UNIQUE constraint on email is the only way to make "two people
+    # cannot register the same address" true under concurrency, rather than
+    # hopefully true.
+    #
+    # `pwhash` is self-describing (`pbkdf2_sha256$<iterations>$<salt>$<hash>`),
+    # so the cost can be raised later and old hashes stay verifiable — the
+    # iteration count travels with the hash instead of being a constant that
+    # silently invalidates everything when someone edits it.
+    (4, """
+        CREATE TABLE IF NOT EXISTS users (
+            id                  TEXT PRIMARY KEY,
+            email               TEXT NOT NULL UNIQUE,
+            pwhash              TEXT NOT NULL,
+            role                TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            created_at          REAL NOT NULL,
+            last_login_at       REAL,
+            password_changed_at REAL
+        );
+        CREATE INDEX IF NOT EXISTS users_role ON users (role);
     """),
 ]
 

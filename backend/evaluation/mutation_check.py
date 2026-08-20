@@ -273,6 +273,21 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      'return str(acct.get("subscription_id", "")).startswith("granted")',
      "return False",
      "granted_seat_is_never_counted or bought_seat_is_still"),
+    # --- identity ------------------------------------------------------------
+    # Authorisation boundaries. Each one is the difference between "disabled"
+    # meaning disabled and meaning nothing.
+    ("identity: a disabled account cannot sign in", "app/core/identity.py",
+     'if row["status"] != ACTIVE:', "if False:",
+     "disabled_account_cannot_sign_in"),
+    ("identity: resolve re-checks the user is still active",
+     "app/core/identity.py",
+     'if not user or user["status"] != ACTIVE:', "if not user:",
+     "revokes_a_session_they_already_hold"),
+    ("identity: an unknown email still costs a hash", "app/core/identity.py",
+     'verify_password(password or "", _dummy_hash())', "pass",
+     "unknown_email_still_costs"),
+    ("identity: roles are a closed set", "app/core/identity.py",
+     "if role not in ROLES:", "if False:", "unknown_role_is_refused"),
     # --- the deployment secret ---------------------------------------------
     ("appsecret: production refuses to boot without a secret",
      "app/core/appsecret.py",
