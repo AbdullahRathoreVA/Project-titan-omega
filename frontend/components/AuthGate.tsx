@@ -32,12 +32,17 @@ export function AuthGate() {
   const [state, setState] = useState<"loading" | "login" | "ready">("loading");
   const [demo, setDemo] = useState(true);
   const [guestAvailable, setGuestAvailable] = useState(true);
+  // "legacy" until the server says otherwise: assuming real accounts and then
+  // being wrong would label the box "Email address" on a deployment that wants
+  // a username, which is a login nobody can complete.
+  const [identityMode, setIdentityMode] = useState<"identity" | "legacy">("legacy");
   const [guest, setGuest] = useState(false);
 
   const probe = useCallback(async () => {
     const status = await api.authStatus();
     setDemo(status.demo);
     setGuestAvailable(status.guest_available !== false);
+    setIdentityMode(status.identity?.mode === "identity" ? "identity" : "legacy");
 
     // A whole-Space guest deploy (legacy TITAN_GUEST_MODE) needs no login.
     if (status.guest) {
@@ -115,6 +120,7 @@ export function AuthGate() {
     return (
       <Login
         demo={demo}
+        identityMode={identityMode}
         guestAvailable={guestAvailable}
         onSuccess={() => {
           markGuest(false);

@@ -3903,9 +3903,22 @@ def test_json_export_still_works_as_a_backup(fresh_db, tmp_path):
 # ── sessions: expiring, revocable, restart-proof ───────────────────────────
 
 @pytest.fixture
-def clean_sessions(monkeypatch):
-    from app.core import sessions
+def clean_sessions(monkeypatch, tmp_path):
+    """No leftover sessions, a stable signing secret, and an EMPTY identity
+    table.
+
+    The last part matters since the login cutover. The environment gate in
+    `core/auth.py` is reachable only while no founder account exists, so a
+    founder row left behind in the developer's local state file would silently
+    change what every test below is asserting. Same rule as `clean_tool_env`: a
+    suite whose result depends on whether an untracked file exists is worse
+    than no suite.
+    """
+    from app import persistence
+    from app.core import db, sessions
     monkeypatch.setenv("TITAN_SECRET", "session-test-secret")
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "sessions.db"))
+    db.connect(persistence.STATE_FILE)
     sessions.reset()
     yield
     sessions.reset()
@@ -7207,6 +7220,261 @@ def test_identity_says_whether_it_survives_a_rebuild(identities):
     assert stats["users"] == 0
     assert stats["algorithm"] == "pbkdf2_sha256"
     assert "durable" in stats
+
+
+# ── the cutover: real accounts retire the environment gate ─────────────────
+# `core/auth.py` compared one username and one password against environment
+# variables in plaintext. It was not simply deleted: TITAN_FOUNDER_EMAIL is not
+# set on the live deployment, so a hard cut would have removed the founder's
+# only way into a site that is already serving traffic. Instead the gate
+# switches ITSELF off the moment a real founder account exists. These tests are
+# that promise, in both directions — the gate still works before, and is dead
+# after.
+
+
+@pytest.fixture
+def founder_login(identities, monkeypatch):
+    """A temp identity table, a stable signing secret, no leftover sessions,
+    and none of the founder environment variables inherited from the machine."""
+    from app.core import sessions
+    monkeypatch.setenv("TITAN_SECRET", "cutover-test-secret")
+    for var in ("TITAN_FOUNDER_EMAIL", "TITAN_USERNAME", "TITAN_PASSWORD"):
+        monkeypatch.delenv(var, raising=False)
+    sessions.reset()
+    yield identities
+    sessions.reset()
+
+
+def test_the_environment_gate_still_answers_until_a_founder_account_exists(
+        founder_login, monkeypatch):
+    """The safety half of the cutover. Removing this before the replacement is
+    configured locks the founder out of production."""
+    from app.core import auth
+    monkeypatch.setenv("TITAN_USERNAME", "abdullah")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+
+    assert auth.identity_retired_the_gate() is False
+    token = auth.login("abdullah", "a-real-password-123")
+    assert token, "the only way in disappeared before its replacement existed"
+    assert auth.valid_token(token) is True
+
+
+def test_a_seeded_founder_account_retires_the_environment_gate(
+        founder_login, monkeypatch):
+    """The whole point. Once a real account exists the plaintext environment
+    comparison must stop answering — with no second deploy, and no flag anybody
+    has to remember to flip."""
+    from app.core import auth
+    monkeypatch.setenv("TITAN_USERNAME", "abdullah")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+    assert auth.login("abdullah", "a-real-password-123"), "sanity: gate was open"
+
+    monkeypatch.setenv("TITAN_FOUNDER_EMAIL", "abdullah@titanomega-ai.test")
+    result = founder_login.ensure_founder()
+    assert result["mode"] == "identity" and result["seeded"] is True
+
+    # The environment pair that worked one line ago is refused now.
+    assert auth.login("abdullah", "a-real-password-123") is None
+    assert auth.identity_retired_the_gate() is True
+
+    # And the real account is what works instead.
+    token = auth.login("abdullah@titanomega-ai.test", "a-real-password-123")
+    assert token
+    assert auth.valid_token(token) is True
+
+
+def test_a_token_minted_by_the_old_gate_dies_at_the_cutover(
+        founder_login, monkeypatch):
+    """A live session issued by the environment gate is a credential for a door
+    that no longer exists. Leaving it valid for the rest of its fortnight would
+    keep the retired comparison alive in everything but name."""
+    from app.core import auth
+    monkeypatch.setenv("TITAN_USERNAME", "abdullah")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+    stale = auth.login("abdullah", "a-real-password-123")
+    assert auth.valid_token(stale) is True
+
+    monkeypatch.setenv("TITAN_FOUNDER_EMAIL", "abdullah@titanomega-ai.test")
+    founder_login.ensure_founder()
+    assert auth.valid_token(stale) is False
+
+
+def test_the_founder_is_never_seeded_with_a_weak_or_default_password(
+        founder_login, monkeypatch):
+    """`titan` is the fallback printed in this repository. Seeding the one
+    account that administers the system with it — or with nothing — would be
+    worse than leaving the old gate in place, so it refuses and says why."""
+    monkeypatch.setenv("TITAN_FOUNDER_EMAIL", "abdullah@titanomega-ai.test")
+
+    for weak in ("", "titan", "abc123"):
+        monkeypatch.setenv("TITAN_PASSWORD", weak)
+        result = founder_login.ensure_founder()
+        assert result["seeded"] is False
+        assert result["mode"] == "legacy"
+        assert founder_login.founder_exists() is False
+        assert str(founder_login.MIN_PASSWORD) in result["reason"]
+        # Names the variable the operator has to set. identity.create() would
+        # refuse this anyway, but its message talks about "password", which on
+        # a host with six TITAN_* variables is not enough to act on.
+        assert "TITAN_PASSWORD" in result["reason"]
+        if weak:
+            assert weak not in result["reason"], "the reason echoed the password"
+
+
+def test_seeding_the_founder_twice_does_not_create_a_second_account(
+        founder_login, monkeypatch):
+    """It runs on every boot, and on a host with no persistent storage that is
+    often."""
+    monkeypatch.setenv("TITAN_FOUNDER_EMAIL", "abdullah@titanomega-ai.test")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+
+    first = founder_login.ensure_founder()
+    second = founder_login.ensure_founder()
+    assert first["seeded"] is True and second["seeded"] is False
+    assert founder_login.count(founder_login.FOUNDER) == 1
+
+
+def test_the_environment_password_cannot_overwrite_a_real_account(
+        founder_login, monkeypatch):
+    """Once the row exists the database is authoritative. Re-seeding on every
+    boot would silently undo a password changed inside the product, and would
+    leave the host as a permanent backdoor into an account it no longer owns."""
+    from app.core import auth
+    monkeypatch.setenv("TITAN_FOUNDER_EMAIL", "abdullah@titanomega-ai.test")
+    monkeypatch.setenv("TITAN_PASSWORD", "the-original-123")
+    founder_login.ensure_founder()
+
+    monkeypatch.setenv("TITAN_PASSWORD", "a-different-one-456")
+    founder_login.ensure_founder()
+
+    assert auth.login("abdullah@titanomega-ai.test", "a-different-one-456") is None
+    assert auth.login("abdullah@titanomega-ai.test", "the-original-123")
+
+
+def test_a_member_cannot_sign_in_at_the_founder_door(founder_login, monkeypatch):
+    """A real account is not a founder account. Members have no dashboard of
+    their own yet, so this refuses rather than handing out founder access — and
+    the session minted on the way through is thrown away, not left valid for a
+    fortnight."""
+    from app.core import auth, sessions
+    monkeypatch.setenv("TITAN_FOUNDER_EMAIL", "abdullah@titanomega-ai.test")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+    founder_login.ensure_founder()
+    founder_login.create("staff@example.com", "a-real-password-123")
+
+    before = sessions.revoked_count()
+    assert auth.login("staff@example.com", "a-real-password-123") is None
+    assert sessions.revoked_count() > before, \
+        "the session minted for a member on the way through was left valid"
+
+
+def test_a_member_session_never_opens_the_founder_dashboard(
+        founder_login, monkeypatch):
+    """The middleware guarding every founder endpoint asks `auth.valid_token`.
+    A member holding a perfectly valid session of their own must not pass it."""
+    from app.core import auth
+    monkeypatch.setenv("TITAN_FOUNDER_EMAIL", "abdullah@titanomega-ai.test")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+    founder_login.ensure_founder()
+    founder_login.create("staff@example.com", "a-real-password-123")
+
+    member = founder_login.authenticate("staff@example.com", "a-real-password-123")
+    assert member, "sanity: the member really can authenticate"
+    assert auth.valid_token(member) is False
+
+
+def test_promoting_a_member_to_founder_is_what_the_host_says_it_is(
+        founder_login, monkeypatch):
+    """If the address registered as a member first, the host naming it as the
+    founder is the authority — otherwise setting TITAN_FOUNDER_EMAIL would
+    silently do nothing and nobody would know why the login still failed."""
+    from app.core import auth
+    founder_login.create("abdullah@titanomega-ai.test", "a-real-password-123")
+    assert founder_login.founder_exists() is False
+
+    monkeypatch.setenv("TITAN_FOUNDER_EMAIL", "abdullah@titanomega-ai.test")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+    result = founder_login.ensure_founder()
+
+    assert result["mode"] == "identity" and result["seeded"] is False
+    assert auth.valid_token(
+        auth.login("abdullah@titanomega-ai.test", "a-real-password-123")) is True
+
+
+def test_disabling_the_founder_revokes_the_dashboard_immediately(
+        founder_login, monkeypatch):
+    """`resolve` re-checks the account on every call, so this has to hold all
+    the way up through the dashboard's own gate, not just inside identity."""
+    from app.core import auth
+    monkeypatch.setenv("TITAN_FOUNDER_EMAIL", "abdullah@titanomega-ai.test")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+    founder_login.ensure_founder()
+
+    token = auth.login("abdullah@titanomega-ai.test", "a-real-password-123")
+    assert auth.valid_token(token) is True
+    founder_login.set_status("abdullah@titanomega-ai.test", founder_login.DISABLED)
+    assert auth.valid_token(token) is False
+
+
+def test_a_non_ascii_login_is_refused_rather_than_crashing(
+        founder_login, monkeypatch):
+    """`hmac.compare_digest` raises TypeError on a non-ASCII str, so anything
+    with an accent in it used to come back from /api/login as a 500 — which
+    looks like a fault and confirms the input reached the comparison."""
+    from app.core import auth
+    monkeypatch.setenv("TITAN_USERNAME", "abdullah")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+
+    assert auth.login("abdüllah", "a-real-password-123") is None
+    assert auth.login("abdullah", "pässword-123456") is None
+    assert auth.login("abdullah", "a-real-password-123"), "sanity: the real pair still works"
+
+
+def test_the_public_login_status_never_reveals_the_founder_address(
+        founder_login, monkeypatch):
+    """/api/auth answers before anybody has signed in. Publishing the one
+    address that can administer the system hands a passer-by half the
+    credentials."""
+    monkeypatch.setenv("TITAN_FOUNDER_EMAIL", "abdullah@titanomega-ai.test")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+    founder_login.ensure_founder()
+
+    mode = founder_login.mode()
+    assert mode["mode"] == "identity"
+    assert mode["founder_account_exists"] is True
+    assert mode["environment_gate_reachable"] is False
+    assert "abdullah@titanomega-ai.test" not in repr(mode)
+
+
+def test_the_login_status_says_plainly_when_the_old_gate_is_still_in_use(
+        founder_login):
+    """The remaining step belongs in the product, not only in a handover
+    document — otherwise nobody can tell which login is actually answering."""
+    mode = founder_login.mode()
+    assert mode["mode"] == "legacy"
+    assert mode["founder_email_configured"] is False
+    assert mode["environment_gate_reachable"] is True
+
+
+def test_the_founder_login_is_rate_limited(client, monkeypatch):
+    """Credential stuffing against the founder's door was unmetered, while the
+    customer door a few hundred lines away in the same file has had a limit
+    since the day it was written."""
+    from app.core import identity, ratelimit
+    # Every rejected attempt spends a full anti-enumeration hash, so at the
+    # production cost this one test was 7.7s — the second slowest in the suite.
+    # Same reasoning as the `identities` fixture: the cost travels with the
+    # hash, so lowering it still exercises the real code path.
+    monkeypatch.setattr(identity, "ITERATIONS", 1000)
+    ratelimit.reset()
+    limit = ratelimit.LIMITS["login"][0]
+
+    body = {"username": "nobody", "password": "not-the-password"}
+    codes = [client.post("/api/login", json=body).status_code
+             for _ in range(limit + 1)]
+
+    assert codes[0] == 401
+    assert codes[-1] == 429, "the founder login accepted unlimited attempts"
 
 
 # ── the deployment secret ──────────────────────────────────────────────────

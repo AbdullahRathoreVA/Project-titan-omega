@@ -140,7 +140,23 @@ export const api = {
 
   // auth
   authStatus: () =>
-    get<{ required: boolean; demo: boolean; guest?: boolean; guest_available?: boolean }>("/auth", {
+    get<{
+      required: boolean;
+      demo: boolean;
+      guest?: boolean;
+      guest_available?: boolean;
+      /** Which login is answering. `identity` = real accounts with roles;
+       *  `legacy` = the single TITAN_USERNAME/TITAN_PASSWORD gate. The sign-in
+       *  form asks for an email under one and a username under the other, so
+       *  the label is read from here rather than guessed. Carries no address:
+       *  this endpoint answers before anyone has signed in. */
+      identity?: {
+        mode: "identity" | "legacy";
+        founder_email_configured: boolean;
+        founder_account_exists: boolean;
+        environment_gate_reachable: boolean;
+      };
+    }>("/auth", {
       required: false,
       demo: true,
       guest: false,

@@ -34,11 +34,17 @@ type Plan = {
 export function Login({
   onSuccess,
   demo,
+  identityMode = "legacy",
   guestAvailable = true,
   onGuest,
 }: {
   onSuccess: () => void;
   demo: boolean;
+  /** Which login the server is actually running. Under real accounts this box
+   *  wants an email address; under the old environment gate it wants a
+   *  username. Labelling it wrongly is a sign-in nobody can complete, so the
+   *  label comes from /api/auth rather than from an assumption here. */
+  identityMode?: "identity" | "legacy";
   guestAvailable?: boolean;
   onGuest?: () => void;
 }) {
@@ -70,7 +76,12 @@ export function Login({
     const ok = await api.login(username.trim(), password);
     setBusy(false);
     if (ok) onSuccess();
-    else setError("Invalid username or password.");
+    else
+      setError(
+        identityMode === "identity"
+          ? "Invalid email or password."
+          : "Invalid username or password.",
+      );
   }
 
   async function startDemo() {
@@ -211,11 +222,15 @@ export function Login({
             <p className="mb-3 text-[11px] text-slate-500">
               Account holders and the owner sign in here.
             </p>
-            <label className="hud-label">Username</label>
+            <label className="hud-label">
+              {identityMode === "identity" ? "Email address" : "Username"}
+            </label>
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
+              type={identityMode === "identity" ? "email" : "text"}
+              inputMode={identityMode === "identity" ? "email" : "text"}
+              autoComplete={identityMode === "identity" ? "email" : "username"}
               className="mt-1 mb-3 w-full rounded-lg border border-edge bg-panel-2/60 px-3 py-2 text-sm text-slate-100 focus:border-hud-cyan/40 focus:outline-none"
             />
             <label className="hud-label">Password</label>
@@ -239,6 +254,13 @@ export function Login({
               <p className="mt-3 text-[11px] leading-relaxed text-hud-amber">
                 ⚠ Demo login (founder / titan). Set TITAN_USERNAME and
                 TITAN_PASSWORD on your host to secure it.
+              </p>
+            )}
+            {!demo && identityMode === "legacy" && (
+              <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
+                Signing in against the environment gate. Set
+                TITAN_FOUNDER_EMAIL to move to a real account with a hashed
+                password — the gate switches itself off once one exists.
               </p>
             )}
           </form>

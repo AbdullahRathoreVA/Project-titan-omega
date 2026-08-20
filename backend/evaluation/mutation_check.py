@@ -288,6 +288,39 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "unknown_email_still_costs"),
     ("identity: roles are a closed set", "app/core/identity.py",
      "if role not in ROLES:", "if False:", "unknown_role_is_refused"),
+    # --- the login cutover -------------------------------------------------
+    # The environment gate in core/auth.py retires itself the moment a real
+    # founder account exists. Each of these is the difference between that
+    # being true and it being a comment. Anchors are single-line and unique
+    # on purpose: this tool replaces the FIRST match it finds.
+    #
+    # Deliberately NOT guarded: ensure_founder's weak-password refusal and its
+    # `if current:` overwrite check. Removing either changes only the wording
+    # of the refusal, because identity.create() independently enforces the
+    # password floor and the UNIQUE constraint on email. A guard that cannot
+    # fail is theatre, and this file exists because two of those were found.
+    ("cutover: a founder account retires the environment gate",
+     "app/core/auth.py",
+     "    if identity_retired_the_gate():", "    if False:",
+     "retires_the_environment_gate"),
+    ("cutover: a session from the old gate dies at the cutover",
+     "app/core/auth.py",
+     "if not sub or identity_retired_the_gate():", "if not sub:",
+     "minted_by_the_old_gate_dies"),
+    ("cutover: a member is never handed a founder session",
+     "app/core/auth.py",
+     '        if user and user["role"] == identity.FOUNDER:',
+     '        if user:',
+     "member_cannot_sign_in_at_the_founder"),
+    ("cutover: a member session never opens the founder dashboard",
+     "app/core/auth.py",
+     '        if user is not None and user["role"] == identity.FOUNDER:',
+     '        if user is not None:',
+     "member_session_never_opens"),
+    ("cutover: the host naming the founder actually promotes the account",
+     "app/core/identity.py",
+     "    if current:", "    if False:",
+     "promoting_a_member_to_founder"),
     # --- the deployment secret ---------------------------------------------
     ("appsecret: production refuses to boot without a secret",
      "app/core/appsecret.py",

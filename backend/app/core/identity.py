@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import re
 import secrets
 import threading
@@ -139,6 +140,20 @@ def _row_to_public(row) -> dict:
     }
 
 
+def _require_role(role: str) -> str:
+    """The one place a role is validated.
+
+    ``create`` and ``set_role`` each carried their own copy of this check, which
+    quietly weakened the mutation guard on it: the tool replaces the FIRST match
+    of an anchor, so deleting the check only ever disarmed ``create``, and
+    ``set_role`` was never actually tested against its own guard being gone.
+    One copy, one anchor, both call sites covered.
+    """
+    if role not in ROLES:
+        raise IdentityError(f"Unknown role: {role}. One of {sorted(ROLES)}.")
+    return role
+
+
 def create(email: str, password: str, role: str = MEMBER) -> dict:
     """Register a person. Raises IdentityError with a reason a human can act on."""
     email = normalise_email(email)
@@ -147,8 +162,7 @@ def create(email: str, password: str, role: str = MEMBER) -> dict:
     if len(password or "") < MIN_PASSWORD:
         raise IdentityError(
             f"Password must be at least {MIN_PASSWORD} characters.")
-    if role not in ROLES:
-        raise IdentityError(f"Unknown role: {role}. One of {sorted(ROLES)}.")
+    _require_role(role)
 
     now = time.time()
     conn = _conn()
@@ -231,8 +245,7 @@ def set_password(email: str, password: str) -> bool:
 
 
 def set_role(email: str, role: str) -> bool:
-    if role not in ROLES:
-        raise IdentityError(f"Unknown role: {role}. One of {sorted(ROLES)}.")
+    _require_role(role)
     conn = _conn()
     with _lock, conn:
         cur = conn.execute("UPDATE users SET role=? WHERE email=?",
@@ -293,3 +306,132 @@ def _durable() -> bool:
         return bool(db.stats().get("durable"))
     except Exception:
         return False
+
+
+# ------------------------------------------------------------- the founder --
+# How the cutover from ``core/auth.py`` actually happens.
+#
+# ``core/auth.py`` compares one username and one password against environment
+# variables in plaintext. Deleting that comparison outright is the obvious move
+# and it is the wrong one: the address this table needs is not set on the live
+# deployment yet, so a hard cut would leave the founder with no way into his own
+# dashboard on a site that is already serving traffic.
+#
+# So the gate retires ITSELF. Once a founder account exists here, the
+# environment comparison stops being reachable — permanently, with no second
+# deploy and no flag anybody has to remember to flip. Until then it keeps
+# working, and ``/api/auth`` says which mode is in force, so the remaining step
+# is visible in the product rather than only in a handover document.
+
+FOUNDER_EMAIL_VAR = "TITAN_FOUNDER_EMAIL"
+
+
+def configured_founder_email() -> Optional[str]:
+    """The address the founder signs in with, or None if the host has not said.
+
+    ``TITAN_USERNAME`` is accepted only when it already IS an address. Seeding a
+    synthetic ``<username>@titan.local`` to satisfy the validator was considered
+    and rejected: an address nobody chose, that no mail ever reaches, is
+    impossible to reason about later and would quietly become the account
+    somebody eventually tries to send a password reset to.
+    """
+    for var in (FOUNDER_EMAIL_VAR, "TITAN_USERNAME"):
+        candidate = normalise_email(os.getenv(var, ""))
+        if _EMAIL.match(candidate):
+            return candidate
+    return None
+
+
+def founder_exists() -> bool:
+    """Is there a real founder account?
+
+    This one fact is what retires the environment gate, so it answers False on
+    any error rather than raising: a database that cannot be read must fail
+    towards the founder still being able to sign in, never towards nobody
+    being able to. The environment password is still required either way, so
+    this is not a bypass.
+    """
+    try:
+        row = _conn().execute(
+            "SELECT 1 FROM users WHERE role=? AND status=? LIMIT 1",
+            (FOUNDER, ACTIVE)).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
+def ensure_founder() -> dict:
+    """Seed the founder account from the environment. Idempotent, never raises.
+
+    Called once from the application lifespan. Returns what it did in terms a
+    status screen can show, and **never echoes the password** — not its value
+    and not its length.
+
+    Deliberate: the password is read only when the account is CREATED. Once the
+    row exists the database is authoritative, so changing ``TITAN_PASSWORD`` on
+    the host cannot silently overwrite a password that was changed inside the
+    product. On a host with no persistent storage the table is empty after every
+    rebuild and the environment seeds it again, which is exactly the behaviour
+    that keeps a free-tier deployment usable.
+    """
+    email = configured_founder_email()
+    if not email:
+        return {"mode": "legacy", "seeded": False, "email": None,
+                "reason": (f"{FOUNDER_EMAIL_VAR} is not set to a valid email "
+                           "address, so there is no account to sign in to. The "
+                           "environment gate in core/auth.py is still in use.")}
+    try:
+        current = get(email)
+    except Exception as exc:
+        return {"mode": "legacy", "seeded": False, "email": email,
+                "reason": f"The identity table could not be read: {exc}"}
+
+    # Named `current`, not `existing`, so this line is a unique mutation anchor:
+    # `create()` above has an `if existing:` of its own and the mutation tool
+    # replaces the FIRST match it finds.
+    if current:
+        # Somebody may have registered this address as a member first. The host
+        # is the authority on who the founder is, so promote rather than refuse.
+        if current["role"] != FOUNDER:
+            set_role(email, FOUNDER)
+        if current["status"] != ACTIVE:
+            set_status(email, ACTIVE)
+        return {"mode": "identity", "seeded": False, "email": email,
+                "reason": "The founder account already exists."}
+
+    password = os.getenv("TITAN_PASSWORD", "")
+    if len(password) < MIN_PASSWORD:
+        return {"mode": "legacy", "seeded": False, "email": email,
+                "reason": (f"{FOUNDER_EMAIL_VAR} is set, but TITAN_PASSWORD is "
+                           f"missing or shorter than {MIN_PASSWORD} characters. "
+                           "No account was created: seeding the founder with a "
+                           "weak or default password would be worse than "
+                           "leaving the old gate in place.")}
+    try:
+        create(email, password, role=FOUNDER)
+    except IdentityError as exc:
+        return {"mode": "legacy", "seeded": False, "email": email,
+                "reason": str(exc)}
+    except Exception as exc:
+        return {"mode": "legacy", "seeded": False, "email": email,
+                "reason": f"The founder account could not be created: {exc}"}
+
+    return {"mode": "identity", "seeded": True, "email": email,
+            "reason": "The founder account was created from the environment."}
+
+
+def mode() -> dict:
+    """Which login is in force, right now — measured, not remembered.
+
+    **Never carries the founder's address.** This is read by ``/api/auth``,
+    which answers before anybody has signed in; publishing the one address that
+    can administer the system would hand every passer-by the first half of the
+    credentials.
+    """
+    active = founder_exists()
+    return {
+        "mode": "identity" if active else "legacy",
+        "founder_email_configured": configured_founder_email() is not None,
+        "founder_account_exists": active,
+        "environment_gate_reachable": not active,
+    }

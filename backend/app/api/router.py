@@ -53,12 +53,19 @@ class LoginRequest(BaseModel):
 
 @router.get("/auth", tags=["auth"])
 def auth_status() -> dict:
+    from ..core import identity
     return {
         "required": auth.require_auth(),
         "demo": auth.using_demo_credentials(),
         "guest": auth.guest_mode(),
         # Public "View demo" button on the login screen.
         "guest_available": auth.guest_enabled(),
+        # Which login is in force. `identity` means real accounts with roles;
+        # `legacy` means the single environment gate is still answering. This
+        # endpoint is public, so identity.mode() deliberately carries no
+        # address — publishing the one account that can administer the system
+        # would hand a passer-by the first half of the credentials.
+        "identity": identity.mode(),
     }
 
 
@@ -86,10 +93,23 @@ def enter_demo() -> dict:
 
 
 @router.post("/login", tags=["auth"])
-def login(req: LoginRequest) -> dict:
-    if not auth.check_login(req.username, req.password):
+def login(req: LoginRequest, request: Request) -> dict:
+    from ..core import ratelimit
+    # The founder's door had no rate limit at all, while the customer door a
+    # few hundred lines below has had one since the day it was written. Keyed
+    # on the caller rather than on what was typed, so nobody can lock the
+    # founder out of his own site by hammering his address.
+    verdict = ratelimit.check("login", ratelimit.identity_for(request))
+    if not verdict["allowed"]:
+        raise HTTPException(status_code=429, detail=verdict)
+    token = auth.login(req.username, req.password)
+    if not token:
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    return {"token": auth.make_token(req.username), "username": req.username}
+    # The identifier Titan actually authenticated, not the one that was typed.
+    # Real accounts normalise the address, so echoing the input back would show
+    # a capitalisation that is not what is stored.
+    return {"token": token,
+            "username": auth.founder_from_token(token) or req.username}
 
 
 # --- serialization helpers ------------------------------------------------

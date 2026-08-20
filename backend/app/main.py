@@ -182,6 +182,14 @@ async def lifespan(app: FastAPI):
     _appsecret.verify_at_startup()
     seed(STORE)
     persistence.load(STORE)
+    # Seed the founder account from the environment, and with it retire the
+    # plaintext comparison in core/auth.py. Idempotent, and it never raises: a
+    # deployment that has not set TITAN_FOUNDER_EMAIL keeps the old gate and
+    # says so on /api/auth, rather than refusing to serve. Unlike the secret
+    # check above, being unconfigured here is a downgrade, not a danger.
+    with contextlib.suppress(Exception):
+        from .core import identity as _identity
+        _identity.ensure_founder()
     opportunity.discover(STORE)
     ensure_weights(STORE)
     # Register the external-capability adapters. Idempotent, no network, no
