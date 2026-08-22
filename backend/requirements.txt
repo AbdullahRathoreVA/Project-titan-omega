@@ -38,3 +38,13 @@ fastembed>=0.4.0
 # state file must not be a leaked password. Imported inside the function: if it
 # is missing, connecting REFUSES rather than falling back to plaintext.
 cryptography>=42.0.0
+
+# Durable state on a FREE private Dataset repo (core/remote_state.py). A free
+# Space wipes /tmp on every rebuild and HF's persistent storage at /data is a
+# paid add-on; the Hub's own other answer -- "use a dataset as a data store" --
+# costs nothing. Already present transitively via fastembed, which is exactly
+# why it is pinned here: a store that holds accounts must not depend on the
+# embedding library keeping a dependency. Imported INSIDE the function, so a
+# missing package degrades to "not configured" rather than taking the API down
+# the way reportlab once did.
+huggingface-hub>=0.28.0

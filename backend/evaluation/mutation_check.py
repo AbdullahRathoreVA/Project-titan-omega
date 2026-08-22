@@ -392,6 +392,18 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "../frontend/components/ExecutiveCommand.tsx",
      "<ExecutiveOperations />", "<span />",
      "executive_view_mounts"),
+    # --- durable state on a free Dataset repo ------------------------------
+    # Two ways this loses or exposes data, both one line each: restoring ON
+    # TOP of a live database, and creating the snapshot repo public when it
+    # holds every account.
+    ("remote_state: a pull never overwrites a live state file",
+     "app/core/remote_state.py", "    if os.path.exists(dest):",
+     "    if False:", "never_overwrites_a_state_file"),
+    ("remote_state: the snapshot repo is created private",
+     "app/core/remote_state.py",
+     '        api.create_repo(repo_id=repo_id(), repo_type="dataset", private=True,',
+     '        api.create_repo(repo_id=repo_id(), repo_type="dataset", private=False,',
+     "push_is_recorded_as_proof"),
     # --- the deployment secret ---------------------------------------------
     ("appsecret: production refuses to boot without a secret",
      "app/core/appsecret.py",

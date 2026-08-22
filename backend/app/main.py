@@ -165,7 +165,25 @@ async def _heartbeat_loop() -> None:
                 globals()["_last_backup"] = time.monotonic()
                 with contextlib.suppress(Exception):
                     from .core import backup
-                    await asyncio.to_thread(backup.create, "scheduled")
+                    made = await asyncio.to_thread(backup.create, "scheduled")
+                    # Only a backup that VERIFIED is worth uploading. backup
+                    # proves itself by restoring into a scratch database and
+                    # counting rows; shipping one that failed that check would
+                    # replace a good snapshot with a broken one.
+                    #
+                    # The path lives at manifest["file"] -- there is no
+                    # top-level "path" key, and reading one returns None, which
+                    # is falsy, so the upload would simply never have happened
+                    # and the absence would have looked exactly like "nothing
+                    # to push".
+                    manifest = (made or {}).get("manifest") or {}
+                    if (made or {}).get("ok") and manifest.get("verified") \
+                            and manifest.get("file"):
+                        from .core import remote_state as _remote
+                        if _remote.configured():
+                            await asyncio.to_thread(
+                                _remote.push, manifest["file"],
+                                note="scheduled")
 
             # The self-improvement loop's automatic half. THIS WAS THE SAME BUG
             # AS knowledge.backfill(): improve.check_active() re-measures every
@@ -202,6 +220,18 @@ async def lifespan(app: FastAPI):
     # stop the boot. See core/appsecret.py.
     from .core import appsecret as _appsecret
     _appsecret.verify_at_startup()
+
+    # BEFORE anything reads the database. A free Space wipes /tmp on every
+    # rebuild, so on a fresh container the state file is simply absent and the
+    # latest verified snapshot is pulled back from a free private Dataset repo.
+    # `remote_state.pull` REFUSES if a state file already exists, so this can
+    # only ever restore towards an empty database -- overwriting a live one
+    # with an older snapshot is the direction that loses data.
+    with contextlib.suppress(Exception):
+        from .core import remote_state as _remote
+        if _remote.configured() and not os.path.exists(persistence.STATE_FILE):
+            _remote.pull(persistence.STATE_FILE)
+
     seed(STORE)
     persistence.load(STORE)
     # Seed the founder account from the environment, and with it retire the

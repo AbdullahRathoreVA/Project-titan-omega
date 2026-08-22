@@ -105,10 +105,32 @@ def _storage_warning() -> Optional[str]:
         return "State file location could not be determined."
     if path.startswith("/data"):
         return None
+
+    # A free Dataset repo is a real answer to this, not a consolation prize,
+    # so the warning has to stop demanding a paid mount once one is in use.
+    # It still says what would be LOST, because snapshot durability is not
+    # continuous durability and pretending otherwise is the same lie in a
+    # nicer suit.
+    try:
+        from . import remote_state
+        if remote_state.configured():
+            window = remote_state.recovery_window_seconds() or 0
+            hours = round(window / 3600, 1)
+            return (f"History is stored at {path}, which is ephemeral, and is "
+                    f"snapshotted to the private Dataset repo "
+                    f"{remote_state.repo_id()} after every verified backup. A "
+                    f"rebuild restores from the last snapshot, so at most "
+                    f"~{hours}h of activity is lost. This is free; persistent "
+                    f"storage at /data is continuous but paid.")
+    except Exception:
+        pass
+
     return (f"History is stored at {path}, which is not a persistent mount. "
             f"Signups survive restarts and sleep-wake, but a fresh Space "
-            f"rebuild wipes them. Mount HF persistent storage at /data (paid) "
-            f"or point TITAN_STATE_FILE at a real volume to keep this history.")
+            f"rebuild wipes them. Keep it for free by setting HF_TOKEN and "
+            f"TITAN_STATE_REPO so verified backups are snapshotted to a "
+            f"private Dataset repo, or mount HF persistent storage at /data "
+            f"(paid) for continuous durability.")
 
 
 def _is_granted(acct: dict) -> bool:

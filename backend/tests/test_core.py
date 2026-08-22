@@ -8673,6 +8673,148 @@ def test_the_operations_panel_distinguishes_a_failed_request_from_an_empty_one()
         "a failed request is no longer reported as a fault")
 
 
+# ── durable state on a FREE private Dataset repo ───────────────────────────
+# A free Space wipes /tmp on every rebuild. HF's persistent storage at /data is
+# a paid add-on; their other documented answer -- "use a dataset as a data
+# store" -- costs nothing. These pin the parts that would silently lose data.
+
+
+@pytest.fixture
+def remote(monkeypatch, tmp_path):
+    from app import persistence
+    from app.core import remote_state
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "state.db"))
+    for var in ("HF_TOKEN", "TITAN_HF_TOKEN", "TITAN_STATE_REPO", "SPACE_ID"):
+        monkeypatch.delenv(var, raising=False)
+    remote_state._last_push.clear()
+    yield remote_state
+    remote_state._last_push.clear()
+
+
+def test_nothing_is_uploaded_when_it_is_not_configured(remote, tmp_path):
+    """A store that quietly does nothing is worse than one that is absent."""
+    snap = tmp_path / "snap.db"
+    snap.write_bytes(b"not really a database")
+    out = remote.push(str(snap))
+    assert out["ok"] is False
+    assert out["reason"] == "not configured"
+    assert "HF_TOKEN" in out["missing"]
+
+
+def test_the_repo_defaults_to_the_space_owner(remote, monkeypatch):
+    """One variable instead of two. On a Space, SPACE_ID is always set, so
+    HF_TOKEN is the only thing left for a human to get right."""
+    assert remote.repo_id() == ""
+    monkeypatch.setenv("SPACE_ID", "careermind2026/project-titan-omega")
+    assert remote.repo_id() == "careermind2026/titan-state"
+
+    monkeypatch.setenv("TITAN_STATE_REPO", "someone/else")
+    assert remote.repo_id() == "someone/else", "an explicit repo must win"
+
+
+def test_configured_needs_a_token_not_just_a_repo(remote, monkeypatch):
+    monkeypatch.setenv("SPACE_ID", "careermind2026/project-titan-omega")
+    assert remote.configured() is False, (
+        "a repo name with no token is not a configured store")
+    monkeypatch.setenv("HF_TOKEN", "hf_fake_token_for_tests")
+    assert remote.configured() is True
+
+
+def test_a_pull_never_overwrites_a_state_file_that_already_exists(
+        remote, monkeypatch, tmp_path):
+    """The one direction that loses data. A rebuild has no local file, so the
+    restore path only ever runs towards an empty database — and if a live one
+    IS there, an older snapshot must not land on top of it."""
+    monkeypatch.setenv("HF_TOKEN", "hf_fake_token_for_tests")
+    monkeypatch.setenv("TITAN_STATE_REPO", "acct/titan-state")
+
+    live = tmp_path / "live.db"
+    live.write_bytes(b"the database that is currently in use")
+
+    out = remote.pull(str(live))
+    assert out["ok"] is False
+    assert "refusing to overwrite" in out["reason"]
+    assert live.read_bytes() == b"the database that is currently in use"
+
+
+def test_a_failed_upload_is_reported_not_swallowed(remote, monkeypatch,
+                                                   tmp_path):
+    """Believing a snapshot exists when it does not is the failure mode that
+    matters here — you only find out on the day you need it."""
+    monkeypatch.setenv("HF_TOKEN", "hf_fake_token_for_tests")
+    monkeypatch.setenv("TITAN_STATE_REPO", "acct/titan-state")
+    snap = tmp_path / "snap.db"
+    snap.write_bytes(b"x" * 32)
+
+    class Boom:
+        def create_repo(self, **_):
+            raise RuntimeError("network unreachable")
+
+    monkeypatch.setattr(remote, "_api", lambda: Boom())
+    out = remote.push(str(snap))
+    assert out["ok"] is False
+    assert "network unreachable" in out["reason"]
+    assert remote.status()["last_push"] is None, (
+        "a failed upload recorded itself as a successful one")
+
+
+def test_a_successful_push_is_recorded_as_proof_not_intent(
+        remote, monkeypatch, tmp_path):
+    """`configured()` says somebody meant to set this up. `last_push` says a
+    byte actually reached the Hub. Only the second is evidence."""
+    monkeypatch.setenv("HF_TOKEN", "hf_fake_token_for_tests")
+    monkeypatch.setenv("TITAN_STATE_REPO", "acct/titan-state")
+    snap = tmp_path / "snap.db"
+    snap.write_bytes(b"y" * 64)
+
+    uploaded = []
+
+    class Fake:
+        def create_repo(self, **kw):
+            assert kw.get("private") is True, (
+                "the state repo must be created PRIVATE — it holds accounts")
+            return None
+
+        def upload_file(self, **kw):
+            uploaded.append(kw["path_in_repo"])
+            return None
+
+    monkeypatch.setattr(remote, "_api", lambda: Fake())
+    out = remote.push(str(snap), note="test")
+
+    assert out["ok"] is True and out["bytes"] == 64
+    assert remote.STATE_FILENAME in uploaded
+    assert remote.MANIFEST_FILENAME in uploaded, (
+        "no manifest means nothing can prove WHEN the snapshot was taken")
+    assert remote.status()["last_push"]["bytes"] == 64
+
+
+def test_the_recovery_window_is_unknown_rather_than_zero_when_unconfigured(
+        remote):
+    """An unknown window is not a zero one."""
+    assert remote.recovery_window_seconds() is None
+
+
+def test_the_storage_warning_stops_demanding_a_paid_mount_once_free_works(
+        remote, monkeypatch):
+    """The whole point of the change. It must still say what would be LOST —
+    snapshot durability is not continuous durability."""
+    from app.core import analytics
+
+    before = analytics.storage_warning()
+    assert before and "paid" in before.lower()
+    assert "TITAN_STATE_REPO" in before, (
+        "the warning has to name the free way out, or nobody can act on it")
+
+    monkeypatch.setenv("HF_TOKEN", "hf_fake_token_for_tests")
+    monkeypatch.setenv("TITAN_STATE_REPO", "acct/titan-state")
+    after = analytics.storage_warning()
+    assert after and "acct/titan-state" in after
+    assert "lost" in after.lower(), (
+        "it must still state the recovery window rather than implying the "
+        "data is continuously safe")
+
+
 # ── the deployment secret ──────────────────────────────────────────────────
 # TITAN_SECRET had four different fallbacks in four files, all of them in the
 # public git history. With the variable unset, session tokens were signed with
