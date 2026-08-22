@@ -51,6 +51,7 @@ row would need a claim neither verified nor recorded, it says so.
 | 39 | Notification centre | **[V]** `core/notifications.py`. Conditions checked at read time, so one disappears when it is fixed rather than sitting unread. Critically, it publishes `not_emitted` — *trial ending* and *payment failed* are deliberately absent, each naming the missing data, instead of being faked. |
 | 3/4 | Executive create-customer | **[V]** `/api/founder/accounts` already made the subscriber and granted a plan; it now creates and attaches their **business** in the same call (all fields optional, so existing callers are untouched), re-reads the account so the response is not stale, reports a failed business in its own field rather than swallowing it, and is **audited**. |
 | 15 | Customer 360 | **[V]** `/api/founder/customers/{email}` — account, person, organisations, businesses with real per-site credential status, subscription history, onboarding score and audit trail. Composed from the owning modules, so it cannot disagree with the customers list. A section that fails returns an `unavailable` entry naming the source. |
+| 37 | The Executive screen | **[V]** `ExecutiveOperations.tsx` renders needs-attention, business metrics, integration health and customer search at the top of the Executive area — above the analysis, because "what needs attention now" outranks "what happened last month". **No new tab**: there are already sixteen and the strip has a measured overflow problem with a test guarding it. |
 | 31 | Self-improvement actually running | **[V]** `improve.check_active()` — the auto-rollback that re-measures every ACTIVE change and reverts regressions — was tested, mutation-guarded, and **called by nothing in production**. Now on the heartbeat. Third instance of this exact defect shape, after `knowledge.backfill()` and `params.apply_stored()`. |
 
 ### Two defects found in passing and fixed
@@ -111,7 +112,7 @@ Honest list. None of this is stubbed or faked anywhere in the product.
 
 | § | Topic | Note |
 |---|---|---|
-| 3–4/15 | The Executive **screens** | The APIs are all built (see above). The React surfaces that consume them are not — that is the remaining work, and it is a frontend chunk rather than a missing capability. |
+| 3–4/15 | The create-customer **wizard** and the Customer 360 **screen** | Their APIs are built and the operator surface (metrics, notifications, integrations, search) now has a screen. What is missing is the multi-step creation form and a per-customer detail page — both are forms over endpoints that already work. |
 | 5–8 | Progressive signup, onboarding, website detection, WordPress connect | Detection half exists **[H]**; the guided flow does not. |
 | 13–14 | Trial anti-abuse, Executive trial control | The trial *engine* (§12) already existed and the pricing page now displays it (§43). These two need billing to be real. |
 | 40–42 | Transactional email, quick actions, support mode | Not started. |

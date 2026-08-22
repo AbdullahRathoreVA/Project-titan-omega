@@ -8626,6 +8626,53 @@ def test_customer_360_is_a_404_for_somebody_who_does_not_exist(
     assert r.status_code == 404
 
 
+# ── the Executive operations panel ─────────────────────────────────────────
+# This repo has no JS test runner and adding one is a toolchain, not a test.
+# These read the JSX, which is enough to catch the regressions that actually
+# recur: the panel gets unmounted, or somebody "tidies" a null into a zero.
+
+
+def test_the_executive_view_mounts_the_operations_panel():
+    """Four APIs with no screen in front of them is the knowledge.backfill()
+    shape all over again — built, tested, and reaching nobody."""
+    src = _jsx_without_comments("ExecutiveCommand.tsx")
+    assert "<ExecutiveOperations" in src, (
+        "the Executive view no longer renders ExecutiveOperations — the "
+        "metrics, notifications, integrations and search APIs are then live "
+        "with nothing showing them")
+
+
+def test_the_operations_panel_never_turns_an_unmeasured_metric_into_a_zero():
+    """`measured: false` means nothing was measured and the value is null.
+    Rendering `0` there is the exact lie the backend refuses to tell: with no
+    processor connected, "$0 MRR" reads as a business result."""
+    import re as _re
+    src = _jsx_without_comments("ExecutiveOperations.tsx")
+
+    assert "Not measured" in src, (
+        "the panel no longer has an unmeasured state at all")
+    assert _re.search(r"\bm\.measured\b", src), (
+        "the panel no longer branches on `measured`")
+
+    # The tidy-up that would break it: defaulting a null value to zero.
+    for bad in (r"value\s*\?\?\s*0", r"value\s*\|\|\s*0",
+                r"Number\(\s*\w*\.?value\s*\)\s*\|\|\s*0"):
+        assert not _re.search(bad, src), (
+            f"a null metric value is being defaulted to zero ({bad!r}) — that "
+            "turns 'not measured' into 'measured zero'")
+
+
+def test_the_operations_panel_distinguishes_a_failed_request_from_an_empty_one():
+    """`lib/api.ts`'s get() swallows failures into a fallback, which is right
+    for a dashboard tile and wrong here: a panel that renders 'nothing to
+    show' when the request 500'd is the same lie in the other direction."""
+    src = _jsx_without_comments("ExecutiveOperations.tsx")
+    assert 'state: "error"' in src, (
+        "the panel no longer tracks a distinct error state")
+    assert "could not be loaded" in src, (
+        "a failed request is no longer reported as a fault")
+
+
 # ── the deployment secret ──────────────────────────────────────────────────
 # TITAN_SECRET had four different fallbacks in four files, all of them in the
 # public git history. With the variable unset, session tokens were signed with

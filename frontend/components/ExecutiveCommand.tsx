@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import ExecutiveOperations from "./ExecutiveOperations";
 import {
   Activity, AlertTriangle, BarChart3, Brain, Eye, Gauge, RefreshCw, TrendingUp,
   Users,
@@ -271,7 +272,7 @@ export default function ExecutiveCommand() {
             <BarChart3 className="h-4 w-4 text-hud-emerald" /> EXECUTIVE
           </div>
           <div className="mt-1 text-[11px] text-slate-500">
-            Business intelligence · forecasting · what Titan learned
+            Operations · business intelligence · forecasting · what Titan learned
           </div>
         </div>
         <div className="flex gap-2">
@@ -296,6 +297,13 @@ export default function ExecutiveCommand() {
           </button>
         </div>
       </div>
+
+      {/* The operator's daily surface, deliberately ABOVE the analysis below:
+          "what needs attention right now" outranks "what happened over the
+          last 30 days". Everything in it distinguishes a measured zero from a
+          null, and a failed request from an empty one. */}
+      <ExecutiveOperations />
+
 
       {/* who opened the site ---------------------------------------------- */}
       <div className="rounded-xl border border-white/10 bg-black/30 p-4">

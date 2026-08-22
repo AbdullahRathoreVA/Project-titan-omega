@@ -385,6 +385,13 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("onboarding: an unknown check is not counted as a failure",
      "app/core/onboarding.py", '        if state["done"] is None:',
      "        if False:", "unknown_check_is_not_counted"),
+    # --- the Executive operations panel ------------------------------------
+    # Four APIs with no screen in front of them is the knowledge.backfill()
+    # shape again: built, tested, and reaching nobody.
+    ("executive: the operations panel is actually mounted",
+     "../frontend/components/ExecutiveCommand.tsx",
+     "<ExecutiveOperations />", "<span />",
+     "executive_view_mounts"),
     # --- the deployment secret ---------------------------------------------
     ("appsecret: production refuses to boot without a secret",
      "app/core/appsecret.py",
