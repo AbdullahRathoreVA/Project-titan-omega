@@ -317,7 +317,12 @@ _OPEN_PATHS = {
 # and are scoped to one subscriber, exactly like the client portal above. They
 # bypass the FOUNDER guard without weakening it: an unknown account token
 # resolves to nothing and the endpoint 401s.
-_OPEN_PREFIXES = ("/api/client/", "/api/account", "/api/checkout/")
+# /api/org carries its own credential too - an identity session resolved
+# through core/identity.py, scoped to one organisation by membership and
+# failing closed on an unrecognised token. Same contract as the three
+# above, so it bypasses the FOUNDER guard without weakening it.
+_OPEN_PREFIXES = ("/api/client/", "/api/account", "/api/checkout/",
+                  "/api/org")
 
 
 def _static_page(name: str) -> FileResponse:

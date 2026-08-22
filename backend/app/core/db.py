@@ -38,7 +38,7 @@ import threading
 import time
 from typing import Any, Optional
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _lock = threading.RLock()
 _conn: Optional[sqlite3.Connection] = None
@@ -160,6 +160,39 @@ MIGRATIONS: list[tuple[int, str]] = [
             password_changed_at REAL
         );
         CREATE INDEX IF NOT EXISTS users_role ON users (role);
+    """),
+    # Organisations: several people, one account, different privileges.
+    #
+    # `core/billing.py` accounts ARE people - one email, one password, one
+    # plan - so two humans could not share one, and there was nothing for a
+    # role like "Manager" to attach to. This is that missing level, on top of
+    # the users table from migration 4. See core/orgs.py.
+    #
+    # `slug` is UNIQUE for the same reason `users.email` is: "two
+    # organisations cannot have the same name" has to be true under
+    # concurrency rather than hopefully true.
+    #
+    # Membership is keyed on user_id, not email. An address is a label a
+    # person may change; an id is who they are. The composite primary key is
+    # what makes "already a member" a constraint instead of a race.
+    (5, """
+        CREATE TABLE IF NOT EXISTS orgs (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            slug       TEXT NOT NULL UNIQUE,
+            status     TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            created_by TEXT
+        );
+        CREATE TABLE IF NOT EXISTS org_members (
+            org_id   TEXT NOT NULL,
+            user_id  TEXT NOT NULL,
+            role     TEXT NOT NULL,
+            added_at REAL NOT NULL,
+            PRIMARY KEY (org_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS org_members_user ON org_members (user_id);
+        CREATE INDEX IF NOT EXISTS org_members_role ON org_members (org_id, role);
     """),
 ]
 

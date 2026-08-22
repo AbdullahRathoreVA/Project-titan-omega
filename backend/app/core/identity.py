@@ -187,6 +187,21 @@ def get(email: str) -> Optional[dict]:
     return _row_to_public(row) if row else None
 
 
+def get_by_id(user_id: str) -> Optional[dict]:
+    """Look somebody up by id rather than address.
+
+    `core/orgs.py` stores membership against the id, because an email address
+    is a label a person may change and an id is who they are. Without this,
+    every membership row would have to be resolved back through an address and
+    the two would drift apart the first time one changed.
+    """
+    if not user_id:
+        return None
+    row = _conn().execute("SELECT * FROM users WHERE id=?",
+                          (user_id,)).fetchone()
+    return _row_to_public(row) if row else None
+
+
 def authenticate(email: str, password: str) -> Optional[str]:
     """Return a session token, or None. Never says WHICH half was wrong."""
     email = normalise_email(email)

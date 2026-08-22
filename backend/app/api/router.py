@@ -2450,3 +2450,169 @@ def admin_watch_now(cid: str) -> dict:
         raise HTTPException(status_code=404, detail=r.get("error", "failed"))
     persistence.save(STORE)
     return r
+
+
+# --- organisations ---------------------------------------------------------
+# Several people, one account, different privileges. See core/orgs.py.
+#
+# Every route here carries its OWN credential — an identity session, resolved
+# through core/identity.py — which is why /api/org is in main._OPEN_PREFIXES
+# alongside /api/client/ and /api/account. Open at the middleware, guarded at
+# the endpoint, exactly as those are.
+#
+# A legacy environment-gate token does NOT work here, and that is correct
+# rather than an oversight: those sessions belong to a configured username, not
+# to a person, and there is no person for a membership row to point at. Set
+# TITAN_FOUNDER_EMAIL and the founder gets a real account like everybody else.
+#
+# The adversarial route walk in the test suite attacks every route under this
+# prefix with a non-member's token and fails on anything that answers 200, so a
+# new endpoint that forgets its check is a failing test rather than a leak.
+
+class OrgCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class MemberAddIn(BaseModel):
+    email: str
+    role: str = "member"
+
+
+class MemberRoleIn(BaseModel):
+    role: str
+
+
+class OrgStatusIn(BaseModel):
+    status: str
+
+
+def _identity_user(token: Optional[str]) -> dict:
+    """Who is calling, as a person. 401 if nobody."""
+    from ..core import identity
+    user = identity.resolve((token or "").removeprefix("Bearer ").strip())
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in first")
+    return user
+
+
+def _org_role(org_id: str, token: Optional[str], minimum: str) -> tuple:
+    """The single gate for organisations, mirroring _owned for businesses.
+
+    Returns (user, role). Every refusal — not signed in aside — is the SAME
+    404, because "no such organisation" and "not yours" being distinguishable
+    tells a prober which ids are real.
+    """
+    from ..core import orgs
+    user = _identity_user(token)
+    try:
+        role = orgs.require_member(org_id, user["id"], minimum)
+    except orgs.NotAMember:
+        raise HTTPException(status_code=404, detail="Not found")
+    return user, role
+
+
+@router.post("/org", tags=["orgs"])
+def create_org(req: OrgCreateIn, request: Request,
+               authorization: Optional[str] = Header(None)) -> dict:
+    """Start an organisation. The caller becomes its first owner."""
+    from ..core import orgs, ratelimit
+    user = _identity_user(authorization)
+    # Keyed on the person, not the address: this endpoint is authenticated, so
+    # the account is the thing worth limiting, and an office behind one IP must
+    # not throttle each other.
+    verdict = ratelimit.check("org", user["id"])
+    if not verdict["allowed"]:
+        raise HTTPException(status_code=429, detail=verdict)
+    try:
+        org = orgs.create(req.name, user["id"], created_by=user["email"])
+    except orgs.OrgError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return org
+
+
+@router.get("/org", tags=["orgs"])
+def my_orgs(authorization: Optional[str] = Header(None)) -> dict:
+    """Only the organisations this person belongs to. Never a global list."""
+    from ..core import orgs
+    user = _identity_user(authorization)
+    return {"organisations": orgs.orgs_for(user["id"])}
+
+
+@router.get("/org/{org_id}", tags=["orgs"])
+def org_detail(org_id: str,
+               authorization: Optional[str] = Header(None)) -> dict:
+    from ..core import orgs
+    user, role = _org_role(org_id, authorization, orgs.VIEWER)
+    org = orgs.get(org_id)
+    org["your_role"] = role
+    return org
+
+
+@router.get("/org/{org_id}/members", tags=["orgs"])
+def org_members(org_id: str,
+                authorization: Optional[str] = Header(None)) -> dict:
+    from ..core import orgs
+    user, role = _org_role(org_id, authorization, orgs.VIEWER)
+    return {"members": orgs.members(org_id), "your_role": role}
+
+
+@router.post("/org/{org_id}/members", tags=["orgs"])
+def org_add_member(org_id: str, req: MemberAddIn,
+                   authorization: Optional[str] = Header(None)) -> dict:
+    """Give somebody access. Administrator and above."""
+    from ..core import identity, orgs
+    user, role = _org_role(org_id, authorization, orgs.ADMIN)
+    person = identity.get(req.email)
+    if not person:
+        # Not the same 404 as the org gate: the caller is a proven
+        # administrator of this organisation, so telling them the address has
+        # no account is help, not disclosure.
+        raise HTTPException(status_code=400,
+                            detail="That address has no Titan account yet.")
+    try:
+        return orgs.add_member(org_id, person["id"], req.role)
+    except orgs.OrgError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/org/{org_id}/members/{user_id}", tags=["orgs"])
+def org_set_member_role(org_id: str, user_id: str, req: MemberRoleIn,
+                        authorization: Optional[str] = Header(None)) -> dict:
+    from ..core import orgs
+    user, role = _org_role(org_id, authorization, orgs.ADMIN)
+    try:
+        changed = orgs.set_member_role(org_id, user_id, req.role)
+    except orgs.OrgError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if not changed:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"org_id": org_id, "user_id": user_id, "role": req.role}
+
+
+@router.delete("/org/{org_id}/members/{user_id}", tags=["orgs"])
+def org_remove_member(org_id: str, user_id: str,
+                      authorization: Optional[str] = Header(None)) -> dict:
+    from ..core import orgs
+    user, role = _org_role(org_id, authorization, orgs.ADMIN)
+    try:
+        removed = orgs.remove_member(org_id, user_id)
+    except orgs.OrgError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if not removed:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"removed": True, "org_id": org_id, "user_id": user_id}
+
+
+@router.patch("/org/{org_id}", tags=["orgs"])
+def org_set_status(org_id: str, req: OrgStatusIn,
+                   authorization: Optional[str] = Header(None)) -> dict:
+    """Suspend or reactivate. Owners only — a suspended organisation refuses
+    everybody, including its own administrators, so it is not an admin action."""
+    from ..core import orgs
+    user, role = _org_role(org_id, authorization, orgs.OWNER)
+    try:
+        if not orgs.set_status(org_id, req.status):
+            raise HTTPException(status_code=404, detail="Not found")
+    except orgs.OrgError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return orgs.get(org_id)

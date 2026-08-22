@@ -328,6 +328,26 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "app/core/identity.py",
      "    if current:", "    if False:",
      "promoting_a_member_to_founder"),
+    # --- organisations -----------------------------------------------------
+    # Ranked authorisation, and the invariant that keeps an organisation
+    # administerable. The last-owner rule is the one most likely to be
+    # 'simplified' away by somebody who has not hit the broken state.
+    ("orgs: roles are ranked, not just present", "app/core/orgs.py",
+     "if role is None or RANK[role] < RANK[minimum]:", "if role is None:",
+     "member_cannot_change_who_has_access"),
+    ("orgs: a suspended organisation refuses everybody",
+     "app/core/orgs.py",
+     'if not org or org["status"] != ACTIVE:', "if not org:",
+     "suspended_organisation_refuses"),
+    ("orgs: the last owner cannot be demoted", "app/core/orgs.py",
+     "if current == OWNER and role != OWNER and owner_count(org_id) <= 1:",
+     "if False:", "never_lose_its_last_owner"),
+    ("orgs: the last owner cannot be removed", "app/core/orgs.py",
+     "if current == OWNER and owner_count(org_id) <= 1:", "if False:",
+     "never_lose_its_last_owner"),
+    ("orgs: an unknown role is refused, not stored", "app/core/orgs.py",
+     "if role not in ROLES:", "if False:",
+     "unknown_org_role_is_refused"),
     # --- the deployment secret ---------------------------------------------
     ("appsecret: production refuses to boot without a secret",
      "app/core/appsecret.py",

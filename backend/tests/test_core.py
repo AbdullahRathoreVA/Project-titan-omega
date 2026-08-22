@@ -7549,6 +7549,237 @@ def test_the_founder_login_is_rate_limited(client, monkeypatch):
     assert codes[-1] == 429, "the founder login accepted unlimited attempts"
 
 
+# ── organisations: several people, one account, ranked privileges ──────────
+# core/billing.py accounts ARE people, so two humans could not share one and
+# there was nothing for "Manager" to attach to. These prove the level that was
+# missing, and — more importantly — that one organisation cannot reach another.
+
+
+@pytest.fixture
+def org_world(monkeypatch, tmp_path):
+    """Two real people, each with their own organisation.
+
+    The attacker owns an organisation of their own on purpose. An attacker with
+    no legitimate access is the easy case; the one that finds real bugs is the
+    caller who is genuinely signed in, genuinely an owner *somewhere*, and
+    reaching sideways.
+    """
+    from app import persistence
+    from app.core import db, identity, orgs, ratelimit, sessions
+
+    monkeypatch.setenv("TITAN_SECRET", "org-test-secret")
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "orgs.db"))
+    monkeypatch.setattr(identity, "ITERATIONS", 1000)
+    db.connect(persistence.STATE_FILE)
+    sessions.reset()
+    ratelimit.reset()
+
+    pw = "a-real-password-123"
+    victim = identity.create("victim@example.com", pw)
+    attacker = identity.create("attacker@example.com", pw)
+    colleague = identity.create("colleague@example.com", pw)
+
+    victim_org = orgs.create("Victim Ltd", victim["id"])
+    attacker_org = orgs.create("Attacker Ltd", attacker["id"])
+    orgs.add_member(victim_org["id"], colleague["id"], orgs.MEMBER)
+
+    world = {
+        "victim": victim, "attacker": attacker, "colleague": colleague,
+        "victim_org": victim_org, "attacker_org": attacker_org,
+        "victim_token": identity.authenticate("victim@example.com", pw),
+        "attacker_token": identity.authenticate("attacker@example.com", pw),
+        "colleague_token": identity.authenticate("colleague@example.com", pw),
+    }
+    yield world
+    sessions.reset()
+
+
+def _bearer(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_an_organisation_seats_its_creator_as_owner(org_world, client):
+    r = client.get(f"/api/org/{org_world['victim_org']['id']}",
+                   headers=_bearer(org_world["victim_token"]))
+    assert r.status_code == 200
+    assert r.json()["your_role"] == "owner"
+
+
+def test_only_your_own_organisations_are_listed(org_world, client):
+    """A list endpoint that returns everything is the cheapest possible leak."""
+    r = client.get("/api/org", headers=_bearer(org_world["attacker_token"]))
+    assert r.status_code == 200
+    names = {o["name"] for o in r.json()["organisations"]}
+    assert names == {"Attacker Ltd"}, f"saw somebody else's organisations: {names}"
+
+
+def test_ranked_roles_mean_an_owner_passes_every_check_an_admin_passes(
+        org_world):
+    """Ranked, not equality-matched. An owner failing an ADMIN check is the
+    bug that makes people hand out the top role to everybody."""
+    from app.core import orgs
+    oid = org_world["victim_org"]["id"]
+    for minimum in (orgs.VIEWER, orgs.MEMBER, orgs.MANAGER, orgs.ADMIN,
+                    orgs.OWNER):
+        assert orgs.require_member(oid, org_world["victim"]["id"],
+                                   minimum) == orgs.OWNER
+
+
+def test_a_member_cannot_change_who_has_access(org_world, client):
+    """The whole point of ranked roles: doing the work and controlling access
+    are different privileges."""
+    oid = org_world["victim_org"]["id"]
+    r = client.post(f"/api/org/{oid}/members",
+                    headers=_bearer(org_world["colleague_token"]),
+                    json={"email": "attacker@example.com", "role": "admin"})
+    assert r.status_code == 404, (
+        "a plain member added somebody to the organisation")
+
+    r = client.delete(f"/api/org/{oid}/members/{org_world['victim']['id']}",
+                      headers=_bearer(org_world["colleague_token"]))
+    assert r.status_code == 404
+
+
+def test_an_organisation_can_never_lose_its_last_owner(org_world):
+    """Both paths, because there are two ways to reach the same broken state:
+    an organisation nobody can administer and nothing can repair."""
+    from app.core import orgs
+    oid = org_world["victim_org"]["id"]
+    vid = org_world["victim"]["id"]
+
+    with pytest.raises(orgs.OrgError):
+        orgs.set_member_role(oid, vid, orgs.VIEWER)
+    with pytest.raises(orgs.OrgError):
+        orgs.remove_member(oid, vid)
+    assert orgs.role_of(oid, vid) == orgs.OWNER
+
+    # With a second owner in place, both become allowed.
+    orgs.set_member_role(oid, org_world["colleague"]["id"], orgs.OWNER)
+    assert orgs.remove_member(oid, vid) is True
+    assert orgs.owner_count(oid) == 1
+
+
+def test_a_suspended_organisation_refuses_even_its_owner(org_world, client):
+    """Suspending must suspend it, not merely hide it from a list."""
+    from app.core import orgs
+    oid = org_world["victim_org"]["id"]
+    orgs.set_status(oid, orgs.SUSPENDED)
+    r = client.get(f"/api/org/{oid}",
+                   headers=_bearer(org_world["victim_token"]))
+    assert r.status_code == 404
+
+
+def test_an_unknown_org_role_is_refused_not_stored(org_world):
+    """A typo must not become a new privilege level."""
+    from app.core import orgs
+    oid = org_world["victim_org"]["id"]
+    with pytest.raises(orgs.OrgError):
+        orgs.add_member(oid, org_world["attacker"]["id"], "superadmin")
+    with pytest.raises(orgs.OrgError):
+        orgs.set_member_role(oid, org_world["colleague"]["id"], "root")
+    assert orgs.role_of(oid, org_world["colleague"]["id"]) == orgs.MEMBER
+    assert orgs.role_of(oid, org_world["attacker"]["id"]) is None
+
+
+def test_two_organisations_cannot_take_the_same_name(org_world):
+    from app.core import orgs
+    with pytest.raises(orgs.OrgError):
+        orgs.create("victim ltd", org_world["attacker"]["id"])
+
+
+def test_an_organisation_needs_a_real_person_to_own_it(org_world):
+    from app.core import orgs
+    with pytest.raises(orgs.OrgError):
+        orgs.create("Ghost Ltd", "usr_does_not_exist")
+    assert orgs.by_slug("ghost-ltd") is None
+
+
+def test_a_guest_token_cannot_reach_an_organisation(org_world, client):
+    """One deployment serves the founder's dashboard and a public read-only
+    demo. A demo visitor is not a person and has no membership anywhere."""
+    from app.core import auth
+    r = client.get(f"/api/org/{org_world['victim_org']['id']}",
+                   headers=_bearer(auth.make_guest_token()))
+    assert r.status_code == 401
+
+
+def test_a_legacy_environment_gate_token_cannot_reach_an_organisation(
+        org_world, client, monkeypatch):
+    """Deliberate, not an oversight. A gate session belongs to a configured
+    username, not to a person, so there is nothing for a membership row to
+    point at. Setting TITAN_FOUNDER_EMAIL is what gives the founder a real
+    account — and this test is what stops somebody 'fixing' it by letting the
+    gate through."""
+    from app.core import auth
+    monkeypatch.setenv("TITAN_USERNAME", "abdullah")
+    monkeypatch.setenv("TITAN_PASSWORD", "a-real-password-123")
+    legacy = auth.login("abdullah", "a-real-password-123")
+    assert legacy, "sanity: the gate issued a session"
+
+    r = client.get(f"/api/org/{org_world['victim_org']['id']}",
+                   headers=_bearer(legacy))
+    assert r.status_code == 401
+
+
+def test_no_org_endpoint_serves_another_organisation(org_world, client,
+                                                     monkeypatch):
+    """Walks the REAL route table and ATTACKS every /api/org route that takes
+    an organisation id, using a different person's valid session.
+
+    Same shape, and the same fail-open property, as the account-route walk: an
+    endpoint added later and never given an authorisation check is attacked by
+    default, so a cross-organisation leak is a failing test rather than a
+    discovery. Authentication is switched ON for this one, because /api/org is
+    in main._OPEN_PREFIXES and the endpoints' own checks are therefore the only
+    thing standing there.
+
+    A 200 is a leak. 401/403/404/422 are all fine.
+    """
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "org-test-secret")
+
+    victim_org = org_world["victim_org"]["id"]
+    victim_user = org_world["victim"]["id"]
+    attacker_token = org_world["attacker_token"]
+
+    leaked, attacked = [], 0
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        methods = (getattr(route, "methods", set()) or set()) - {"HEAD", "OPTIONS"}
+        if not path.startswith("/api/org") or "{org_id}" not in path:
+            continue
+        target = (path.replace("{org_id}", victim_org)
+                      .replace("{user_id}", victim_user))
+        for method in methods:
+            attacked += 1
+            r = client.request(method, target, headers=_bearer(attacker_token),
+                               json={"role": "owner", "status": "active",
+                                     "email": "attacker@example.com"})
+            if r.status_code == 200:
+                leaked.append(f"{method} {path}")
+
+    assert attacked, "the walk found no org route to attack — check the filter"
+    assert not leaked, (
+        "These endpoints served one organisation to a member of another: "
+        + ", ".join(sorted(leaked)))
+
+    # And the attack changed nothing.
+    from app.core import orgs
+    assert orgs.role_of(victim_org, org_world["attacker"]["id"]) is None
+    assert orgs.get(victim_org)["status"] == orgs.ACTIVE
+    assert orgs.role_of(victim_org, victim_user) == orgs.OWNER
+
+
+def test_the_org_walk_attacks_an_organisation_that_actually_exists(org_world):
+    """The walk's premise. A 404 because the id was invented would prove
+    nothing about authorisation — the same weakness the account walk had when
+    it attacked with fix_id='fix-nonexistent'."""
+    from app.core import orgs
+    assert orgs.get(org_world["victim_org"]["id"]) is not None
+    assert orgs.role_of(org_world["victim_org"]["id"],
+                        org_world["victim"]["id"]) == orgs.OWNER
+
+
 # ── the deployment secret ──────────────────────────────────────────────────
 # TITAN_SECRET had four different fallbacks in four files, all of them in the
 # public git history. With the variable unset, session tokens were signed with
