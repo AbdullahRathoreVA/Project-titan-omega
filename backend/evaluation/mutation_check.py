@@ -95,6 +95,13 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "await asyncio.to_thread(knowledge.backfill)", "pass",
      "backfill_is_actually"),
     # --- tenancy ----------------------------------------------------------
+    # The half the ownership gate does NOT cover: the caller owns the client
+    # id in the URL, and the resource id belongs to somebody else.
+    ("tenancy: a resource id from another business is refused",
+     "app/api/router.py",
+     '    if not fix or fix["client_id"] != cid:',
+     '    if not fix:',
+     "fix_id_from_another_business"),
     ("tenancy: ownership gate", "app/core/tenancy.py",
      "if not email or not owns(email, client_id):", "if False:",
      "another_subscribers or owner_lookup"),

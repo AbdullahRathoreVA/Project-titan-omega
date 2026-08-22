@@ -4593,6 +4593,74 @@ def test_one_subscriber_cannot_apply_anothers_fix(client, isolated_billing,
     assert site_fix.get(mine["id"])["status"] == "proposed"
 
 
+def test_a_fix_id_from_another_business_is_refused_under_your_own_client(
+        client, isolated_billing, isolated_clients, wp):
+    """The IDOR the ownership gate alone does not catch.
+
+    `test_one_subscriber_cannot_apply_anothers_fix` above puts the VICTIM's
+    client id in the URL, so it is stopped by `_owned()` and the second half of
+    `_owned_fix()` — `fix["client_id"] != cid` — is never reached.
+
+    The attack that reaches it is the one where the attacker uses **their own**
+    client id, which they legitimately own, and someone else's fix id. The
+    ownership gate says yes, correctly, and the only thing standing between the
+    attacker and another business's page content is that second check. Delete
+    it and every test in this file still passed until this one existed.
+    """
+    from app.core import billing, clients as creg, site_fix
+
+    billing.signup("victim@example.com", "hunter2hunter2")
+    billing.signup("attacker@example.com", "hunter2hunter2")
+
+    # The victim owns the connected WordPress site the `wp` fixture set up.
+    billing.attach_client("victim@example.com", "c1")
+
+    # The attacker owns a business of their own — this is the point.
+    mine = creg.create_client(business_name="Attacker Ltd", username="idor-a",
+                              password="x" * 20)
+    billing.attach_client("attacker@example.com", mine["id"])
+    attacker_token = billing.authenticate("attacker@example.com",
+                                          "hunter2hunter2")
+
+    victim_fix = site_fix.propose("c1", AUDIT, business=BUSINESS)["proposed"][0]
+    before = site_fix.get(victim_fix["id"])["status"]
+
+    # Own client id (ownership gate passes), someone else's fix id.
+    for method, suffix in (("GET", ""), ("POST", "/approve"), ("POST", "/apply"),
+                           ("POST", "/reject"), ("POST", "/rollback")):
+        r = client.request(
+            method,
+            f"/api/account/clients/{mine['id']}/fixes/{victim_fix['id']}{suffix}",
+            headers={"X-Account-Token": attacker_token},
+            json={"approver": "attacker", "reason": "mine now"})
+        assert r.status_code == 404, (
+            f"{method} .../fixes/{{id}}{suffix} reached another business's fix "
+            f"through the attacker's own client id (got {r.status_code})")
+
+    # And nothing about the victim's fix moved.
+    assert site_fix.get(victim_fix["id"])["status"] == before
+
+
+def test_the_route_walk_attacks_resources_that_actually_exist(
+        client, isolated_billing, isolated_clients, wp):
+    """A 404 for "no such fix" is not proof of tenant isolation.
+
+    The adversarial walk above substituted a fix id of `fix-nonexistent`, so
+    the five fix-scoped routes were refused because the id did not exist rather
+    than because the caller did not own it — a route that checked existence and
+    nothing else would have passed. This asserts the walk's premise: the ids it
+    attacks with are real, and they belong to the victim.
+    """
+    from app.core import billing, site_fix
+
+    billing.signup("victim@example.com", "hunter2hunter2")
+    billing.attach_client("victim@example.com", "c1")
+    proposed = site_fix.propose("c1", AUDIT, business=BUSINESS)["proposed"]
+
+    assert proposed, "the walk has no real fix to attack with"
+    assert site_fix.get(proposed[0]["id"])["client_id"] == "c1"
+
+
 # ── the landing pages must pass the audit Titan sells ──────────────────────
 #
 # Measured on the live site before this: /compliance/de scored 60/C and
@@ -5410,7 +5478,7 @@ def test_the_catalogue_says_how_stale_it_is_and_degrades_to_nothing(monkeypatch)
 # ── tenant isolation: the adversarial route-table walk ─────────────────────
 
 def test_no_account_endpoint_serves_another_subscribers_business(
-        client, isolated_billing, isolated_clients, clean_sites):
+        client, isolated_billing, isolated_clients, wp):
     """Walks the REAL route table and ATTACKS every /api/account route that
     takes a client id, using a different subscriber's token.
 
@@ -5423,21 +5491,25 @@ def test_no_account_endpoint_serves_another_subscribers_business(
     A 200 is a leak. A 422 is fine — the request was rejected by body
     validation before it ever reached the data.
     """
-    from app.core import billing, clients as creg, site_fix, tenancy
+    from app.core import billing, site_fix, tenancy
 
     billing.signup("victim@example.com", "hunter2hunter2")
     billing.signup("attacker@example.com", "hunter2hunter2")
-    victim = creg.create_client(business_name="Victim Ltd", username="ten-v",
-                                password="x" * 20,
-                                website="https://victim.example")
-    billing.attach_client("victim@example.com", victim["id"])
+    # The victim owns "c1", the site the `wp` fixture actually connected, so
+    # the fix-scoped routes below have something real to leak.
+    billing.attach_client("victim@example.com", "c1")
+    victim = {"id": "c1"}
     attacker_token = billing.authenticate("attacker@example.com",
                                           "hunter2hunter2")
     assert attacker_token
 
-    # Give the victim a real fix, so fix-scoped routes have something to leak.
-    site_fix.reset()
-    fix_id = "fix-nonexistent"
+    # A REAL fix belonging to the victim. This used to be "fix-nonexistent",
+    # which meant the five fix-scoped routes were refused for the wrong reason
+    # — the id did not exist — and a route that checked existence and nothing
+    # else would have passed the walk.
+    proposed = site_fix.propose("c1", AUDIT, business=BUSINESS)["proposed"]
+    assert proposed, "no real fix to attack with — the walk proves nothing"
+    fix_id = proposed[0]["id"]
 
     leaked = []
     attacked = 0
