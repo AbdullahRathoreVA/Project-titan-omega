@@ -2681,3 +2681,112 @@ def founder_metrics(days: int = 30) -> dict:
     """
     from ..core import metrics
     return metrics.report(days=days)
+
+
+# --- feature flags, integrations and onboarding ----------------------------
+
+class FlagOverrideIn(BaseModel):
+    scope: str
+    scope_id: str
+    enabled: bool
+
+
+@router.get("/founder/flags", tags=["founder"])
+def founder_flags(plan: str = "", user_id: str = "",
+                  org_id: str = "") -> dict:
+    """Every flag as it resolves, and WHY.
+
+    `decided_by` is the field that matters. "It is off for this customer" is
+    not something anybody can act on; "the plan layer said no" is.
+    """
+    from ..core import flags
+    return {"flags": flags.all_flags(user_id=user_id, org_id=org_id,
+                                     plan=plan),
+            "overrides": flags.overrides()}
+
+
+@router.post("/founder/flags/{key}", tags=["founder"])
+def founder_set_flag(key: str, req: FlagOverrideIn) -> dict:
+    from ..core import audit, flags
+    try:
+        out = flags.set_override(key, req.scope, req.scope_id, req.enabled,
+                                 set_by="founder")
+    except flags.FlagError as e:
+        audit.record("founder", "flag.set", "flag", key, audit.REFUSED,
+                     scope=req.scope, reason=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    audit.record("founder", "flag.set", "flag", key, scope=req.scope,
+                 scope_id=req.scope_id, enabled=req.enabled)
+    return out
+
+
+@router.delete("/founder/flags/{key}", tags=["founder"])
+def founder_clear_flag(key: str, scope: str, scope_id: str) -> dict:
+    from ..core import audit, flags
+    try:
+        cleared = flags.clear_override(key, scope, scope_id)
+    except flags.FlagError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not cleared:
+        raise HTTPException(status_code=404, detail="No such override")
+    audit.record("founder", "flag.clear", "flag", key, scope=scope,
+                 scope_id=scope_id)
+    return {"cleared": True, "key": key}
+
+
+@router.get("/founder/integrations", tags=["founder"])
+def founder_integrations() -> dict:
+    """What is actually connected, what it unlocks, and what it costs.
+
+    Every row is answered by the module that owns the question. A check that
+    raises reads `unknown`, never `not_configured` - "go and connect it" and
+    "something is broken on our side" are different actions.
+    """
+    from ..core import integrations
+    return integrations.summary()
+
+
+@router.get("/founder/onboarding", tags=["founder"])
+def founder_onboarding() -> dict:
+    """Setup completion across every account, averaged only over the accounts
+    that could actually be scored."""
+    from ..core import onboarding
+    return onboarding.summary()
+
+
+@router.get("/account/onboarding", tags=["billing"])
+def account_onboarding(x_account_token: Optional[str] = Header(None)) -> dict:
+    """The caller's OWN setup score. Scoped by the token, so there is no id to
+    manipulate and nothing to walk sideways into."""
+    from ..core import billing, onboarding
+    email = billing.resolve(x_account_token or "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in first")
+    return onboarding.for_account(email)
+
+
+@router.get("/founder/search", tags=["founder"])
+def founder_search(q: str = "", limit: int = 20) -> dict:
+    """Find a customer from anything you can remember about them.
+
+    Searches ACROSS tenants by design, which is what makes it useful to the
+    operator and exactly what makes it unsafe for a customer. It lives under
+    `/api/founder`, already in `demo_data._SENSITIVE_PREFIXES`. A per-tenant
+    search would need its own function with an org filter, not a parameter on
+    this one - a boolean deciding whether to leak every tenant is one wrong
+    default away from doing it.
+    """
+    from ..core import search
+    return search.search(q, limit=limit)
+
+
+@router.get("/founder/notifications", tags=["founder"])
+def founder_notifications() -> dict:
+    """Conditions that are true right now, worst first.
+
+    Nothing is stored, so a notification disappears when the condition does.
+    Read `not_emitted` too: it lists what Titan deliberately does NOT notify
+    about yet and names the missing data, rather than inventing an alert.
+    """
+    from ..core import notifications
+    return notifications.current()

@@ -38,7 +38,7 @@ import threading
 import time
 from typing import Any, Optional
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _lock = threading.RLock()
 _conn: Optional[sqlite3.Connection] = None
@@ -245,6 +245,27 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS sub_events_ts ON subscription_events (ts DESC);
         CREATE INDEX IF NOT EXISTS sub_events_email
             ON subscription_events (email, ts DESC);
+    """),
+    # Feature flag overrides. Only the EXCEPTIONS live here - a flag's default
+    # and which plans include it are code, in core/flags.py, because those are
+    # product decisions that belong in review rather than in a table somebody
+    # can edit at 2am.
+    #
+    # The composite primary key is what makes "set this flag for this user"
+    # idempotent under concurrency instead of racing two rows into existence.
+    # set_by and set_at are NOT decoration: a flag flipped by nobody, at no
+    # time, is an unexplainable production state.
+    (8, """
+        CREATE TABLE IF NOT EXISTS feature_flags (
+            key      TEXT NOT NULL,
+            scope    TEXT NOT NULL,
+            scope_id TEXT NOT NULL,
+            enabled  INTEGER NOT NULL,
+            set_by   TEXT,
+            set_at   REAL NOT NULL,
+            PRIMARY KEY (key, scope, scope_id)
+        );
+        CREATE INDEX IF NOT EXISTS feature_flags_key ON feature_flags (key);
     """),
 ]
 

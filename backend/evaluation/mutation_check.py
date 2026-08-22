@@ -375,6 +375,16 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "app/main.py",
      "await asyncio.to_thread(improve.check_active)", "pass",
      "auto_rollback_is_actually_driven"),
+    # --- feature flags and onboarding --------------------------------------
+    # A typo quietly meaning "off" is how a feature vanishes for everybody,
+    # and an unreadable check counted as a failure blames the customer for
+    # our outage. Both are one deleted line away.
+    ("flags: an unknown flag raises rather than reading as off",
+     "app/core/flags.py", "    if flag is None:", "    if False:",
+     "unknown_flag_raises"),
+    ("onboarding: an unknown check is not counted as a failure",
+     "app/core/onboarding.py", '        if state["done"] is None:',
+     "        if False:", "unknown_check_is_not_counted"),
     # --- the deployment secret ---------------------------------------------
     ("appsecret: production refuses to boot without a secret",
      "app/core/appsecret.py",

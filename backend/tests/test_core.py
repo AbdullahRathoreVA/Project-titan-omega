@@ -8115,6 +8115,368 @@ def test_the_metrics_endpoint_is_refused_to_a_demo_visitor(client, monkeypatch):
     assert r.status_code != 200, "a demo visitor was served real revenue"
 
 
+# ── feature flags: and WHY a flag resolved the way it did ──────────────────
+# Five ways for a feature to be on means the interesting question is never
+# "is it on" but "which of the five decided". A flag system you cannot
+# interrogate turns every support conversation into guesswork.
+
+
+@pytest.fixture
+def flagged(monkeypatch, tmp_path):
+    from app import persistence
+    from app.core import db, flags
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "flags.db"))
+    db.connect(persistence.STATE_FILE)
+    for key in list(flags.FLAGS):
+        monkeypatch.delenv(f"TITAN_FLAG_{key.upper()}", raising=False)
+    yield flags
+
+
+def test_a_flag_says_which_layer_decided_it(flagged):
+    """`decided_by` is the whole point. "It is off for this customer" is not
+    something anybody can act on."""
+    out = flagged.explain("site_fix")
+    assert out["enabled"] is True
+    assert out["decided_by"] == "default"
+    assert [layer["layer"] for layer in out["layers"]] == [
+        "user", "org", "environment", "plan", "default"]
+
+
+def test_a_user_override_beats_every_other_layer(flagged):
+    """The 2am escape hatch: one customer is blocked and you need it off for
+    them and nobody else."""
+    flagged.set_override("site_fix", flagged.USER, "usr_1", False,
+                         set_by="founder")
+    out = flagged.explain("site_fix", user_id="usr_1", org_id="org_1",
+                          plan="enterprise")
+    assert out["enabled"] is False
+    assert out["decided_by"] == "user"
+
+
+def test_an_override_applies_only_to_who_it_was_set_for(flagged):
+    """An override that leaks to everybody is an outage, not a flag."""
+    flagged.set_override("site_fix", flagged.USER, "usr_1", False)
+    assert flagged.is_enabled("site_fix", user_id="usr_1") is False
+    assert flagged.is_enabled("site_fix", user_id="usr_2") is True
+    assert flagged.is_enabled("site_fix") is True
+
+
+def test_an_org_override_is_narrower_than_a_plan_and_wider_than_nothing(
+        flagged):
+    flagged.set_override("voice", flagged.ORG, "org_1", False)
+    assert flagged.is_enabled("voice", org_id="org_1") is False
+    assert flagged.is_enabled("voice", org_id="org_2") is True
+
+
+def test_the_environment_can_turn_a_flag_off_without_a_database_write(
+        flagged, monkeypatch):
+    """Deliberately above the plan layer: it is how a deployment turns
+    something off RIGHT NOW, including when the database is the broken thing."""
+    monkeypatch.setenv("TITAN_FLAG_VOICE", "0")
+    out = flagged.explain("voice", plan="enterprise")
+    assert out["enabled"] is False
+    assert out["decided_by"] == "environment"
+
+
+def test_an_unknown_flag_raises_rather_than_being_silently_off(flagged):
+    """A typo quietly meaning "off" is how a feature vanishes for everybody
+    and nobody can work out why."""
+    with pytest.raises(flagged.FlagError):
+        flagged.is_enabled("stie_fix")
+    with pytest.raises(flagged.FlagError):
+        flagged.set_override("nope", flagged.USER, "usr_1", True)
+
+
+def test_a_flag_with_no_plan_list_is_on_for_every_plan(flagged):
+    """`plans=None` means every plan. An empty set would mean NO plan, and
+    confusing the two turns a flag off for the entire customer base."""
+    for plan in ("free", "student", "individual", "enterprise"):
+        out = flagged.explain("organisations", plan=plan)
+        assert out["enabled"] is True
+        assert out["decided_by"] == "default", (
+            "a flag with no plan list must not be decided by the plan layer")
+
+
+def test_a_plan_that_does_not_include_a_flag_is_refused_it(flagged,
+                                                           monkeypatch):
+    limited = flagged.Flag("limited_thing", "Paid tiers only.", default=True,
+                           plans=frozenset({"enterprise"}))
+    monkeypatch.setitem(flagged.FLAGS, "limited_thing", limited)
+
+    assert flagged.is_enabled("limited_thing", plan="enterprise") is True
+    out = flagged.explain("limited_thing", plan="free")
+    assert out["enabled"] is False and out["decided_by"] == "plan"
+
+
+def test_an_override_records_who_set_it(flagged):
+    """A flag flipped by nobody, at no time, is an unexplainable production
+    state."""
+    flagged.set_override("voice", flagged.USER, "usr_1", False,
+                         set_by="founder")
+    row = flagged.overrides("voice")[0]
+    assert row["set_by"] == "founder" and row["set_at"] > 0
+
+
+# ── onboarding: detected, never remembered ─────────────────────────────────
+
+@pytest.fixture
+def onboarded(monkeypatch, tmp_path):
+    from app import persistence
+    from app.core import billing, db, onboarding
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "onb.db"))
+    db.connect(persistence.STATE_FILE)
+    billing.reset()
+    yield onboarding
+    billing.reset()
+
+
+def test_a_fresh_account_is_not_scored_as_finished(onboarded):
+    from app.core import billing
+    billing.signup("newbie@example.com", "hunter2hunter2")
+    rec = onboarded.for_account("newbie@example.com")
+
+    assert rec["measured"] is True
+    assert 0 < rec["score_pct"] < 100
+    assert {a["key"] for a in rec["next_actions"]} >= {"business", "website"}
+    # The optional step is shown but never counted against the score.
+    assert any(s["optional"] for s in rec["steps"])
+
+
+def test_an_unknown_check_is_not_counted_as_a_failure(onboarded, monkeypatch,
+                                                     isolated_clients):
+    """"We looked and it is not connected" and "we could not look" lead to
+    different next actions. Scoring an account down for OUR outage blames the
+    customer for it.
+
+    The account needs a business attached: with none, the vault is never asked
+    anything, so `not connected` is the honest answer and there is no unknown
+    to test. That is correct behaviour and it is why this fixture is here.
+    """
+    from app.core import billing, clients as creg, site_access
+
+    billing.signup("someone@example.com", "hunter2hunter2")
+    biz = creg.create_client(business_name="Onboard Ltd", username="onb-1",
+                             password="x" * 20,
+                             website="https://onboard.example")
+    billing.attach_client("someone@example.com", biz["id"])
+    baseline = onboarded.for_account("someone@example.com")
+    assert baseline["unknown"] == 0, "sanity: the vault answered before we broke it"
+
+    def broken(*_a, **_k):
+        raise RuntimeError("vault unavailable")
+
+    monkeypatch.setattr(site_access, "status", broken)
+    rec = onboarded.for_account("someone@example.com")
+
+    step = next(s for s in rec["steps"] if s["key"] == "site_connected")
+    assert step["done"] is None, "an unreadable vault was reported as 'not done'"
+    assert rec["unknown"] == 1
+    assert rec["checkable"] == baseline["checkable"] - 1, (
+        "the unknown step stayed in the denominator")
+    assert step["key"] not in {a["key"] for a in rec["next_actions"]}, (
+        "an unknown step was turned into a to-do the customer cannot action")
+
+
+def test_the_average_is_not_zero_when_nothing_can_be_scored(onboarded):
+    """With no accounts, an average completion of 0% describes nobody."""
+    out = onboarded.summary()
+    assert out["measured"] is False
+    assert out["average_pct"] is None
+
+
+# ── integration health: unknown is not the same as disconnected ────────────
+
+def test_a_failed_integration_check_reads_unknown_not_disconnected(
+        monkeypatch):
+    """They lead to different actions — "go and connect it" versus "something
+    is broken on our side" — and one red cross for both sends people to fix
+    the wrong thing."""
+    from app.core import integrations, render
+
+    def broken(*_a, **_k):
+        raise RuntimeError("renderer status unavailable")
+
+    monkeypatch.setattr(render, "status", broken)
+    row = next(r for r in integrations.all_integrations()
+               if r["key"] == "renderer")
+    assert row["status"] == integrations.UNKNOWN
+    assert "unavailable" in row["detail"]
+
+
+def test_every_integration_states_what_it_costs():
+    """Somebody enabling a feature and then receiving a bill is the failure
+    this exists to prevent."""
+    from app.core import integrations
+    allowed = {integrations.FREE, integrations.INCLUDED, integrations.PAID,
+               integrations.EXTERNAL}
+    for row in integrations.all_integrations():
+        assert row["cost"] in allowed, row
+        assert row["status"] in {integrations.CONNECTED,
+                                 integrations.NOT_CONFIGURED,
+                                 integrations.NEEDS_ATTENTION,
+                                 integrations.UNKNOWN}, row
+        assert row["unlocks"], f"{row['key']} does not say what it is for"
+
+
+def test_the_integration_summary_refuses_to_be_read_as_a_score():
+    """"1 of 7 connected" is not 14% healthy. Several are optional or paid and
+    being unconfigured is a decision."""
+    from app.core import integrations
+    out = integrations.summary()
+    assert out["total"] == len(out["integrations"])
+    assert "not a score" in out["note"].lower()
+
+
+# ── global search: paste a domain, find the customer ───────────────────────
+# The operator's real use case is an email arriving about example.com and
+# needing the account behind it in one step.
+
+
+@pytest.fixture
+def searchable(monkeypatch, tmp_path, isolated_clients):
+    """`isolated_clients` is a DEPENDENCY, not a sibling.
+
+    It clears the client registry and repoints STATE_FILE, so if a test listed
+    both side by side it would run second and wipe everything this fixture had
+    just created. Depending on it forces the order.
+    """
+    from app import persistence
+    from app.core import billing, clients as creg, db, identity, orgs
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "search.db"))
+    monkeypatch.setattr(identity, "ITERATIONS", 1000)
+    db.connect(persistence.STATE_FILE)
+    billing.reset()
+
+    owner = identity.create("owner@zashmart.test", "a-real-password-123")
+    orgs.create("Zash Mart", owner["id"])
+    biz = creg.create_client(business_name="Zash Mart Retail",
+                             username="srch-1", password="x" * 20,
+                             website="https://www.zashmart.com/shop")
+    billing.signup("owner@zashmart.test", "hunter2hunter2")
+    billing.attach_client("owner@zashmart.test", biz["id"])
+
+    from app.core import search
+    yield search
+    billing.reset()
+
+
+def test_a_domain_finds_the_business_however_it_was_pasted(searchable):
+    """The whole point of the feature. The operator should not have to know
+    that the stored URL has a scheme, a www and a path on it."""
+    for typed in ("zashmart.com", "https://zashmart.com",
+                  "www.zashmart.com", "HTTPS://WWW.ZashMart.com/shop"):
+        out = searchable.search(typed)
+        kinds = {r["kind"] for r in out["results"]}
+        assert "business" in kinds, f"{typed!r} found nothing: {out['results']}"
+
+
+def test_a_domain_match_sorts_above_a_name_coincidence(searchable):
+    out = searchable.search("zashmart.com")
+    assert out["results"], "nothing matched"
+    assert out["results"][0]["matched_on"] == "domain"
+
+
+def test_every_result_says_what_it_matched_on(searchable):
+    """A hit with no visible reason looks like a bug, and the operator cannot
+    tell a domain match from a coincidence in a name."""
+    out = searchable.search("zash")
+    assert out["results"]
+    for hit in out["results"]:
+        assert hit["matched_on"], hit
+        assert hit["kind"] and hit["label"]
+
+
+def test_search_never_returns_a_password_hash(searchable):
+    """Results are built from the public accessors, so a private field added
+    later cannot leak through search."""
+    out = searchable.search("zash")
+    blob = repr(out).lower()
+    for forbidden in ("pwhash", "pbkdf2", "_pwhash", "_salt", "password"):
+        assert forbidden not in blob, f"{forbidden} appeared in search results"
+
+
+def test_a_source_that_cannot_be_searched_is_named_not_swallowed(
+        searchable, monkeypatch):
+    """Fewer results because a source was down is a different answer from
+    fewer results because there are fewer."""
+    from app.core import orgs
+
+    def broken(*_a, **_k):
+        raise RuntimeError("orgs table unavailable")
+
+    monkeypatch.setattr(orgs, "all_orgs", broken)
+    out = searchable.search("zash")
+    assert any(u["source"] == "organisations" for u in out["unavailable"])
+    assert "organisations" not in out["searched"]
+    # ...and the other sources still answered.
+    assert out["results"]
+
+
+def test_a_one_character_query_is_refused_rather_than_returning_everything(
+        searchable):
+    out = searchable.search("z")
+    assert out["results"] == []
+    assert "two characters" in out["note"]
+
+
+# ── notifications: only conditions that are true right now ─────────────────
+
+def test_a_notification_is_a_current_condition_not_a_stored_row():
+    """Nothing is queued, so a notification disappears when the condition
+    does rather than sitting unread describing something already fixed."""
+    from app.core import notifications
+    out = notifications.current()
+    assert isinstance(out["notifications"], list)
+    assert out["checked"], "no check ran at all"
+    for note in out["notifications"]:
+        assert note["severity"] in (notifications.CRITICAL,
+                                    notifications.WARNING,
+                                    notifications.INFO)
+        assert note["source"], f"{note['key']} does not say where it came from"
+
+
+def test_the_notification_centre_says_what_it_deliberately_does_not_emit():
+    """Trial-ending and payment-failed are the two the brief asks for that
+    Titan cannot know today. Emitting them anyway would fill the centre with
+    things that never happened, which teaches people to ignore it."""
+    from app.core import notifications
+    out = notifications.current()
+    keys = {n["key"] for n in out["notifications"]}
+    assert "trial_ending" not in keys
+    assert "payment_failed" not in keys
+
+    not_emitted = {n["key"]: n["why"] for n in out["not_emitted"]}
+    assert "trial_ending" in not_emitted
+    assert "trial_ends_at" in not_emitted["trial_ending"], (
+        "the reason has to name the missing field to be actionable")
+    assert "payment_failed" in not_emitted
+
+
+def test_a_check_that_could_not_run_is_not_an_absence_of_a_problem(
+        monkeypatch):
+    from app.core import billing, notifications
+
+    def broken(*_a, **_k):
+        raise RuntimeError("billing unavailable")
+
+    monkeypatch.setattr(billing, "processor_configured", broken)
+    out = notifications.current()
+    assert any(f["check"] == "billing" for f in out["checks_failed"])
+    assert "billing" not in out["checked"]
+
+
+def test_an_undurable_deployment_is_reported_as_critical(monkeypatch):
+    """Titan holds the only copy of the previous content of pages it has
+    changed on live websites. Losing that store is not a warning."""
+    from app.core import db, notifications
+    monkeypatch.setattr(db, "stats", lambda: {"durable": False})
+    out = notifications.current()
+    note = next(n for n in out["notifications"]
+                if n["key"] == "storage_not_durable")
+    assert note["severity"] == notifications.CRITICAL
+    assert note["action"], "a critical notification with no action is a shrug"
+
+
 # ── the deployment secret ──────────────────────────────────────────────────
 # TITAN_SECRET had four different fallbacks in four files, all of them in the
 # public git history. With the variable unset, session tokens were signed with
