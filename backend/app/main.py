@@ -61,6 +61,10 @@ WATCH_INTERVAL = float(os.getenv("TITAN_WATCH_INTERVAL", "1800"))
 # rare enough that snapshotting is never a meaningful share of what this
 # container is doing.
 BACKUP_INTERVAL = float(os.getenv("TITAN_BACKUP_INTERVAL", str(6 * 3600)))
+# Re-measure every ACTIVE self-improvement and roll back any that got worse.
+# Six hours: a regression should not sit in production for a day, and the
+# check re-measures each active parameter, so it is not free.
+IMPROVE_INTERVAL = float(os.getenv("TITAN_IMPROVE_INTERVAL", str(6 * 3600)))
 
 # Seeded to NOW, not to 0.0. `time.monotonic()` is time since system boot on
 # every platform Titan runs on, so `monotonic() - 0.0 >= INTERVAL` is TRUE on
@@ -72,13 +76,14 @@ BACKUP_INTERVAL = float(os.getenv("TITAN_BACKUP_INTERVAL", str(6 * 3600)))
 _last_growth = time.monotonic()
 _last_watch = time.monotonic()
 _last_backup = time.monotonic()
+_last_improve = time.monotonic()
 
 
 async def _heartbeat_loop() -> None:
     """Drive autonomous activity on a fixed cadence until cancelled."""
     if not HEARTBEAT_ENABLED:
         return
-    global _last_growth, _last_watch
+    global _last_growth, _last_watch, _last_improve
     while True:
         await asyncio.sleep(HEARTBEAT_SECONDS)
         with contextlib.suppress(Exception):
@@ -161,6 +166,23 @@ async def _heartbeat_loop() -> None:
                 with contextlib.suppress(Exception):
                     from .core import backup
                     await asyncio.to_thread(backup.create, "scheduled")
+
+            # The self-improvement loop's automatic half. THIS WAS THE SAME BUG
+            # AS knowledge.backfill(): improve.check_active() re-measures every
+            # ACTIVE change and rolls back any that got worse, it is tested, it
+            # is mutation-guarded, and NOTHING IN PRODUCTION EVER CALLED IT. So
+            # "auto-rollback on regression" was true of the function and false
+            # of the deployment, and an approved change that made Titan worse
+            # stayed live until somebody clicked an endpoint by hand.
+            #
+            # Safe to automate precisely because it is the only direction that
+            # is safe: it never proposes, never approves and never activates.
+            # It can only move a value BACK to one a human already approved.
+            if time.monotonic() - _last_improve >= IMPROVE_INTERVAL:
+                globals()["_last_improve"] = time.monotonic()
+                with contextlib.suppress(Exception):
+                    from .core import improve
+                    await asyncio.to_thread(improve.check_active)
 
         # Run the live research engine on its own slow cadence.
         if time.monotonic() - _last_growth >= GROWTH_INTERVAL:

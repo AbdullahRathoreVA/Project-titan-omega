@@ -216,6 +216,11 @@ def signup(email: str, password: str, plan: str = "free") -> dict:
             # account cannot quietly manage ten businesses.
             "client_ids": [],
         }
+    # from_plan is NULL for the first row of an account's life. That is what
+    # makes a signup distinguishable from an upgrade later, and without it
+    # trial-to-paid conversion could not be reconstructed from history at all.
+    record_change(email, None, plan, status=_accounts[email]["status"],
+                  reason="signup")
     events.emit("SubscriptionChanged", {"email": email, "plan": plan,
                                         "status": _accounts[email]["status"]},
                 actor="billing")
@@ -393,11 +398,63 @@ def set_plan(email: str, plan: str, subscription_id: str = "",
         acct = _accounts.get(email)
         if not acct:
             raise ValueError("No such account.")
+        was = acct.get("plan")
         acct.update(plan=plan, subscription_id=subscription_id, status=status)
+    # Durable, append-only, and BEFORE the in-memory event: churn and
+    # trial-to-paid conversion are properties of how an account changed, not of
+    # what it is now. This call is the difference between those numbers being
+    # measurable later and being invented.
+    record_change(email, was, plan, status=status,
+                  subscription_id=subscription_id)
     events.emit("SubscriptionChanged",
                 {"email": email, "plan": plan, "status": status},
                 actor="billing")
     return public(email)
+
+
+# ------------------------------------------------- subscription history --
+def _history_conn():
+    from .. import persistence
+    from . import db
+    return db.connect(persistence.STATE_FILE)
+
+
+def record_change(email: str, from_plan, to_plan: str, *, status: str = "active",
+                  subscription_id: str = "", reason: str = "") -> None:
+    """Append one row. Never raises: failing to record history must not be the
+    thing that stops somebody's plan from changing."""
+    import uuid as _uuid
+    try:
+        granted = 1 if str(subscription_id or "").startswith("granted") else 0
+        conn = _history_conn()
+        with _lock, conn:
+            conn.execute(
+                "INSERT INTO subscription_events (id, ts, email, from_plan,"
+                " to_plan, status, granted, reason) VALUES (?,?,?,?,?,?,?,?)",
+                ("sub_" + _uuid.uuid4().hex[:16], time.time(), email,
+                 from_plan, to_plan, status, granted, reason or ""))
+    except Exception:
+        pass
+
+
+def history(email: str = "", limit: int = 200) -> list:
+    """Newest first. The only reader; there is deliberately no edit or delete."""
+    limit = max(1, min(int(limit or 200), 1000))
+    try:
+        if email:
+            rows = _history_conn().execute(
+                "SELECT * FROM subscription_events WHERE email=?"
+                " ORDER BY ts DESC LIMIT ?", (email, limit)).fetchall()
+        else:
+            rows = _history_conn().execute(
+                "SELECT * FROM subscription_events ORDER BY ts DESC LIMIT ?",
+                (limit,)).fetchall()
+    except Exception:
+        return []
+    return [{"id": r["id"], "ts": r["ts"], "email": r["email"],
+             "from_plan": r["from_plan"], "to_plan": r["to_plan"],
+             "status": r["status"], "granted": bool(r["granted"]),
+             "reason": r["reason"]} for r in rows]
 
 
 # -------------------------------------------------------------- processor --

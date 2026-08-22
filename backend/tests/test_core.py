@@ -7953,6 +7953,168 @@ def test_the_pricing_page_reads_the_trial_length_from_the_server():
         "must come from /api/plans, or the copy and the configuration drift.")
 
 
+# ── executive metrics: every number says whether it was measured ───────────
+# The brief asks for MRR, ARR, churn and conversion, and then says twice that a
+# metric which cannot be measured must read "Not measured" rather than being
+# invented. These pin the difference between a measured zero and a null.
+
+
+@pytest.fixture
+def measures(monkeypatch, tmp_path):
+    """A billing store and a database of its own, and no payment processor —
+    which is the state Titan is actually in today."""
+    from app import persistence
+    from app.core import billing, db, metrics
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "metrics.db"))
+    db.connect(persistence.STATE_FILE)
+    for var in ("PADDLE_API_KEY", "PADDLE_PRICE_ID_INDIVIDUAL",
+                "PADDLE_PRICE_ID_STUDENT", "PADDLE_PRICE_ID_ENTERPRISE",
+                "DODO_API_KEY", "PAYPAL_CLIENT_ID"):
+        monkeypatch.delenv(var, raising=False)
+    billing.reset()
+    yield metrics
+    billing.reset()
+
+
+def _paid(monkeypatch):
+    """Configure a processor the way setting the Paddle keys will."""
+    monkeypatch.setenv("PADDLE_API_KEY", "test-key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_INDIVIDUAL", "pri_test")
+
+
+def test_revenue_is_not_measured_when_billing_is_not_connected(measures):
+    """$0 MRR reads as a business result. The truth is that nobody COULD pay
+    and nothing was measured, and a dashboard that cannot tell those apart
+    will be believed anyway."""
+    m = measures.mrr()
+    assert m["measured"] is False
+    assert m["value"] is None, "unmeasured revenue was reported as a number"
+    assert "not connected" in m["reason"].lower()
+
+
+def test_arr_stays_unmeasured_for_exactly_as_long_as_mrr_is(measures):
+    """Deriving a number from an unmeasured one is how a null quietly becomes
+    a zero two function calls from where it started."""
+    assert measures.mrr()["measured"] is False
+    a = measures.arr()
+    assert a["measured"] is False
+    assert a["value"] is None, "ARR was computed from an unmeasured MRR"
+
+
+def test_revenue_becomes_a_real_number_once_a_processor_is_connected(
+        measures, monkeypatch):
+    """And then zero IS a measurement — the same value means something
+    different, which is the whole reason for the envelope."""
+    from app.core import billing
+    _paid(monkeypatch)
+    assert measures.mrr() == {"value": 0.0, "measured": True,
+                              "source": measures.mrr()["source"],
+                              "note": measures.mrr()["note"]}
+
+    billing.signup("payer@example.com", "hunter2hunter2")
+    billing.set_plan("payer@example.com", "individual", subscription_id="sub_1")
+    m = measures.mrr()
+    assert m["measured"] is True and m["value"] > 0
+    assert measures.arr()["value"] == round(m["value"] * 12, 2)
+
+
+def test_a_granted_seat_never_becomes_revenue(measures, monkeypatch):
+    """Provisioning one pilot customer must not make the dashboard report
+    money nobody was charged. The list value is kept, in its own field."""
+    from app.core import billing
+    _paid(monkeypatch)
+    billing.signup("payer@example.com", "hunter2hunter2")
+    billing.signup("pilot@example.com", "hunter2hunter2")
+    billing.set_plan("payer@example.com", "individual", subscription_id="sub_1")
+    billing.set_plan("pilot@example.com", "enterprise",
+                     subscription_id="granted:pilot")
+
+    paid_price = billing.PLANS["individual"].price_usd
+    granted_price = billing.PLANS["enterprise"].price_usd
+
+    assert measures.mrr()["value"] == paid_price, (
+        "the granted seat was folded into revenue")
+    assert measures.granted_list_value()["value"] == granted_price
+    counts = measures.customers()
+    assert counts["paying"]["value"] == 1
+    assert counts["granted"]["value"] == 1
+
+
+def test_churn_is_not_zero_when_there_was_nothing_to_churn(measures):
+    """Zero percent churn on zero customers is not good news, it is a
+    division by nothing dressed up as a percentage."""
+    from app.core import billing
+    billing.signup("free@example.com", "hunter2hunter2")
+    c = measures.churn(days=30)
+    assert c["measured"] is False
+    assert c["value"] is None
+    assert "nothing to churn" in c["reason"].lower()
+
+
+def test_churn_is_measured_once_a_paid_subscription_is_lost(
+        measures, monkeypatch):
+    from app.core import billing
+    _paid(monkeypatch)
+    billing.signup("leaver@example.com", "hunter2hunter2")
+    billing.set_plan("leaver@example.com", "individual", subscription_id="sub_1")
+    billing.set_plan("leaver@example.com", "free")
+
+    c = measures.churn(days=30)
+    assert c["measured"] is True
+    assert c["value"] == 100.0, "the only paid subscription was lost"
+
+
+def test_trial_customers_names_the_field_that_is_missing(measures):
+    """Guessing it from the signup date and the plan's trial length would
+    produce a number that looks right and is not."""
+    t = measures.trial_customers()
+    assert t["measured"] is False and t["value"] is None
+    assert "trial_ends_at" in t["reason"], (
+        "the reason has to name the missing field, or nobody can act on it")
+
+
+def test_conversion_is_unmeasured_before_any_account_exists(measures):
+    c = measures.conversion()
+    assert c["measured"] is False and c["value"] is None
+
+
+def test_a_subscription_change_is_recorded_durably(measures, monkeypatch):
+    """Plan changes used to overwrite the plan in place and emit an in-memory
+    event, so churn was not hard to compute — it was unmeasurable."""
+    from app.core import billing
+    _paid(monkeypatch)
+    billing.signup("mover@example.com", "hunter2hunter2")
+    billing.set_plan("mover@example.com", "individual", subscription_id="sub_1")
+
+    rows = billing.history("mover@example.com")
+    assert len(rows) == 2, rows
+    assert rows[-1]["from_plan"] is None, (
+        "the first row of an account's life must have no from_plan, or a "
+        "signup cannot be told from an upgrade")
+    assert rows[0]["from_plan"] == "free" and rows[0]["to_plan"] == "individual"
+
+
+def test_the_report_says_how_much_of_itself_is_real(measures):
+    rep = measures.report()
+    assert rep["measured_count"] > 0
+    assert rep["unmeasured_count"] > 0, (
+        "with no processor connected, some of this cannot be measured — a "
+        "report claiming everything is measured is the bug")
+    assert "durable" in rep
+
+
+def test_the_metrics_endpoint_is_refused_to_a_demo_visitor(client, monkeypatch):
+    """There is no demo-safe edition of revenue. /api/founder is already a
+    sensitive prefix, and this proves a new route under it inherits that."""
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", "metrics-endpoint-secret")
+    from app.core import auth
+    guest = auth.make_guest_token()
+    r = client.get("/api/founder/metrics",
+                   headers={"Authorization": f"Bearer {guest}"})
+    assert r.status_code != 200, "a demo visitor was served real revenue"
+
+
 # ── the deployment secret ──────────────────────────────────────────────────
 # TITAN_SECRET had four different fallbacks in four files, all of them in the
 # public git history. With the variable unset, session tokens were signed with
@@ -8035,6 +8197,64 @@ def test_only_one_module_reads_the_secret_from_the_environment():
     assert not offenders, (
         "these modules read TITAN_SECRET directly instead of going through "
         f"core/appsecret.py: {offenders}")
+
+
+def test_no_mutation_guard_has_a_stale_or_ambiguous_anchor():
+    """A guard whose anchor does not match protects nothing - and the run
+    still exits 0, because a stale anchor only prints SKIP.
+
+    Two ways it goes silently wrong, both of which have now happened here:
+
+    1. **Stale.** Seven anchors span lines and are written with a newline
+       escape. With `core.autocrlf=true` a fresh clone writes CRLF for every
+       file, so on a clean checkout those seven matched nothing at all.
+    2. **Ambiguous.** The tool replaces the FIRST match. "if role not in
+       ROLES:" appeared twice in identity.py, so deleting the check only ever
+       disarmed create() and set_role() was never tested against its own
+       guard being gone.
+
+    Exactly once, in the file the guard names, or it is not a guard."""
+    import io as _io
+    import pathlib
+
+    from evaluation.mutation_check import MUTANTS
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    broken = []
+    for label, path, anchor, _replacement, _selector in MUTANTS:
+        text = _io.open(root / path, "rb").read().decode("utf-8")
+        needle = anchor
+        if "\r\n" in text:
+            needle = anchor.replace("\r\n", "\n").replace("\n", "\r\n")
+        found = text.count(needle)
+        if found != 1:
+            broken.append(f"{label}: {found} matches in {path}")
+
+    assert not broken, (
+        "mutation guards whose anchor does not match exactly once - each of "
+        "these is protecting nothing: " + "; ".join(broken))
+
+
+def test_the_auto_rollback_is_actually_driven_by_the_heartbeat():
+    """`improve.check_active()` re-measures every ACTIVE change and rolls back
+    any that got worse. It was tested, it was mutation-guarded, and NOTHING IN
+    PRODUCTION EVER CALLED IT — so "auto-rollback on regression" was true of
+    the function and false of the deployment, and an approved change that made
+    Titan measurably worse stayed live until somebody clicked an endpoint.
+
+    Third instance of this exact defect shape, after knowledge.backfill() and
+    params.apply_stored(). Comments are stripped first because the comment
+    above the call names the function."""
+    import inspect
+    import re as _re
+
+    from app import main
+
+    src = inspect.getsource(main._heartbeat_loop)
+    code = "\n".join(_re.sub(r"#.*$", "", line) for line in src.splitlines())
+    assert _re.search(r"\bcheck_active\b", code), (
+        "improve.check_active() is no longer driven by the heartbeat — an "
+        "approved change that measures worse will stay live indefinitely")
 
 
 def test_the_secret_check_is_actually_wired_into_the_lifespan():

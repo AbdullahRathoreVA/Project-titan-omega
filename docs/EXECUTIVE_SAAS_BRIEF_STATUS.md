@@ -42,6 +42,9 @@ row would need a claim neither verified nor recorded, it says so.
 | 33 | Audit log | **[V]** `core/audit.py`, migration 6. Append-only — there is no update or delete function, not a guarded one. Secrets are redacted **on the way in**, because a value that reaches the table is already on the disk and in every backup. Refused actions are recorded too. Says `durable: false` out loud. |
 | 12 | Tiered trials | **[V]** Already existed and is better than the brief asks: `billing._DEFAULT_TRIAL_DAYS` is one central config, overridable per plan by environment variable **without a deploy**, and `as_dict()` publishes `trial_billable` so the product never advertises a conversion that cannot happen. |
 | 43 | "Free for X days" on the pricing page | **[V]** The API published `trial_days` and the page never displayed it. Now rendered from `/api/plans`, with a test that **fails if a number is typed into the JSX** — the brief's own rule that marketing copy must not be a second source of truth. |
+| 16/17 | Executive metrics, built honestly | **[V]** `core/metrics.py`. MRR, ARR, churn, conversion, trial counts, plan distribution — every one returns `{value, measured, reason}` and **`value` is `null`, never `0`, whenever `measured` is false**. With no processor connected, MRR reads "Billing is not connected", not `$0`. `GET /api/founder/metrics`. |
+| 16 | Churn made measurable at all | **[V]** Migration 7, `subscription_events`. `set_plan()` overwrote the plan in place and emitted an in-memory event, so churn and trial-to-paid conversion were not "hard to compute" — they were **unmeasurable by construction**, and any figure shown would have been invented. Now recorded append-only. |
+| 31 | Self-improvement actually running | **[V]** `improve.check_active()` — the auto-rollback that re-measures every ACTIVE change and reverts regressions — was tested, mutation-guarded, and **called by nothing in production**. Now on the heartbeat. Third instance of this exact defect shape, after `knowledge.backfill()` and `params.apply_stored()`. |
 
 ### Two defects found in passing and fixed
 
@@ -106,18 +109,31 @@ Honest list. None of this is stubbed or faked anywhere in the product.
 | 13–14 | Trial anti-abuse, Executive trial control | The trial *engine* (§12) already existed and the pricing page now displays it (§43). These two need billing to be real. |
 | 15 | Customer 360 | Organisations exist now; the screen does not. Its Usage and Activity panels need billing on organisations first. |
 | 26 | Integration health centre | |
-| 16 | MRR / ARR / churn / conversion | **Cannot be built truthfully with zero customers.** Correct display today is "Not measured". |
 | 38–42 | Global search, notifications, transactional email, quick actions, support mode | |
 | 3 | Billing migrated onto organisations | Deliberately not done. The subscriber path is the one that takes money; moving it in the same change that introduces the table underneath is how a paying customer loses access. |
 
-## 5. Cannot be built honestly yet
+## 5. Built, and honest about what it cannot yet see
 
-§16 (MRR, ARR, churn, conversion, plan distribution) and §20 (usage-based
-upgrade prompts) need real customers. With zero customers these become
-dashboards of numbers nobody measured — which the brief's own §47 forbids, and
-which is the one rule this codebase is built on.
+§16 was previously listed here as "cannot be built honestly". That was half
+right. The *engine* can be built now; what cannot be invented is the data.
 
-**The correct display for all of them today is "Not measured".**
+`core/metrics.py` computes MRR, ARR, churn, conversion, trial counts and plan
+distribution today, and each one carries whether it was measured. With zero
+customers and no processor:
+
+| Metric | Today | Why |
+|---|---|---|
+| customers, plan distribution | **measured** | durable account state |
+| conversion | **measured** once one account exists | account state |
+| MRR / ARR | **not measured** | no processor — nobody *could* pay, so `$0` would be a claim |
+| churn | **not measured** | no paid subscription has existed to be lost |
+| trial customers | **not measured** | `billing` has no per-account `trial_ends_at` at all |
+
+Every "not measured" carries a reason that names what is missing, so it is
+actionable rather than a shrug. The moment Paddle is configured, MRR becomes a
+real number — and `0.0` then genuinely means nobody paid.
+
+§20 (usage-based upgrade prompts) still needs real usage.
 
 ---
 

@@ -2664,3 +2664,20 @@ def org_audit(org_id: str, limit: int = 50,
     user, role = _org_role(org_id, authorization, orgs.ADMIN)
     return {"entries": audit.recent(limit=limit, target_id=org_id),
             "stats": audit.stats()}
+
+
+@router.get("/founder/metrics", tags=["founder"])
+def founder_metrics(days: int = 30) -> dict:
+    """Executive metrics, every one carrying whether it was measured.
+
+    Behind the founder token, and `/api/founder` is already in
+    `demo_data._SENSITIVE_PREFIXES`, so a demo visitor is refused rather than
+    shown a substituted version - there is no demo-safe edition of revenue.
+
+    Read `metrics.measured` before `metrics.value` on every field. A `value` of
+    null means nothing was measured, and is deliberately NOT zero: with no
+    payment processor connected, $0 MRR would read as a business result when
+    the truth is that nobody could have paid.
+    """
+    from ..core import metrics
+    return metrics.report(days=days)

@@ -38,7 +38,7 @@ import threading
 import time
 from typing import Any, Optional
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _lock = threading.RLock()
 _conn: Optional[sqlite3.Connection] = None
@@ -219,6 +219,32 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS audit_ts ON audit_log (ts DESC);
         CREATE INDEX IF NOT EXISTS audit_target ON audit_log (target_id, ts DESC);
         CREATE INDEX IF NOT EXISTS audit_actor ON audit_log (actor, ts DESC);
+    """),
+    # Subscription history. Churn and trial-to-paid conversion are not
+    # properties of the CURRENT state of an account - they are properties of
+    # how it changed over time, and billing.set_plan() overwrote the plan in
+    # place and emitted an in-memory event that nothing persisted. So those two
+    # numbers were not "hard to compute", they were unmeasurable by
+    # construction, and any figure shown for them would have been invented.
+    #
+    # Append-only, like audit_log: a row records that a change happened, and
+    # nothing edits or deletes one afterwards. `from_plan` is NULL for the
+    # first row of an account's life, which is what makes a signup
+    # distinguishable from an upgrade.
+    (7, """
+        CREATE TABLE IF NOT EXISTS subscription_events (
+            id         TEXT PRIMARY KEY,
+            ts         REAL NOT NULL,
+            email      TEXT NOT NULL,
+            from_plan  TEXT,
+            to_plan    TEXT NOT NULL,
+            status     TEXT NOT NULL,
+            granted    INTEGER NOT NULL DEFAULT 0,
+            reason     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS sub_events_ts ON subscription_events (ts DESC);
+        CREATE INDEX IF NOT EXISTS sub_events_email
+            ON subscription_events (email, ts DESC);
     """),
 ]
 

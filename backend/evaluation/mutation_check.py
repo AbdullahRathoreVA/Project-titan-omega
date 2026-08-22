@@ -355,6 +355,26 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("audit: a secret is never written to the table", "app/core/audit.py",
      "if any(hint in name for hint in _SECRET_HINTS):", "if False:",
      "never_stores_a_secret"),
+    # --- executive metrics -------------------------------------------------
+    # The line between a measured zero and a null. $0 MRR reads as a business
+    # result; the truth today is that nobody COULD pay and nothing was
+    # measured, and a dashboard that cannot tell those apart is believed
+    # anyway.
+    ("metrics: revenue is null, not zero, when billing is not connected",
+     "app/core/metrics.py", "    if not connected:", "    if False:",
+     "revenue_is_not_measured_when_billing"),
+    ("metrics: ARR is unmeasured for as long as MRR is",
+     "app/core/metrics.py",
+     '    if not base["measured"]:', "    if False:",
+     "arr_stays_unmeasured"),
+    ("metrics: churn over zero paid subscriptions is not zero percent",
+     "app/core/metrics.py", "    if not at_risk:", "    if False:",
+     "nothing_to_churn"),
+    # --- the self-improvement loop's automatic half ------------------------
+    ("improve: auto-rollback is actually driven by the heartbeat",
+     "app/main.py",
+     "await asyncio.to_thread(improve.check_active)", "pass",
+     "auto_rollback_is_actually_driven"),
     # --- the deployment secret ---------------------------------------------
     ("appsecret: production refuses to boot without a secret",
      "app/core/appsecret.py",
@@ -432,14 +452,24 @@ def run(only: str = "") -> int:
         # in them.
         raw = io.open(path, "rb").read()
         original = raw.decode("utf-8")
-        if anchor not in original:
+        # A multi-line anchor is written with "\n". The comment above says
+        # every backend file is LF, and that was true of THIS working tree and
+        # false in general: `core.autocrlf=true` means a fresh CLONE writes CRLF
+        # for every file. Seven anchors span lines, so on a clean checkout seven
+        # guards printed SKIP, the run still exited 0, and nobody was guarding
+        # anything. Match against the line endings the file actually has.
+        needle, mutant = anchor, replacement
+        if "\r\n" in original:
+            needle = anchor.replace("\r\n", "\n").replace("\n", "\r\n")
+            mutant = replacement.replace("\r\n", "\n").replace("\n", "\r\n")
+        if needle not in original:
             print(f"SKIP     {label}: anchor no longer in {path}")
             skipped.append(label)
             continue
 
         _claim(path)
         io.open(path, "wb").write(
-            original.replace(anchor, replacement, 1).encode("utf-8"))
+            original.replace(needle, mutant, 1).encode("utf-8"))
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", "tests/test_core.py", "-q",
