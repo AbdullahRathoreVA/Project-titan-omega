@@ -348,6 +348,13 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("orgs: an unknown role is refused, not stored", "app/core/orgs.py",
      "if role not in ROLES:", "if False:",
      "unknown_org_role_is_refused"),
+    # --- audit log ---------------------------------------------------------
+    # Redaction happens on the way IN. A secret that reaches the table has
+    # already been persisted, and no read-time filter takes it back off the
+    # disk or out of last night's backup.
+    ("audit: a secret is never written to the table", "app/core/audit.py",
+     "if any(hint in name for hint in _SECRET_HINTS):", "if False:",
+     "never_stores_a_secret"),
     # --- the deployment secret ---------------------------------------------
     ("appsecret: production refuses to boot without a secret",
      "app/core/appsecret.py",

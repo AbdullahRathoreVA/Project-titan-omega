@@ -6514,19 +6514,26 @@ def test_a_landing_page_still_renders_if_the_plan_table_is_unavailable():
 
 
 def _jsx_without_comments(name: str) -> str:
-    """Component source with `{/* ... */}` stripped.
+    """Component source with both comment forms stripped.
 
     Load-bearing, not tidiness: the comments below these guards quote the very
     class names the guards assert on, so a substring check against the raw file
     would pass on the explanation while the code said the opposite. That exact
     mistake already shipped here once — a wiring test passed with the call it
-    was protecting deleted, because the comment above it still named it."""
+    was protecting deleted, because the comment above it still named it.
+
+    Strips `{/* ... */}` AND `/* ... */`. It used to strip only the first, so a
+    TypeScript doc comment explaining a guard tripped that guard: the trial
+    guard below failed on the sentence describing why trial lengths must not be
+    hardcoded. False positives in the wrong direction still teach you to ignore
+    red. `//` is deliberately left alone — it would eat every https:// URL."""
     import pathlib
     import re as _re
     path = (pathlib.Path(__file__).resolve().parents[2]
             / "frontend" / "components" / name)
-    return _re.sub(r"\{/\*.*?\*/\}", "", path.read_text(encoding="utf-8"),
-                   flags=_re.S)
+    text = path.read_text(encoding="utf-8")
+    text = _re.sub(r"\{/\*.*?\*/\}", "", text, flags=_re.S)
+    return _re.sub(r"/\*.*?\*/", "", text, flags=_re.S)
 
 
 def test_a_phone_reaches_the_numbers_before_the_roster():
@@ -7778,6 +7785,172 @@ def test_the_org_walk_attacks_an_organisation_that_actually_exists(org_world):
     assert orgs.get(org_world["victim_org"]["id"]) is not None
     assert orgs.role_of(org_world["victim_org"]["id"],
                         org_world["victim"]["id"]) == orgs.OWNER
+
+
+# ── audit log: who did what to whom ────────────────────────────────────────
+# obs.py is request logging that goes to stdout and dies with the container.
+# events.py is a live feed for somebody watching now. Neither answers "who
+# suspended this organisation, and when" three weeks later.
+
+
+@pytest.fixture
+def audited(monkeypatch, tmp_path):
+    from app import persistence
+    from app.core import db
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "audit.db"))
+    db.connect(persistence.STATE_FILE)
+    from app.core import audit
+    yield audit
+
+
+def test_an_action_is_recorded_with_who_did_it(audited):
+    audited.record("boss@example.com", "org.status", "org", "org_abc",
+                   status="suspended")
+    entry = audited.recent(limit=1)[0]
+    assert entry["actor"] == "boss@example.com"
+    assert entry["action"] == "org.status"
+    assert entry["target_id"] == "org_abc"
+    assert entry["result"] == audited.OK
+    assert entry["meta"]["status"] == "suspended"
+
+
+def test_a_refused_action_is_recorded_too(audited):
+    """Six refused attempts to remove an owner is the signal. Keeping only the
+    successes throws away the half worth looking at."""
+    audited.record("nosy@example.com", "org.member.remove", "org", "org_abc",
+                   audited.REFUSED, reason="This is the only owner.")
+    entry = audited.recent(limit=1)[0]
+    assert entry["result"] == audited.REFUSED
+    assert "only owner" in entry["meta"]["reason"]
+
+
+def test_the_audit_log_never_stores_a_secret(audited):
+    """Redaction happens on the way IN. A value that reaches the table has
+    already been persisted, and filtering at read time leaves it on the disk
+    and in every backup that has run since."""
+    audited.record("boss@example.com", "site.connect", "org", "org_abc",
+                   password="hunter2hunter2",
+                   api_key="sk-live-must-never-land",
+                   nested={"authorization": "Bearer abc123",
+                           "city": "Sialkot"},
+                   role="admin")
+    entry = audited.recent(limit=1)[0]
+
+    assert entry["meta"]["password"] == audited.REDACTED
+    assert entry["meta"]["api_key"] == audited.REDACTED
+    assert entry["meta"]["nested"]["authorization"] == audited.REDACTED
+    # ...and not so eager that it destroys the context the log is FOR.
+    assert entry["meta"]["nested"]["city"] == "Sialkot"
+    assert entry["meta"]["role"] == "admin"
+
+    rows = audited._conn().execute("SELECT meta FROM audit_log").fetchall()
+    blob = " ".join((r["meta"] or "") for r in rows)
+    for secret in ("hunter2hunter2", "sk-live-must-never-land", "Bearer abc123"):
+        assert secret not in blob, f"{secret!r} was written to the audit table"
+
+
+def test_the_audit_log_has_no_way_to_edit_or_delete_an_entry():
+    """Not "there is one and it is guarded" — there is none. A log an
+    administrator can rewrite proves nothing, and the cheapest way to guarantee
+    that is for the code never to exist."""
+    import inspect
+    from app.core import audit
+
+    exposed = {n for n in dir(audit) if not n.startswith("_")}
+    mutating = {n for n in exposed
+                if any(w in n.lower() for w in
+                       ("update", "delete", "edit", "purge", "clear", "wipe"))}
+    assert not mutating, f"audit exposes a mutation path: {sorted(mutating)}"
+
+    src = inspect.getsource(audit)
+    assert "DELETE FROM audit_log" not in src
+    assert "UPDATE audit_log" not in src
+
+
+def test_the_audit_log_says_whether_it_survives_a_rebuild(audited):
+    """A compliance record you wrongly believe is kept is worse than none."""
+    stats = audited.stats()
+    assert stats["entries"] == 0
+    assert "durable" in stats
+
+
+def test_a_failed_audit_write_never_breaks_the_action_it_records(
+        audited, monkeypatch):
+    """Losing one audit row is bad. Refusing to suspend an abusive account
+    because the audit table is unavailable is worse."""
+    def broken():
+        raise RuntimeError("database is gone")
+    monkeypatch.setattr(audited, "_conn", broken)
+    entry = audited.record("boss@example.com", "org.status", "org", "org_abc")
+    assert entry["action"] == "org.status"
+
+
+def test_org_actions_are_actually_audited(org_world, client):
+    """The wiring, not the module. `knowledge.backfill()` was unit-tested,
+    endpoint-exposed and had zero callers — so this asserts the endpoint
+    really writes a row, rather than that the function would if called."""
+    from app.core import audit
+    oid = org_world["victim_org"]["id"]
+
+    r = client.post(f"/api/org/{oid}/members",
+                    headers=_bearer(org_world["victim_token"]),
+                    json={"email": "attacker@example.com", "role": "viewer"})
+    assert r.status_code == 200
+
+    entries = audit.recent(limit=10, target_id=oid)
+    actions = [e["action"] for e in entries]
+    assert "org.member.add" in actions, f"nothing was recorded: {actions}"
+    added = next(e for e in entries if e["action"] == "org.member.add")
+    assert added["actor"] == "victim@example.com"
+    assert added["meta"]["role"] == "viewer"
+
+
+def test_a_plain_member_cannot_read_the_audit_log(org_world, client):
+    """An audit trail names who did what, which is exactly the thing a
+    colleague should not be able to read about the rest of the team."""
+    oid = org_world["victim_org"]["id"]
+    r = client.get(f"/api/org/{oid}/audit",
+                   headers=_bearer(org_world["colleague_token"]))
+    assert r.status_code == 404
+
+    r = client.get(f"/api/org/{oid}/audit",
+                   headers=_bearer(org_world["victim_token"]))
+    assert r.status_code == 200
+    assert "durable" in r.json()["stats"]
+
+
+# ── the pricing page must say what the server actually grants ──────────────
+
+def test_every_plan_publishes_its_trial_length(client):
+    """Trial length is configuration — billing.trial_days(), overridable per
+    plan by environment variable without a deploy. If the API does not publish
+    it, the page has no honest way to display it and somebody will type a
+    number in by hand."""
+    r = client.get("/api/plans")
+    assert r.status_code == 200
+    plans = r.json()["plans"]
+    assert plans
+    for p in plans:
+        assert isinstance(p.get("trial_days"), int), p["key"]
+        assert p["trial_days"] >= 0
+        # A trial with no processor behind it is not a trial, it is free
+        # access that stops. The API says which one it is.
+        assert isinstance(p.get("trial_billable"), bool), p["key"]
+
+
+def test_the_pricing_page_reads_the_trial_length_from_the_server():
+    """"Free for 10 days" typed into the JSX is a promise the server never
+    made. Same rule the prices already follow: a page that disagrees with what
+    the server grants is how somebody is shown one thing and given another."""
+    import re as _re
+    src = _jsx_without_comments("Login.tsx")
+
+    assert "trial_days" in src, (
+        "the pricing cards no longer show a trial length at all")
+    hardcoded = _re.findall(r"[Ff]ree for\s+(\d+)", src)
+    assert not hardcoded, (
+        f"a trial length is written into the pricing page: {hardcoded}. It "
+        "must come from /api/plans, or the copy and the configuration drift.")
 
 
 # ── the deployment secret ──────────────────────────────────────────────────

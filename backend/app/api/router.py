@@ -2523,10 +2523,15 @@ def create_org(req: OrgCreateIn, request: Request,
     verdict = ratelimit.check("org", user["id"])
     if not verdict["allowed"]:
         raise HTTPException(status_code=429, detail=verdict)
+    from ..core import audit
     try:
         org = orgs.create(req.name, user["id"], created_by=user["email"])
     except orgs.OrgError as e:
+        audit.record(user["email"], "org.create", "org", "", audit.REFUSED,
+                     name=req.name, reason=str(e))
         raise HTTPException(status_code=400, detail=str(e))
+    audit.record(user["email"], "org.create", "org", org["id"],
+                 name=org["name"])
     return org
 
 
@@ -2569,10 +2574,17 @@ def org_add_member(org_id: str, req: MemberAddIn,
         # no account is help, not disclosure.
         raise HTTPException(status_code=400,
                             detail="That address has no Titan account yet.")
+    from ..core import audit
     try:
-        return orgs.add_member(org_id, person["id"], req.role)
+        added = orgs.add_member(org_id, person["id"], req.role)
     except orgs.OrgError as e:
+        audit.record(user["email"], "org.member.add", "org", org_id,
+                     audit.REFUSED, member=person["email"], role=req.role,
+                     reason=str(e))
         raise HTTPException(status_code=400, detail=str(e))
+    audit.record(user["email"], "org.member.add", "org", org_id,
+                 member=person["email"], role=req.role)
+    return added
 
 
 @router.patch("/org/{org_id}/members/{user_id}", tags=["orgs"])
@@ -2580,12 +2592,21 @@ def org_set_member_role(org_id: str, user_id: str, req: MemberRoleIn,
                         authorization: Optional[str] = Header(None)) -> dict:
     from ..core import orgs
     user, role = _org_role(org_id, authorization, orgs.ADMIN)
+    from ..core import audit
     try:
         changed = orgs.set_member_role(org_id, user_id, req.role)
     except orgs.OrgError as e:
+        # A refused attempt is recorded too. Six refusals to demote the last
+        # owner is the signal; keeping only successes throws away the half
+        # worth looking at.
+        audit.record(user["email"], "org.member.role", "org", org_id,
+                     audit.REFUSED, member_id=user_id, role=req.role,
+                     reason=str(e))
         raise HTTPException(status_code=409, detail=str(e))
     if not changed:
         raise HTTPException(status_code=404, detail="Not found")
+    audit.record(user["email"], "org.member.role", "org", org_id,
+                 member_id=user_id, role=req.role)
     return {"org_id": org_id, "user_id": user_id, "role": req.role}
 
 
@@ -2594,12 +2615,17 @@ def org_remove_member(org_id: str, user_id: str,
                       authorization: Optional[str] = Header(None)) -> dict:
     from ..core import orgs
     user, role = _org_role(org_id, authorization, orgs.ADMIN)
+    from ..core import audit
     try:
         removed = orgs.remove_member(org_id, user_id)
     except orgs.OrgError as e:
+        audit.record(user["email"], "org.member.remove", "org", org_id,
+                     audit.REFUSED, member_id=user_id, reason=str(e))
         raise HTTPException(status_code=409, detail=str(e))
     if not removed:
         raise HTTPException(status_code=404, detail="Not found")
+    audit.record(user["email"], "org.member.remove", "org", org_id,
+                 member_id=user_id)
     return {"removed": True, "org_id": org_id, "user_id": user_id}
 
 
@@ -2610,9 +2636,31 @@ def org_set_status(org_id: str, req: OrgStatusIn,
     everybody, including its own administrators, so it is not an admin action."""
     from ..core import orgs
     user, role = _org_role(org_id, authorization, orgs.OWNER)
+    from ..core import audit
     try:
         if not orgs.set_status(org_id, req.status):
             raise HTTPException(status_code=404, detail="Not found")
     except orgs.OrgError as e:
+        audit.record(user["email"], "org.status", "org", org_id,
+                     audit.REFUSED, status=req.status, reason=str(e))
         raise HTTPException(status_code=400, detail=str(e))
+    audit.record(user["email"], "org.status", "org", org_id,
+                 status=req.status)
     return orgs.get(org_id)
+
+
+@router.get("/org/{org_id}/audit", tags=["orgs"])
+def org_audit(org_id: str, limit: int = 50,
+              authorization: Optional[str] = Header(None)) -> dict:
+    """What has been done to this organisation, newest first.
+
+    Administrator and above: an audit trail names who did what, and that is
+    exactly the thing a plain member should not be able to read about their
+    colleagues. `stats.durable` says whether any of it survives the next
+    rebuild - on the current free tier it does not, and a compliance record you
+    wrongly believe is kept is worse than none at all.
+    """
+    from ..core import audit, orgs
+    user, role = _org_role(org_id, authorization, orgs.ADMIN)
+    return {"entries": audit.recent(limit=limit, target_id=org_id),
+            "stats": audit.stats()}

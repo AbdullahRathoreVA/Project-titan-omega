@@ -38,7 +38,7 @@ import threading
 import time
 from typing import Any, Optional
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _lock = threading.RLock()
 _conn: Optional[sqlite3.Connection] = None
@@ -193,6 +193,32 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS org_members_user ON org_members (user_id);
         CREATE INDEX IF NOT EXISTS org_members_role ON org_members (org_id, role);
+    """),
+    # Who did what to whom. core/obs.py is request logging that goes to stdout
+    # and is gone on recycle; core/events.py is a live feed for somebody
+    # watching now. Neither answers "who suspended this organisation, and
+    # when" three weeks later, which is the entire point of an audit log.
+    #
+    # There is deliberately no UPDATE or DELETE path in core/audit.py - not a
+    # guarded one, none at all. A log an administrator can edit proves nothing.
+    #
+    # Indexed on ts DESC because every read of this table is "most recent
+    # first", and on target_id/actor because the two questions ever asked of it
+    # are "what happened to this thing" and "what did this person do".
+    (6, """
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id          TEXT PRIMARY KEY,
+            ts          REAL NOT NULL,
+            actor       TEXT NOT NULL,
+            action      TEXT NOT NULL,
+            target_type TEXT,
+            target_id   TEXT,
+            result      TEXT NOT NULL,
+            meta        TEXT
+        );
+        CREATE INDEX IF NOT EXISTS audit_ts ON audit_log (ts DESC);
+        CREATE INDEX IF NOT EXISTS audit_target ON audit_log (target_id, ts DESC);
+        CREATE INDEX IF NOT EXISTS audit_actor ON audit_log (actor, ts DESC);
     """),
 ]
 

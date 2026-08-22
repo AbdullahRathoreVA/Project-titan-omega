@@ -29,6 +29,15 @@ type Plan = {
   price_usd: number;
   limits: { clients: number; audits_per_month: number };
   features: string[];
+  /** How many days this plan's trial runs, straight from the server.
+   *  `billing.trial_days()` owns this and it is overridable per plan by
+   *  environment variable without a deploy, so it is never written here — a
+   *  page that says "free for 10 days" while the server grants 7 is a promise
+   *  nobody made. Same rule as the prices above. */
+  trial_days?: number;
+  /** Whether that trial can actually convert into a subscription. False while
+   *  no payment processor is connected, which is the case today. */
+  trial_billable?: boolean;
 };
 
 export function Login({
@@ -141,6 +150,11 @@ export function Login({
                 <div className="text-[10px] uppercase tracking-widest text-slate-500">
                   {p.name}
                 </div>
+                {(p.trial_days ?? 0) > 0 && (
+                  <div className="mt-1.5 inline-block rounded border border-hud-emerald/40 bg-hud-emerald/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-hud-emerald">
+                    Free for {p.trial_days} {p.trial_days === 1 ? "day" : "days"}
+                  </div>
+                )}
                 <div className="mt-1 font-mono text-2xl font-semibold text-white">
                   ${p.price_usd}
                   <span className="ml-1 text-[11px] font-normal text-slate-500">
