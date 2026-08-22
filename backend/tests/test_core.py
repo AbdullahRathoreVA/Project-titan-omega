@@ -8477,6 +8477,155 @@ def test_an_undurable_deployment_is_reported_as_critical(monkeypatch):
     assert note["action"], "a critical notification with no action is a shrug"
 
 
+# ── create-customer and Customer 360 ───────────────────────────────────────
+
+
+@pytest.fixture
+def executive(monkeypatch, tmp_path, isolated_clients):
+    """A founder's-eye view with its own database.
+
+    `isolated_clients` is a dependency rather than a sibling: it clears the
+    client registry and repoints STATE_FILE, so a test listing both would run
+    it second and wipe what this created.
+    """
+    from app import persistence
+    from app.core import billing, db
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "exec.db"))
+    db.connect(persistence.STATE_FILE)
+    billing.reset()
+    yield
+    billing.reset()
+
+
+def test_creating_a_customer_can_create_their_business_in_one_step(
+        client, executive):
+    """Step 1 and step 2 of the brief's flow in one call. Without a business
+    name it behaves exactly as it always did, which is why every existing
+    caller is untouched."""
+    r = client.post("/api/founder/accounts", json={
+        "email": "pilot@example.com", "plan": "enterprise",
+        "business_name": "Pilot Ltd", "website": "https://pilot.example",
+        "industry": "wholesale", "city": "Sialkot", "country": "Pakistan"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["created"] is True
+    assert body["business"] is not None
+    assert body["business"]["business_name"] == "Pilot Ltd"
+    assert body["business_error"] is None
+
+    # ...and it is actually ATTACHED, not merely created. Asserted through
+    # billing's own ownership list rather than the response body, because a
+    # response can echo anything and the ownership list is what tenancy
+    # actually enforces against.
+    from app.core import billing
+    assert body["business"]["id"] in billing.owned_clients("pilot@example.com")
+
+
+def test_a_customer_created_without_a_business_still_works(client, executive):
+    r = client.post("/api/founder/accounts",
+                    json={"email": "plain@example.com", "plan": "individual"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["created"] is True
+    assert body["business"] is None and body["business_error"] is None
+
+
+def test_a_business_that_fails_to_create_is_reported_not_swallowed(
+        client, executive, monkeypatch):
+    """The account exists by then and the operator has already been shown a
+    password for it, so rolling back would be worse than reporting. But an
+    operator who is not told will assume the business was created."""
+    from app.core import clients as registry
+
+    def broken(*_a, **_k):
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setattr(registry, "create_client", broken)
+    r = client.post("/api/founder/accounts", json={
+        "email": "half@example.com", "plan": "free",
+        "business_name": "Half Ltd"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["created"] is True
+    assert body["business"] is None
+    assert "registry unavailable" in body["business_error"]
+
+
+def test_creating_a_customer_never_writes_the_password_to_the_audit_log(
+        client, executive):
+    """The audit log records that a seat was granted. It must not record the
+    credential that was handed over with it."""
+    from app.core import audit
+
+    secret = "a-password-that-must-not-be-logged"
+    r = client.post("/api/founder/accounts", json={
+        "email": "quiet@example.com", "plan": "free", "password": secret})
+    assert r.status_code == 200
+
+    entries = audit.recent(limit=20)
+    assert any(e["action"] == "customer.create" for e in entries), (
+        "creating a customer was not audited at all")
+    assert secret not in repr(entries), "the password reached the audit log"
+
+    rows = audit._conn().execute("SELECT meta FROM audit_log").fetchall()
+    blob = " ".join((row["meta"] or "") for row in rows)
+    assert secret not in blob, "the password reached the audit TABLE"
+
+
+def test_customer_360_agrees_with_the_customers_list(client, executive):
+    """Composed from the modules that own each part, so this screen and the
+    list cannot disagree about what plan somebody is on."""
+    from app.core import analytics
+
+    client.post("/api/founder/accounts", json={
+        "email": "full@example.com", "plan": "enterprise",
+        "business_name": "Full Ltd", "website": "https://full.example"})
+
+    r = client.get("/api/founder/customers/full@example.com")
+    assert r.status_code == 200
+    body = r.json()
+
+    listed = next(a for a in analytics.accounts_snapshot()["accounts"]
+                  if a["email"] == "full@example.com")
+    assert body["account"]["plan"] == listed["plan"]
+    assert body["account"]["granted"] is True
+    assert body["account"]["paying"] is False, (
+        "a granted seat must never read as paying")
+
+    assert body["businesses"], "the business did not reach the 360 view"
+    assert body["businesses"][0]["connected"] in (True, False, None)
+    assert body["subscription_history"], "no history was recorded"
+    assert body["onboarding"]["score_pct"] is not None
+    assert "revenue" in body["notes"]
+
+
+def test_customer_360_names_the_section_it_could_not_load(
+        client, executive, monkeypatch):
+    """A blank panel and a broken panel look identical, and only one of them
+    means "there is nothing here"."""
+    from app.core import onboarding
+
+    client.post("/api/founder/accounts",
+                json={"email": "partial@example.com", "plan": "free"})
+
+    def broken(*_a, **_k):
+        raise RuntimeError("onboarding unavailable")
+
+    monkeypatch.setattr(onboarding, "for_account", broken)
+    r = client.get("/api/founder/customers/partial@example.com")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["onboarding"] is None
+    assert any(u["section"] == "onboarding" for u in body["unavailable"])
+
+
+def test_customer_360_is_a_404_for_somebody_who_does_not_exist(
+        client, executive):
+    r = client.get("/api/founder/customers/nobody@example.com")
+    assert r.status_code == 404
+
+
 # ── the deployment secret ──────────────────────────────────────────────────
 # TITAN_SECRET had four different fallbacks in four files, all of them in the
 # public git history. With the variable unset, session tokens were signed with

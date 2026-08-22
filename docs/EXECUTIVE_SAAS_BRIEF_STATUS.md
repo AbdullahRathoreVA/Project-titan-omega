@@ -49,6 +49,8 @@ row would need a claim neither verified nor recorded, it says so.
 | 26 | Integration health centre | **[V]** `core/integrations.py`. Aggregates the `status()`/`configured()` functions each subsystem already owns rather than reimplementing them. A check that raises reads `unknown`, never `not_configured`. Every row states its **cost**, so nobody enables a feature and receives a bill. |
 | 38 | Global search | **[V]** `core/search.py`. Organisations, people, businesses, accounts — and **domains matched on host**, so `https://www.x.com/path` and `x.com` find the same business. Every hit says what it matched on. Founder-scoped by design, and the module says why a per-tenant version needs its own function rather than a boolean. |
 | 39 | Notification centre | **[V]** `core/notifications.py`. Conditions checked at read time, so one disappears when it is fixed rather than sitting unread. Critically, it publishes `not_emitted` — *trial ending* and *payment failed* are deliberately absent, each naming the missing data, instead of being faked. |
+| 3/4 | Executive create-customer | **[V]** `/api/founder/accounts` already made the subscriber and granted a plan; it now creates and attaches their **business** in the same call (all fields optional, so existing callers are untouched), re-reads the account so the response is not stale, reports a failed business in its own field rather than swallowing it, and is **audited**. |
+| 15 | Customer 360 | **[V]** `/api/founder/customers/{email}` — account, person, organisations, businesses with real per-site credential status, subscription history, onboarding score and audit trail. Composed from the owning modules, so it cannot disagree with the customers list. A section that fails returns an `unavailable` entry naming the source. |
 | 31 | Self-improvement actually running | **[V]** `improve.check_active()` — the auto-rollback that re-measures every ACTIVE change and reverts regressions — was tested, mutation-guarded, and **called by nothing in production**. Now on the heartbeat. Third instance of this exact defect shape, after `knowledge.backfill()` and `params.apply_stored()`. |
 
 ### Two defects found in passing and fixed
@@ -109,12 +111,10 @@ Honest list. None of this is stubbed or faked anywhere in the product.
 
 | § | Topic | Note |
 |---|---|---|
-| 3–4 | Executive user management + create-customer flow | Organisations now exist underneath it; the Executive-facing screens do not. |
+| 3–4/15 | The Executive **screens** | The APIs are all built (see above). The React surfaces that consume them are not — that is the remaining work, and it is a frontend chunk rather than a missing capability. |
 | 5–8 | Progressive signup, onboarding, website detection, WordPress connect | Detection half exists **[H]**; the guided flow does not. |
 | 13–14 | Trial anti-abuse, Executive trial control | The trial *engine* (§12) already existed and the pricing page now displays it (§43). These two need billing to be real. |
-| 15 | Customer 360 | Organisations exist now; the screen does not. Its Usage and Activity panels need billing on organisations first. |
-| 26 | Integration health centre | |
-| 38–42 | Global search, notifications, transactional email, quick actions, support mode | |
+| 40–42 | Transactional email, quick actions, support mode | Not started. |
 | 3 | Billing migrated onto organisations | Deliberately not done. The subscriber path is the one that takes money; moving it in the same change that introduces the table underneath is how a paying customer loses access. |
 
 ## 5. Built, and honest about what it cannot yet see

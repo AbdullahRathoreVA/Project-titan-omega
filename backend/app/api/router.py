@@ -1585,6 +1585,16 @@ class GrantIn(BaseModel):
     password: str = Field(default="", min_length=0)
     plan: str = Field(default="enterprise")
     note: str = Field(default="")
+    # Step 2 of the brief's create-customer flow. All optional, so every
+    # existing caller is unaffected: without a business_name this endpoint
+    # behaves exactly as it did. With one, the account and the business are
+    # created together instead of the operator having to remember a second
+    # call and an attach.
+    business_name: str = Field(default="")
+    website: str = Field(default="")
+    industry: str = Field(default="")
+    city: str = Field(default="")
+    country: str = Field(default="")
 
 
 @router.post("/founder/accounts", tags=["executive"])
@@ -1629,10 +1639,50 @@ def founder_create_account(req: GrantIn) -> dict:
                                status="active")
     analytics.record(req.email, analytics.CHANGED_PLAN, plan=req.plan,
                      granted=True)
+
+    # Step 2 of the create-customer flow, when a business was supplied.
+    business = None
+    business_error = None
+    if req.business_name.strip():
+        from ..core import clients as _registry
+        import secrets as _s
+        try:
+            business = _registry.create_client(
+                business_name=req.business_name.strip(),
+                username=f"{req.email.split('@')[0][:24]}-{_s.token_hex(3)}",
+                password=_s.token_urlsafe(16),
+                website=req.website.strip(), industry=req.industry.strip(),
+                city=req.city.strip(),
+                country=req.country.strip() or "Pakistan")
+            billing.attach_client(req.email, business["id"])
+        except Exception as exc:                               # noqa: BLE001
+            # The account already exists at this point. Reporting the failure
+            # is honest; rolling the account back would be worse, because the
+            # operator has already been shown a password for it.
+            business_error = str(exc)[:200]
+        else:
+            # `account` was read before the attach, so without this the
+            # response describes the customer as owning nothing a moment after
+            # a business was attached to them.
+            account = billing.public(req.email)
+
+    # Every sensitive executive action leaves a record. The password is NOT
+    # passed here - and core/audit.py would redact it by key name anyway,
+    # which is the belt to this braces.
+    from ..core import audit
+    audit.record("founder", "customer.create", "account", req.email,
+                 plan=req.plan, created=created, granted=True,
+                 business=(business or {}).get("id", ""),
+                 note=req.note[:120])
+
     persistence.save(STORE)
     return {
         "account": account,
         "created": created,
+        "business": business,
+        # Named rather than swallowed: the account exists either way, and an
+        # operator who is not told will assume the business was created.
+        "business_error": business_error,
         # Shown ONCE. It is stored only as a PBKDF2 hash, so nobody — not even
         # Abdullah — can read it back later.
         "password": password if created else None,
@@ -2790,3 +2840,68 @@ def founder_notifications() -> dict:
     """
     from ..core import notifications
     return notifications.current()
+
+
+@router.get("/founder/customers/{email}", tags=["executive"])
+def founder_customer_360(email: str) -> dict:
+    """Everything Titan knows about one customer, in one payload.
+
+    Composed from the modules that already own each part rather than
+    recomputed here, so this screen and the customers list cannot disagree.
+    Anything a section cannot answer is returned as an explicit `unavailable`
+    entry naming the source - a blank panel and a broken panel look identical
+    otherwise, and only one of them means "there is nothing here".
+    """
+    from ..core import (analytics, audit, billing, identity, onboarding,
+                        orgs, site_access)
+
+    snap = analytics.accounts_snapshot()
+    account = next((a for a in snap["accounts"] if a["email"] == email), None)
+    if account is None:
+        raise HTTPException(status_code=404, detail="No such customer")
+
+    unavailable = []
+
+    def _try(name, fn, default):
+        try:
+            return fn()
+        except Exception as exc:                               # noqa: BLE001
+            unavailable.append({"section": name, "error": str(exc)[:160]})
+            return default
+
+    # Businesses, each with whether Titan actually holds a credential for it.
+    businesses = []
+    for biz in account.get("businesses", []):
+        state = _try(f"site_access:{biz['id']}",
+                     lambda b=biz: site_access.status(b["id"]), None)
+        businesses.append({**biz,
+                           "connected": (state or {}).get("connected"),
+                           "connection": state})
+
+    # The person behind the account, if they have a real identity record. Not
+    # every billing account does - that migration is deliberately not done.
+    person = _try("identity", lambda: identity.get(email), None)
+    memberships = (_try("orgs", lambda: orgs.orgs_for(person["id"]), [])
+                   if person else [])
+
+    return {
+        "account": account,
+        "person": person,
+        "organisations": memberships,
+        "businesses": businesses,
+        "subscription_history": _try("subscription_history",
+                                     lambda: billing.history(email), []),
+        "onboarding": _try("onboarding",
+                           lambda: onboarding.for_account(email), None),
+        "activity": _try("audit", lambda: audit.recent(limit=25,
+                                                       target_id=email), []),
+        "unavailable": unavailable,
+        "notes": {
+            "revenue": ("This account's plan price is NOT revenue unless "
+                        "`account.paying` is true. A granted seat shows "
+                        "`granted` and was never charged."),
+            "identity": ("`person` is null when this billing account has no "
+                         "identity record. Billing has not been migrated onto "
+                         "organisations yet, so the two are separate."),
+        },
+    }
