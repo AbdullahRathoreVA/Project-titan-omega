@@ -82,15 +82,23 @@ export function Login({
     e.preventDefault();
     setBusy(true);
     setError("");
-    const ok = await api.login(username.trim(), password);
+    const who = await api.login(username.trim(), password);
     setBusy(false);
-    if (ok) onSuccess();
-    else
+    if (who === "founder") {
+      onSuccess();
+    } else if (who === "account") {
+      // A real customer, at the owner's door. Their session is already stored
+      // under the key /join reads, so this is a redirect and not a second
+      // password prompt. Sending them into the founder dashboard instead
+      // would show them somebody else's business.
+      window.location.href = "/join";
+    } else {
       setError(
         identityMode === "identity"
           ? "Invalid email or password."
           : "Invalid username or password.",
       );
+    }
   }
 
   async function startDemo() {
@@ -234,7 +242,8 @@ export function Login({
             className="panel mx-auto mt-6 w-full max-w-sm p-5"
           >
             <p className="mb-3 text-[11px] text-slate-500">
-              Account holders and the owner sign in here.
+              Account holders and the owner sign in here. Customers are taken
+              to their own workspace.
             </p>
             <label className="hud-label">
               {identityMode === "identity" ? "Email address" : "Username"}

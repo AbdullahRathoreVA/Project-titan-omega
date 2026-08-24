@@ -404,6 +404,13 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      '        api.create_repo(repo_id=repo_id(), repo_type="dataset", private=True,',
      '        api.create_repo(repo_id=repo_id(), repo_type="dataset", private=False,',
      "push_is_recorded_as_proof"),
+    # --- the two sign-in doors ---------------------------------------------
+    # The box advertised both and called one, so a customer created from the
+    # Executive screen was told a correct password was invalid.
+    ("login: the sign-in box tries the subscriber door too",
+     "../frontend/lib/api.ts",
+     'await fetch("/api/account/login", {', 'await fetch("/api/__removed__", {',
+     "tries_both_doors"),
     # --- the deployment secret ---------------------------------------------
     ("appsecret: production refuses to boot without a secret",
      "app/core/appsecret.py",

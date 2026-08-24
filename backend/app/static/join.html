@@ -221,6 +221,29 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  // --- resume an existing session ----------------------------------------
+  // The dashboard sign-in box hands a subscriber here with their token already
+  // stored, and a customer who simply comes back should not retype a password
+  // they just typed. The token is VERIFIED against /api/account rather than
+  // trusted: a stale one must send them to sign in again, not into a
+  // half-loaded workspace.
+  (function resume() {
+    var saved = "";
+    try { saved = sessionStorage.getItem("titan_account") || ""; } catch (e) {}
+    if (!saved) return;
+    fetch("/api/account", { headers: { "X-Account-Token": saved } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (acct) {
+        if (!acct) {
+          try { sessionStorage.removeItem("titan_account"); } catch (e) {}
+          return;
+        }
+        TOKEN = saved;
+        step(2);
+      })
+      .catch(function () { /* offline: the normal sign-in path still works */ });
+  })();
+
   // --- plans: fetched, never hardcoded -----------------------------------
   fetch("/api/plans").then(function (r) { return r.json(); }).then(function (d) {
     var box = $("plans");
@@ -267,16 +290,27 @@
   });
 
   // --- toggle signup / login ---------------------------------------------
-  $("toLogin").addEventListener("click", function (e) {
-    e.preventDefault();
-    MODE = MODE === "signup" ? "login" : "signup";
+  function setMode(next) {
+    MODE = next;
     var isLogin = MODE === "login";
     $("btnSignup").textContent = isLogin ? "Sign in" : "Create account";
     $("toLogin").textContent = isLogin ? "Create one instead" : "Sign in instead";
     show($("plans"), !isLogin);
     $("pw").setAttribute("autocomplete", isLogin ? "current-password" : "new-password");
     clear($("m1"));
+  }
+
+  $("toLogin").addEventListener("click", function (e) {
+    e.preventDefault();
+    setMode(MODE === "signup" ? "login" : "signup");
   });
+
+  // ?mode=login opens this page ready to SIGN IN. A customer the founder
+  // created already has an account, so landing them on "Create account" tells
+  // them their own email is taken.
+  try {
+    if (window.location.search.indexOf("mode=login") >= 0) { setMode("login"); }
+  } catch (e) {}
 
   // --- step 1 -------------------------------------------------------------
   $("btnSignup").addEventListener("click", async function () {

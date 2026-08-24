@@ -117,8 +117,57 @@ def setup_guide(provider: str = "wordpress") -> dict:
             "password is a separate key you can cancel at any time without "
             "changing your login, and it can be revoked the second you want "
             "Titan to stop."),
+        # The step that actually blocks people. "Sign in to your WordPress
+        # admin" assumes they can, and the common real situation is that the
+        # site was built by somebody else and the owner only ever had the
+        # HOSTING login. That is not a dead end: every major host can open
+        # wp-admin without the WordPress password.
+        "if_you_cannot_sign_in_to_wordpress": {
+            "note": (
+                "You do not need the WordPress password. If you can reach the "
+                "hosting account, you can open the WordPress admin from it and "
+                "create the key from there."),
+            "hosts": [
+                {
+                    "host": "Hostinger",
+                    "steps": [
+                        "Sign in at hpanel.hostinger.com.",
+                        "Sidebar -> Websites -> Websites list.",
+                        "Click 'WP Admin' (older accounts call it 'Admin "
+                        "Panel') next to the site.",
+                        "That opens the WordPress admin already signed in - no "
+                        "WordPress password needed.",
+                        "Now follow the steps below from 'Users'.",
+                    ],
+                },
+                {
+                    "host": "cPanel (most shared hosting)",
+                    "steps": [
+                        "Sign in to cPanel.",
+                        "Open 'WordPress Manager by Softaculous' (or "
+                        "'Softaculous Apps Installer' -> WordPress).",
+                        "Find the site and use the 'Log in' / admin shortcut.",
+                        "Now follow the steps below from 'Users'.",
+                    ],
+                },
+                {
+                    "host": "I do not know / somebody else built it",
+                    "steps": [
+                        "Ask whoever holds the hosting account to do the steps "
+                        "below and send you only the generated key.",
+                        "They never have to give you their password, and they "
+                        "can cancel the key at any time.",
+                        "If nobody has the hosting login either, use 'Lost your "
+                        "password?' on yoursite.com/wp-login.php - the reset "
+                        "email goes to the address WordPress has on file.",
+                    ],
+                },
+            ],
+        },
         "steps": [
-            "Sign in to your WordPress admin (usually yoursite.com/wp-admin).",
+            "Sign in to your WordPress admin (usually yoursite.com/wp-admin). "
+            "If you cannot, see 'if_you_cannot_sign_in_to_wordpress' above - "
+            "your hosting account can open it without the WordPress password.",
             "Hover 'Users' in the left menu and click 'Profile'.",
             "Scroll to the bottom, to the 'Application Passwords' section.",
             "In 'New Application Password Name' type: Titan Omega",

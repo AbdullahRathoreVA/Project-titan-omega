@@ -8815,6 +8815,81 @@ def test_the_storage_warning_stops_demanding_a_paid_mount_once_free_works(
         "data is continuously safe")
 
 
+# ── two doors, and the sign-in box has to know about both ──────────────────
+# Reported live: "I created an id from customer but when I tried to login from
+# that it didn't work." The credentials were correct. The door was not theirs:
+# /api/login is the FOUNDER gate (core/auth.py) and a subscriber lives in
+# core/billing.py behind /api/account/login. The box advertised both and
+# implemented one, so it answered "Invalid username or password" to a password
+# that was perfectly valid.
+
+
+def test_a_customer_the_founder_created_is_refused_at_the_founder_door(
+        client, executive):
+    """Not a bug to fix by merging the doors — the founder gate must never
+    accept a subscriber. This pins WHY the box has to try both."""
+    r = client.post("/api/founder/accounts", json={
+        "email": "chachu@example.com", "plan": "enterprise",
+        "business_name": "Zash Mart", "website": "https://zashmart.com"})
+    assert r.status_code == 200
+    password = r.json()["password"]
+    assert password, "no one-time password was issued"
+
+    refused = client.post("/api/login", json={"username": "chachu@example.com",
+                                              "password": password})
+    assert refused.status_code == 401, (
+        "the founder gate accepted a subscriber — that would give a customer "
+        "the owner's dashboard")
+
+
+def test_that_same_customer_is_accepted_at_their_own_door(client, executive):
+    """The other half. If this ever fails, a founder-created customer cannot
+    sign in ANYWHERE and the Executive create-customer flow produces an
+    account nobody can use."""
+    r = client.post("/api/founder/accounts", json={
+        "email": "chachu2@example.com", "plan": "enterprise",
+        "business_name": "Zash Mart Two"})
+    password = r.json()["password"]
+
+    ok = client.post("/api/account/login",
+                     json={"email": "chachu2@example.com",
+                           "password": password})
+    assert ok.status_code == 200, ok.text
+    token = ok.json()["token"]
+
+    me = client.get("/api/account", headers={"X-Account-Token": token})
+    assert me.status_code == 200
+    assert me.json()["plan"] == "enterprise"
+
+
+def test_the_sign_in_box_tries_both_doors():
+    """It said "Account holders and the owner sign in here" and only called
+    the founder one. Reading the client rather than the component because the
+    fallback lives in lib/api.ts."""
+    import io
+    import pathlib
+
+    path = (pathlib.Path(__file__).resolve().parents[2] / "frontend" / "lib"
+            / "api.ts")
+    src = io.open(path, encoding="utf-8").read()
+
+    login = src[src.index("async login("):]
+    login = login[:login.index("logout:")]
+    assert '"/api/login"' in login, "the founder door is no longer tried"
+    assert '"/api/account/login"' in login, (
+        "the subscriber door is no longer tried — a customer created from the "
+        "Executive screen is told their correct password is invalid")
+
+
+def test_a_subscriber_is_sent_to_their_own_workspace_not_the_dashboard():
+    """The founder dashboard shows every customer's business. A subscriber who
+    signs in must land in their own area instead."""
+    src = _jsx_without_comments("Login.tsx")
+    assert '"account"' in src, "the component no longer distinguishes the two"
+    assert "/join" in src, (
+        "a subscriber is no longer routed anywhere after signing in")
+
+
 # ── the deployment secret ──────────────────────────────────────────────────
 # TITAN_SECRET had four different fallbacks in four files, all of them in the
 # public git history. With the variable unset, session tokens were signed with

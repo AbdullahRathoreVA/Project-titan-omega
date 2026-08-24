@@ -178,16 +178,46 @@ export const api = {
       return false;
     }
   },
-  async login(username: string, password: string): Promise<boolean> {
+  /** Sign in, at whichever of the two doors this person actually belongs to.
+   *
+   *  There are two account systems: the FOUNDER (core/auth.py, `/api/login`)
+   *  and SUBSCRIBERS (core/billing.py, `/api/account/login`). The box on the
+   *  login screen said "Account holders and the owner sign in here" and only
+   *  ever called the founder one, so a customer created from the Executive
+   *  screen typed correct credentials and was told "Invalid username or
+   *  password" forever. Their credentials were fine; the door was not theirs.
+   *
+   *  Founder first, because that is the common case on this screen and a
+   *  subscriber's email can never match the environment gate anyway. */
+  async login(username: string, password: string): Promise<"founder" | "account" | null> {
     const res = await fetch("/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
     });
-    if (!res.ok) return false;
-    const data = (await res.json()) as { token: string };
-    setToken(data.token);
-    return true;
+    if (res.ok) {
+      const data = (await res.json()) as { token: string };
+      setToken(data.token);
+      return "founder";
+    }
+
+    // Not the owner. Try the subscriber door before calling it a bad password.
+    const acct = await fetch("/api/account/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: username, password }),
+    });
+    if (!acct.ok) return null;
+    const data = (await acct.json()) as { token: string };
+    // Same key and same storage /join uses, so the handoff is a redirect
+    // rather than a second password prompt. sessionStorage, not localStorage:
+    // that page gets opened on shared machines.
+    try {
+      window.sessionStorage.setItem("titan_account", data.token);
+    } catch {
+      /* private mode; /join simply asks again, which still works */
+    }
+    return "account";
   },
   logout: () => setToken(null),
 
