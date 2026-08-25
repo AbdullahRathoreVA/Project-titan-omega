@@ -18,9 +18,11 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         # HF rejects plain-git binaries (Xet policy), so deploy a single clean
-        # commit with showcase media stripped — the Space never needs docs/media.
+        # commit with showcase media stripped — the Space never needs docs/media
+        # or the promotional films in marketing/ (~40 MB of MP4 and WAV, which
+        # is exactly the kind of payload that trips the same policy).
         run: |
-          rm -rf docs/media
+          rm -rf docs/media marketing
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git checkout --orphan hf-deploy
