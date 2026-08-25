@@ -8890,6 +8890,87 @@ def test_a_subscriber_is_sent_to_their_own_workspace_not_the_dashboard():
         "a subscriber is no longer routed anywhere after signing in")
 
 
+# ── the customer's own dashboard ───────────────────────────────────────────
+# Reported live: "I made an enterprise account but I cannot open it the way it
+# is shown in the demo."
+#
+# He was right, and it was worse than a bug. There are three surfaces: the
+# React dashboard at / is the FOUNDER's, /join is a three-step wizard, and
+# /portal is a real customer dashboard nobody could reach — a subscriber's own
+# business is created with a deliberately unusable portal password. So a paying
+# Enterprise customer had no product surface at all, while the public demo
+# showed prospects the founder's dashboard. The demo was selling something no
+# customer could receive at any price.
+
+
+def test_a_subscriber_can_open_the_dashboard_for_their_own_business(
+        client, executive):
+    """The door that was missing. Without it, onboarding ends at a wizard."""
+    made = client.post("/api/founder/accounts", json={
+        "email": "ent@example.com", "plan": "enterprise",
+        "business_name": "Enterprise Test Ltd",
+        "website": "https://example.com"}).json()
+    cid = made["business"]["id"]
+
+    token = client.post("/api/account/login", json={
+        "email": "ent@example.com",
+        "password": made["password"]}).json()["token"]
+
+    opened = client.post(f"/api/account/clients/{cid}/portal",
+                         headers={"X-Account-Token": token})
+    assert opened.status_code == 200, opened.text
+    portal_token = opened.json()["token"]
+
+    # ...and that session actually serves them their business.
+    me = client.get("/api/client/me",
+                    headers={"X-Client-Token": portal_token})
+    assert me.status_code == 200
+    assert me.json()["business_name"] == "Enterprise Test Ltd"
+
+
+def test_a_subscriber_cannot_open_another_subscribers_business(
+        client, executive):
+    """The whole point of minting a session on their behalf is that ownership
+    is checked FIRST. Get this wrong and one customer opens another's
+    dashboard, complete with their audit findings."""
+    victim = client.post("/api/founder/accounts", json={
+        "email": "victim-p@example.com", "plan": "enterprise",
+        "business_name": "Victim Ltd"}).json()
+    cid = victim["business"]["id"]
+
+    attacker = client.post("/api/founder/accounts", json={
+        "email": "attacker-p@example.com", "plan": "free"}).json()
+    atoken = client.post("/api/account/login", json={
+        "email": "attacker-p@example.com",
+        "password": attacker["password"]}).json()["token"]
+
+    r = client.post(f"/api/account/clients/{cid}/portal",
+                    headers={"X-Account-Token": atoken})
+    assert r.status_code == 404, (
+        "one subscriber opened another's dashboard")
+
+    anon = client.post(f"/api/account/clients/{cid}/portal")
+    assert anon.status_code == 404
+
+
+def test_issue_session_deliberately_performs_no_authorisation(monkeypatch,
+                                                              tmp_path):
+    """It mints a session for any existing business, by design — the caller
+    proves ownership. Written down because it is the kind of function somebody
+    later calls from the wrong place, and the docstring is the only thing
+    standing between that and a hole."""
+    import inspect
+
+    from app.core import clients as registry
+
+    src = inspect.getsource(registry.issue_session)
+    assert "NO authorisation" in src or "no authorisation" in src.lower(), (
+        "the warning that this function checks nothing is gone")
+
+    # It refuses an id that does not exist, which is the ONE thing it does check.
+    assert registry.issue_session("cl_does_not_exist") is None
+
+
 # ── the deployment secret ──────────────────────────────────────────────────
 # TITAN_SECRET had four different fallbacks in four files, all of them in the
 # public git history. With the variable unset, session tokens were signed with

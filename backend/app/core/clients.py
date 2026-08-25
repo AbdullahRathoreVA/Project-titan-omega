@@ -147,6 +147,31 @@ def authenticate(username: str, password: str) -> Optional[str]:
     return None
 
 
+def issue_session(cid: str) -> Optional[str]:
+    """A session for a business whose owner has ALREADY been authenticated.
+
+    A subscriber's own business is deliberately created with a random,
+    unusable portal password — see /api/account/onboard, which says so — on the
+    reasoning that they already authenticate as the account holder. True, and
+    it left them with nowhere to go: /join is a three-step wizard, and the
+    dashboard at / is the founder's. A paying customer had no product surface
+    at all.
+
+    This is the missing door. It mints a portal session directly, and it
+    performs NO authorisation of its own — the caller must have proved
+    ownership first (`_owned` in api/router.py). Kept that way on purpose: a
+    function that both mints sessions and decides who may have one is a
+    function somebody eventually calls from the wrong place.
+    """
+    with _lock:
+        if cid not in _clients:
+            return None
+        token = secrets.token_urlsafe(32)
+        _sessions[token] = cid
+        _log(cid, "auth", f"{_clients[cid]['business_name']} opened by its owner")
+        return token
+
+
 def resolve(token: str) -> Optional[str]:
     """Token -> client_id. Fails closed: unknown token resolves to nothing."""
     if not token:

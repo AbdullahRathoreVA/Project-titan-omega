@@ -186,6 +186,7 @@
     <p class="hint" id="r-site"></p>
     <div id="r-body"></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:20px">
+      <button class="go" id="r-portal" style="flex:1 1 200px">Open your dashboard</button>
       <a class="go" id="r-pdf" style="text-decoration:none;text-align:center;flex:1 1 200px" href="#">Download the PDF report</a>
       <button class="ghost" id="r-another">Add another business</button>
     </div>
@@ -201,6 +202,9 @@
 (function () {
   "use strict";
   var TOKEN = "";
+  // The business this session is looking at. Needed to open the customer
+  // dashboard, which is scoped to one business rather than to the account.
+  var CID = "";
   var MODE = "signup";
   var plan = "free";
 
@@ -240,6 +244,19 @@
         }
         TOKEN = saved;
         step(2);
+        // A returning customer already has businesses. Pick the first so
+        // "Open your dashboard" works without making them onboard again.
+        fetch("/api/account/clients", { headers: { "X-Account-Token": TOKEN } })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) {
+            var list = (d && d.clients) || [];
+            if (list.length) {
+              CID = list[0].id;
+              render({ client: list[0], audit: (list[0] || {}).last_audit || null });
+              step(3);
+            }
+          })
+          .catch(function () { /* they can still add a business by hand */ });
       })
       .catch(function () { /* offline: the normal sign-in path still works */ });
   })();
@@ -386,6 +403,7 @@
         return;
       }
       if (!r.ok) throw new Error(body.detail || "Could not add the business.");
+      CID = (body.client && body.client.id) || "";
       render(body);
       step(3);
     } catch (err) {
@@ -460,6 +478,28 @@
       }
     }
   }
+
+  // The customer's actual product. Without this the wizard was the whole
+  // experience: onboard, read one audit, and have nowhere to go afterwards.
+  $("r-portal").addEventListener("click", async function () {
+    var btn = $("r-portal");
+    if (!CID) { say($("m3"), "Add a business first."); return; }
+    btn.disabled = true;
+    btn.textContent = "Opening…";
+    try {
+      var r = await fetch("/api/account/clients/" + encodeURIComponent(CID) + "/portal", {
+        method: "POST", headers: { "X-Account-Token": TOKEN }
+      });
+      if (!r.ok) throw new Error("Could not open your dashboard.");
+      var d = await r.json();
+      sessionStorage.setItem("client_token", d.token);
+      window.location.href = "/portal";
+    } catch (err) {
+      say($("m3"), String(err.message || err));
+      btn.disabled = false;
+      btn.textContent = "Open your dashboard";
+    }
+  });
 
   $("r-another").addEventListener("click", function () {
     ["bname", "site", "insta", "city", "country"].forEach(function (id) { $(id).value = ""; });

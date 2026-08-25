@@ -1394,6 +1394,39 @@ def rollback_fix(cid: str, fix_id: str,
     return out
 
 
+@router.post("/account/clients/{cid}/portal", tags=["billing"])
+def open_client_portal(cid: str,
+                       x_account_token: Optional[str] = Header(None)) -> dict:
+    """Open the dashboard for a business this subscriber owns.
+
+    The gap this closes: a paying customer had nowhere to go. /join is a
+    three-step wizard and the dashboard at / is the FOUNDER's - the public demo
+    shows that one, so a prospect was being shown a product no customer could
+    reach at any price.
+
+    /portal is a real customer dashboard and it already existed; the only thing
+    missing was a way in, because a subscriber's own business is created with a
+    deliberately unusable portal password.
+
+    Ownership is checked FIRST and by the same gate every other client route
+    uses, so a token for one subscriber can never open another's business.
+    """
+    from ..core import audit, clients as registry
+    _owned(cid, x_account_token)
+
+    token = registry.issue_session(cid)
+    if not token:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    from ..core import billing
+    audit.record(billing.resolve(x_account_token or "") or "unknown",
+                 "portal.open", "client", cid)
+    return {"token": token, "portal_url": "/portal",
+            "note": ("Store this as `client_token` in sessionStorage and open "
+                     "/portal. It is a session, not a password, and it ends "
+                     "when the tab does.")}
+
+
 @router.get("/account/clients", tags=["billing"])
 def account_clients(x_account_token: Optional[str] = Header(None)) -> dict:
     """The businesses THIS subscriber owns. Never anyone else's."""
