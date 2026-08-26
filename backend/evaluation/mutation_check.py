@@ -453,6 +453,19 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "if False:",
      "product_demo_is_rate_limited"),
     # --- portal sessions expire -------------------------------------------
+    # --- the social playbook says what it was measured for ----------------
+    ("social: an uncovered industry gets no weekly plan", "app/api/router.py",
+     'rec.get("city", ""), lang) if cover["covered"] else [],',
+     'rec.get("city", ""), lang),',
+     "wholesaler_is_not_handed_a_restaurant_week"),
+    ("social: coverage is not everything", "app/engines/brand_playbook.py",
+     "return key if key in COVERED_INDUSTRIES else \"\"",
+     "return key",
+     "measured_for"),
+    ("social: the portal asks the server", "app/static/client.html",
+     "const social = await api('/client/social');",
+     "const social = {};",
+     "portal_asks_the_server_instead_of_hardcoding"),
     # --- durable storage is checkable from outside the Space --------------
     ("doctor: intent is not proof", "app/api/actions.py",
      'durable["state_backup_proven"] = bool((st.get("last_push") or {}).get("ok"))',

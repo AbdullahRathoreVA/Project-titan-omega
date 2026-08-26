@@ -146,14 +146,16 @@ not a permission change, and **Abdullah asked to be consulted before it starts.*
 Two things found while doing this and deliberately left alone, both worth a
 decision rather than a silent fix:
 
-* **The portal's Social tab is hardcoded restaurant advice.** "Hero dish, close
-  and clean", "Die Karte / Weinkarte", shown to every business regardless of
-  industry — while `GET /api/client/social` exists, is registered, is served,
-  and **is called by nothing**. That is the same defect shape again. The
-  server-side playbook is *also* hospitality-shaped, so wiring the endpoint up
-  would replace generic restaurant advice with slightly better restaurant
-  advice. The real question is whether the social playbook should claim to
-  cover non-hospitality businesses at all.
+* ~~The portal's Social tab is hardcoded restaurant advice.~~ **Fixed
+  immediately afterwards**, because the demo put it on the front door.
+  `brand_playbook.coverage(industry)` now says whether the weekly plan applies
+  and, when it does not, why — naming the industry and naming what the playbook
+  *was* measured for. The weekly plan, highlight names and pillars are
+  withheld; cadence, the forbidden list and the benchmarks are not, because
+  those were measured across all seven luxury profiles rather than derived for
+  food. `GET /api/client/social` turned out to be the **eighth** zero-caller in
+  this codebase: it existed, was registered, was served, and the page hardcoded
+  its own copy of the answer instead.
 * `/api/client/seo` runs a **live crawl on every call**, so each demo visit
   costs one request to Titan's own site. Bounded by the `demo` bucket now
   (30/hour per caller), and worth watching if the demo ever gets traffic.

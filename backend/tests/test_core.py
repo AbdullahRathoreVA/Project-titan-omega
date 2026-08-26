@@ -9909,3 +9909,122 @@ def test_a_broken_durability_check_reads_unknown_not_unconfigured(
     body = client.get("/api/doctor").json()
     assert "state_backup_error" in body, (
         "a failing durability check was silently reported as not configured")
+
+
+# ── the social playbook says what it was measured for ──────────────────────
+# The portal showed every business the same week: "Hero dish, close and clean",
+# "The kitchen at work", highlights named "Weinkarte". The playbook is real
+# research — seven luxury profiles read directly off Instagram — and it was
+# researched FOR HOSPITALITY. Its own comment says "Restaurant-specific
+# pillars". Handing it to a wholesaler as though it were tailored is the same
+# offence as showing a number nobody measured.
+#
+# Now visible on the front door: the public demo opens the portal on a software
+# business.
+
+
+def test_the_playbook_admits_which_industries_it_was_measured_for():
+    from app.engines import brand_playbook as bp
+
+    assert bp.covers("restaurant") and bp.covers("Cafe")
+    for outside in ("wholesale", "software", "legal", "manufacturer", ""):
+        assert not bp.covers(outside), (
+            f"the playbook claims to cover {outside!r}, and nothing in it was "
+            "measured for that")
+
+
+def test_an_uncovered_industry_gets_a_reason_not_a_blank():
+    """A blank panel and a broken panel look identical."""
+    from app.engines import brand_playbook as bp
+
+    cov = bp.coverage("wholesale")
+    assert cov["covered"] is False
+    assert cov["reason"] and "wholesale" in cov["reason"]
+    assert "hospitality" in cov["reason"].lower()
+    assert cov["measured_for"], "it does not say what it DOES cover"
+
+
+def test_a_wholesaler_is_not_handed_a_restaurant_week(client,
+                                                      isolated_clients):
+    from app.core import clients as registry
+
+    rec = registry.create_client(
+        business_name="Sialkot Trading Co", username="wholesale-social",
+        password="a-real-password", website="https://wholesale.example",
+        industry="wholesale", country="Pakistan")
+    token = registry.authenticate("wholesale-social", "a-real-password")
+
+    body = client.get("/api/client/social",
+                      headers={"X-Client-Token": token}).json()
+    assert body["coverage"]["covered"] is False
+    assert body["week"] == [], "a wholesaler was given a restaurant week"
+    assert body["highlights"] == []
+    blob = json.dumps(body).lower()
+    assert "hero dish" not in blob and "weinkarte" not in blob
+    assert rec["id"]
+
+    # The generic halves are still there: following count and discount-led
+    # posting were measured across all seven profiles, not derived for food.
+    assert body["benchmarks"] and body["cadence"] and body["avoid"]
+
+
+def test_a_restaurant_still_gets_the_full_plan(client, isolated_clients):
+    """A coverage check that covers nothing is not a feature."""
+    from app.core import clients as registry
+
+    registry.create_client(
+        business_name="Trattoria Test", username="resto-social",
+        password="a-real-password", website="https://resto.example",
+        industry="restaurant", country="Italy")
+    token = registry.authenticate("resto-social", "a-real-password")
+
+    body = client.get("/api/client/social",
+                      headers={"X-Client-Token": token}).json()
+    assert body["coverage"]["covered"] is True
+    assert len(body["week"]) >= 3
+    assert body["highlights"], "a restaurant lost its highlight names"
+
+
+def test_the_portal_asks_the_server_instead_of_hardcoding_a_week():
+    """GET /api/client/social existed, was registered, was served, and was
+    called by nothing — the page hardcoded its own restaurant week instead.
+    Eighth instance of the shape this repository keeps finding."""
+    import pathlib
+    import re as _re
+
+    page = (pathlib.Path(__file__).resolve().parents[1]
+            / "app" / "static" / "client.html").read_text(encoding="utf-8")
+    # Comments quote the very strings this asserts on.
+    code = _re.sub(r"/\*.*?\*/", "", page, flags=_re.S)
+
+    assert "/client/social" in code, (
+        "the portal no longer calls the endpoint that knows what the playbook "
+        "was measured for")
+    assert "Hero dish" not in code, (
+        "the hardcoded restaurant week is back in the portal")
+    assert "Weinkarte" not in code, (
+        "hardcoded German restaurant highlights are back in the portal")
+
+
+def test_the_pdf_does_not_promise_a_plan_it_withheld(isolated_clients):
+    """The report prints a 'Social media plan' heading. For a business the
+    playbook was not measured for it must print the reason under it, not a page
+    of restaurant positioning theory."""
+    from app.api.router import _social_pack
+    from app.engines import client_report
+
+    rec = {"business_name": "Sialkot Trading Co", "industry": "wholesale",
+           "city": "Sialkot", "country": "Pakistan",
+           "website": "https://wholesale.example"}
+    pack = _social_pack(rec)
+    assert pack["coverage"]["covered"] is False
+
+    pdf = client_report.build(
+        {"business_name": "Sialkot Trading Co", "website": rec["website"]},
+        {"ok": True, "score": 50, "grade": "D", "passed": [], "failed": [],
+         "schema_types": [], "findings": [],
+         "counts": {"legal_critical": 0, "critical": 0, "high": 0,
+                    "medium": 0, "low": 0},
+         "legal": {"country": "PK", "findings": [], "legal_critical": 0}},
+        social=pack)
+    assert isinstance(pdf, (bytes, bytearray)) and len(pdf) > 800

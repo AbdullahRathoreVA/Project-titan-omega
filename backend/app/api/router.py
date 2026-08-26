@@ -2439,16 +2439,30 @@ def client_seo_schema(x_client_token: Optional[str] = Header(None)) -> dict:
 # ---- client report + social plan -------------------------------------------
 
 def _social_pack(rec: dict) -> dict:
-    """Localised social plan for a client, from the measured brand playbook."""
+    """Localised social plan for a client, from the measured brand playbook.
+
+    The weekly plan and the highlight names are HOSPITALITY research — the
+    dish, the kitchen, the room — and they are withheld from a business the
+    playbook was not measured for, with the reason attached. Handing a
+    wholesaler "Hero dish, close and clean" is advice with no evidence dressed
+    as advice with evidence.
+
+    The cadence, the forbidden list and the benchmarks are NOT withheld:
+    following count, post-to-follower ratio and discount-led posting were
+    measured across all seven profiles and apply to any brand.
+    """
     lang = {"Germany": "de", "Austria": "de", "Switzerland": "de",
             "Italy": "it", "France": "fr"}.get(rec.get("country", ""), "en")
+    industry = rec.get("industry", "")
+    cover = brand_playbook.coverage(industry)
     return {
+        "coverage": cover,
         "week": brand_playbook.weekly_plan(
-            rec.get("business_name", ""), rec.get("industry", "Restaurant"),
-            rec.get("city", ""), lang),
-        "highlights": brand_playbook.highlights_plan(
-            rec.get("industry", ""), lang),
-        "pillars": brand_playbook.PILLARS,
+            rec.get("business_name", ""), industry or "Restaurant",
+            rec.get("city", ""), lang) if cover["covered"] else [],
+        "highlights": (brand_playbook.highlights_plan(industry, lang)
+                       if cover["covered"] else []),
+        "pillars": brand_playbook.PILLARS if cover["covered"] else [],
         "cadence": brand_playbook.CADENCE,
         "avoid": brand_playbook.FORBIDDEN,
         "benchmarks": brand_playbook.BENCHMARKS,

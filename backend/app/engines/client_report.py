@@ -244,6 +244,17 @@ def build(client: dict, seo: dict, *, social: Optional[dict] = None,
             ]))
 
     # ---------------------------------------------------------- social -----
+    # A pack whose coverage says "not measured for this industry" carries no
+    # week and no pillars. Printing the section anyway would put a page of
+    # restaurant positioning theory into a wholesaler's report under a heading
+    # that promises a plan.
+    if social and not (social.get("coverage") or {}).get("covered", True):
+        F.append(PageBreak())
+        F.append(Paragraph("Social media plan", st["h2"]))
+        F.append(Paragraph(
+            _esc(str((social.get("coverage") or {}).get("reason", ""))),
+            st["mut"]))
+        social = None
     if social:
         F.append(PageBreak())
         F.append(Paragraph("Social media plan", st["h2"]))

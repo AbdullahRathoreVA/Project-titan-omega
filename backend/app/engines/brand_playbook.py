@@ -215,6 +215,75 @@ def audit_profile(posts: int, followers: int, following: int) -> dict:
     }
 
 
+# Which industries this playbook was actually researched for.
+#
+# The research above is real and specific: seven luxury profiles read directly
+# off Instagram, translated into pillars for a HOSPITALITY business. The
+# pillars are the dish, the chef, the room, the guest and the season. There is
+# nothing measured here about a wholesaler, a law firm or a software company,
+# and handing one of them "Hero dish, close and clean" is advice with no
+# evidence behind it dressed as advice with evidence behind it.
+#
+# Keys match core verticals. The generic halves — CADENCE, FORBIDDEN,
+# BENCHMARKS and audit_profile() — are NOT gated: following count, post-to-
+# follower ratio and discount-led posting apply to any brand on Instagram, and
+# those are measured across the seven profiles rather than derived for food.
+COVERED_INDUSTRIES = ("restaurant", "cafe", "bar", "bakery", "hotel")
+
+# What people actually type into a free-text industry box, mapped onto the
+# keys above. Deliberately short: a guess that maps a business into coverage it
+# does not have is worse than one that leaves it out, because being left out
+# is visible and being wrongly included is not.
+_ALIASES = {
+    "restaurants": "restaurant", "dining": "restaurant", "bistro": "restaurant",
+    "pizzeria": "restaurant", "food": "restaurant", "catering": "restaurant",
+    "coffee": "cafe", "coffee shop": "cafe", "café": "cafe", "cafeteria": "cafe",
+    "pub": "bar", "wine bar": "bar", "cocktail bar": "bar",
+    "patisserie": "bakery", "bakehouse": "bakery",
+    "hospitality": "hotel", "guesthouse": "hotel", "b&b": "hotel",
+}
+
+
+def normalise_industry(industry: str) -> str:
+    """A free-text industry reduced to a covered key, or "" if it is not one."""
+    key = (industry or "").strip().lower()
+    if not key:
+        return ""
+    key = _ALIASES.get(key, key)
+    return key if key in COVERED_INDUSTRIES else ""
+
+
+def covers(industry: str) -> bool:
+    """Was this playbook measured for this kind of business?"""
+    return bool(normalise_industry(industry))
+
+
+def coverage(industry: str) -> dict:
+    """Whether the weekly plan applies here, and if not, why not.
+
+    Returns the reason rather than a bare False so the screen showing it can
+    say something true and specific instead of going blank. A blank panel and a
+    broken panel look identical.
+    """
+    key = normalise_industry(industry)
+    if key:
+        return {"covered": True, "matched": key, "industry": industry,
+                "reason": None}
+    return {
+        "covered": False,
+        "matched": None,
+        "industry": industry or "",
+        "measured_for": list(COVERED_INDUSTRIES),
+        "reason": (
+            "Titan's social playbook was measured from seven luxury brand "
+            "profiles and translated for hospitality — the dish, the kitchen, "
+            "the room. Nothing in it was measured for "
+            f"{industry or 'this kind of business'}, so no weekly plan is "
+            "shown rather than restaurant advice with your name on it. The "
+            "profile benchmarks below apply to any brand and are shown."),
+    }
+
+
 def weekly_plan(name: str, cuisine: str, city: str,
                 language: str = "en") -> list[dict]:
     """A concrete week, weighted by the pillar shares."""

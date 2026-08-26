@@ -381,26 +381,37 @@ async function boot() {
          <div class="d">${new Date(a.ts * 1000).toLocaleString()}</div></div>`).join('')
     : '<div class="muted">Nothing logged yet.</div>';
 
-  // social plan — derived from measured luxury-brand behaviour
-  const lang = ({Germany:'de', Austria:'de', Italy:'it',
-                 France:'fr'})[me.country] || 'en';
-  const week = [
-    ['Monday','Photo','Season & scarcity','What just came into season.'],
-    ['Tuesday','Reel','The craft','Hero dish, close and clean. Under 12 words.'],
-    ['Thursday','Reel','The people','The kitchen at work. Name the person.'],
-    ['Saturday','Photo','Guests & proof','Repost a guest photo, credited.'],
-  ];
-  $('#week').innerHTML = week.map(r =>
-    `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td>
-     <td class="muted">${r[3]}</td></tr>`).join('');
-  const hl = {de:['Die Karte','Mittagstisch','Weinkarte','Das Team','Der Raum','Reservierung'],
-              it:['Il Menù','La Carta dei Vini','La Cucina','La Sala','Stagione','Prenota'],
-              fr:['La Carte','Les Vins','La Cuisine','La Salle','Saison','Réserver'],
-              en:['The Menu','The Wine','The Kitchen','The Room','In Season','Book']}[lang];
-  $('#highlights').innerHTML = hl.map(h => `<span class="pill">${esc(h)}</span>`).join('')
-    + '<div class="muted" style="margin-top:10px">Named after what you serve, '
-    + 'in your own language — the way Dior and Louis Vuitton name theirs. '
-    + 'Never “Menu” or “About us”.</div>';
+  /* Social plan, from GET /api/client/social.
+     This block used to hardcode a restaurant week in JavaScript — "Hero dish,
+     close and clean", highlights named "Weinkarte" — and showed it to every
+     business regardless of industry, while the endpoint that computes the real
+     localised plan existed, was registered, was served, and was called by
+     NOTHING. Eighth time something in this codebase shipped tested and
+     uninvoked.
+     The endpoint knows what the playbook was measured for. This page does not
+     get to guess. */
+  const social = await api('/client/social');
+  const cover = social.coverage || {covered: true};
+
+  if (!cover.covered) {
+    /* Say what is missing and why. A blank panel and a broken panel look
+       identical, and restaurant advice with a wholesaler's name on it is
+       worse than either. */
+    $('#week').innerHTML =
+      `<tr><td colspan="4" class="muted">${esc(cover.reason || '')}</td></tr>`;
+    $('#highlights').innerHTML =
+      `<div class="muted">${esc(cover.reason || '')}</div>`;
+  } else {
+    $('#week').innerHTML = (social.week || []).map(w =>
+      `<tr><td>${esc(w.day)}</td><td>${esc(w.format)}</td>
+       <td>${esc(w.pillar)}</td>
+       <td class="muted">${esc(w.brief)}</td></tr>`).join('');
+    $('#highlights').innerHTML =
+      (social.highlights || []).map(h => `<span class="pill">${esc(h)}</span>`).join('')
+      + '<div class="muted" style="margin-top:10px">Named after what you serve, '
+      + 'in your own language — the way Dior and Louis Vuitton name theirs. '
+      + 'Never \u201cMenu\u201d or \u201cAbout us\u201d.</div>';
+  }
 
   // seo + legal
   const seo = await api('/client/seo');
