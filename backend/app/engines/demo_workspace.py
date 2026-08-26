@@ -143,6 +143,64 @@ def cycle(force: bool = False) -> dict | None:
     return snapshot
 
 
+# The business the PUBLIC demo opens. Named here rather than chosen in the
+# route: whoever picks it is choosing what a stranger is shown, and that
+# decision belongs beside the data it is choosing from.
+#
+# The compliance guide is the one, because it is the only demo site that
+# exercises the legal half of the audit — the finding a prospect cannot get
+# anywhere else, and the reason Titan exists. example.com is deliberately NOT
+# used: it scores badly on purpose, as the low contrast for the operator
+# screens, and opening a demo on an F would misrepresent the product in the
+# other direction.
+SHOWCASE_WEBSITE = f"{SITE}/compliance/de"
+
+
+def _demo_rows() -> list[dict]:
+    """Every business carrying the demo flag, and nothing else.
+
+    The single line deciding what an anonymous visitor may be shown. Kept as
+    its own function so the mutation guard on it has an anchor that matches in
+    exactly one place.
+    """
+    return [c for c in clients.all_clients() if is_demo_client(c)]
+
+
+def showcase() -> dict | None:
+    """The demo business a stranger may open, or None.
+
+    Returns None rather than falling back to a real client. There is no
+    "closest match" here: the whole safety property of the public demo is that
+    it can only ever reach a business Titan owns, so an empty demo workspace
+    must produce a refusal, never a substitution.
+    """
+    if not enabled():
+        return None
+    rows = _demo_rows()
+    if not rows:
+        # Seed on demand. ensure() was reachable only from cycle(), which runs
+        # on the heartbeat, so on a fresh boot the public demo answered 503
+        # until the first tick — and this Space rebuilds often. ensure() is
+        # idempotent and creates three fixed records without crawling
+        # anything, so calling it here costs nothing when they already exist.
+        try:
+            ensure()
+        except Exception:
+            # Seeding failed. Fall through to the refusal below rather than
+            # letting the exception decide what a visitor sees.
+            pass
+        rows = _demo_rows()
+    if not rows:
+        return None
+    for rec in rows:
+        if rec.get("website") == SHOWCASE_WEBSITE:
+            return rec
+    # The named one is absent (someone deleted it, or SITE changed). Any demo
+    # business is still safe to show; a real one never is. Sorted so every
+    # visitor sees the same thing rather than whichever the dict yielded first.
+    return sorted(rows, key=lambda r: str(r.get("business_name", "")))[0]
+
+
 def status() -> dict:
     with _lock:
         last = dict(_last)

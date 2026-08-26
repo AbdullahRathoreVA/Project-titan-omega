@@ -499,8 +499,33 @@ def doctor() -> dict:
         except Exception as exc:
             telegram_api = f"error: {type(exc).__name__}: {str(exc)[:80]}"
 
+    # Durable storage, the one row worth checking from outside the Space.
+    # Every other surface reporting it needs the founder token, so the only
+    # way to learn that HF_TOKEN had not taken effect was to lose the accounts
+    # and notice afterwards.
+    #
+    # `state_backup_configured` is INTENT — a token is set. `state_backup_proven`
+    # is PROOF — a verified snapshot actually reached the Hub in this process.
+    # They are reported separately because they answer different questions, and
+    # collapsing them is how "somebody meant to" becomes "the data is safe".
+    # Booleans and a repo id only; no token, no path, no manifest.
+    durable = {"state_backup_configured": False, "state_backup_proven": False,
+               "state_repo": None, "state_is_ephemeral": None}
+    try:
+        from ..core import remote_state
+        st = remote_state.status()
+        durable["state_backup_configured"] = bool(st.get("configured"))
+        durable["state_backup_proven"] = bool((st.get("last_push") or {}).get("ok"))
+        durable["state_repo"] = st.get("repo")
+        durable["state_is_ephemeral"] = st.get("local_is_ephemeral")
+    except Exception as exc:
+        # A check that cannot run is unknown, never "not configured". "Go set
+        # the token" and "we are broken" are different actions.
+        durable["state_backup_error"] = f"{type(exc).__name__}: {str(exc)[:80]}"
+
     return {
         "telegram_api": telegram_api,
+        **durable,
         "llm_providers": llm.providers_configured(),
         "groq_key": has("GROQ_API_KEY"),
         "gemini_key": has("GEMINI_API_KEY"),

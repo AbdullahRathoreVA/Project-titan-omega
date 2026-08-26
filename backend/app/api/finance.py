@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import persistence
@@ -211,14 +211,24 @@ class LeadDiscover(BaseModel):
 
 
 @router.post("/leads/discover", tags=["crm"])
-def discover_leads(req: LeadDiscover) -> dict:
+def discover_leads(req: LeadDiscover, request: Request) -> dict:
     """Find real businesses, file them as leads, and prepare the approach.
 
     The whole pipeline in one call: search → drop directories and duplicates →
     create CRM records → audit the first few sites → draft outreach citing what
     was actually found. Nothing is sent to anyone.
     """
+    from ..core import ratelimit
     from ..engines import outreach, prospecting
+
+    # LIMITS declared a "discover" bucket, with "lead discovery burns Tavily
+    # quota" written next to it, and nothing ever called it. Founder-only, so
+    # the exposure was a compromised token rather than the open internet — but
+    # an unmetered call that spends a third party's quota is unmetered either
+    # way. Keyed on the caller.
+    verdict = ratelimit.check("discover", ratelimit.identity_for(request))
+    if not verdict["allowed"]:
+        raise HTTPException(status_code=429, detail=verdict)
 
     # Never re-file a business already in the pipeline.
     known = set()

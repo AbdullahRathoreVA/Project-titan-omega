@@ -428,6 +428,45 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      '["customers", "Customers", true],',
      '["customers", "Customers", false],',
      "customers_screen_is_reachable"),
+    # --- the public demo opens the CUSTOMER product -----------------------
+    # This endpoint takes no credential and is reachable by anyone. The only
+    # thing between a stranger and a paying customer's audit findings is that
+    # the server picks the business and only ever picks a demo one.
+    ("demo: the showcase can only be a demo business",
+     "app/engines/demo_workspace.py",
+     "return [c for c in clients.all_clients() if is_demo_client(c)]",
+     "return list(clients.all_clients())",
+     "selects_on_the_demo_flag_not_on_the_url"),
+    ("demo: an empty demo workspace refuses",
+     "app/engines/demo_workspace.py",
+     "rows = _demo_rows()\n    if not rows:\n        return None",
+     "rows = _demo_rows()\n    if not rows:\n        pass",
+     "refuses_rather_than_substituting"),
+    ("demo: the route re-checks the flag itself",
+     "app/api/router.py",
+     "if not demo_workspace.is_demo_client(business):",
+     "if False:",
+     "refuses_a_business_that_is_not_marked_as_a_demo"),
+    ("demo: the public demo is rate limited",
+     "app/api/router.py",
+     'if not portal_limit["allowed"]:',
+     "if False:",
+     "product_demo_is_rate_limited"),
+    # --- portal sessions expire -------------------------------------------
+    # --- durable storage is checkable from outside the Space --------------
+    ("doctor: intent is not proof", "app/api/actions.py",
+     'durable["state_backup_proven"] = bool((st.get("last_push") or {}).get("ok"))',
+     'durable["state_backup_proven"] = bool(st.get("configured"))',
+     "separates_intending_to_back_up_from_having_backed_up"),
+    ("doctor: a broken check reads unknown", "app/api/actions.py",
+     'durable["state_backup_error"] = f"{type(exc).__name__}: {str(exc)[:80]}"',
+     "pass", "reads_unknown_not_unconfigured"),
+    ("clients: SESSION_TTL is enforced", "app/core/clients.py",
+     "if time.time() - issued > SESSION_TTL:",
+     "if False:", "portal_session_expires"),
+    ("clients: an expired session is dropped", "app/core/clients.py",
+     "_sessions.pop(token, None)\n            return None",
+     "return None", "forgotten_not_merely_refused"),
 ]
 
 

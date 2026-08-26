@@ -79,17 +79,97 @@ def session(request: Request) -> dict:
 
 
 @router.post("/demo/enter", tags=["auth"])
-def enter_demo() -> dict:
-    """Start a public, read-only demo session — no login required.
+def enter_demo(request: Request) -> dict:
+    """Start a read-only tour of the OPERATOR console — no login required.
+
+    This is not the customer product. It is Abdullah's own sixteen-tab cockpit
+    with every private figure replaced by demo-safe sample content, and it is
+    labelled as such on the way in. A prospect who wants to see what they would
+    actually receive wants /api/demo/portal below.
 
     Returns a guest token that unlocks GET-only access. Every endpoint holding
     real business data is served demo-safe sample content instead, and any
     write is refused, so a visitor can explore the whole system without ever
     seeing the founder's private data or changing anything.
     """
+    from ..core import ratelimit
+    # LIMITS has carried a "demo" bucket, with the words "demo sessions are
+    # cheap but not free" written beside it, since the day it was added — and
+    # nothing ever called it. Sixth time a thing in this repository was
+    # defined, reasoned about, and never invoked.
+    verdict = ratelimit.check("demo", ratelimit.identity_for(request))
+    if not verdict["allowed"]:
+        raise HTTPException(status_code=429, detail=verdict)
     if not auth.guest_enabled():
         raise HTTPException(status_code=404, detail="Demo mode is disabled")
     return {"token": auth.make_guest_token(), "guest": True}
+
+
+@router.post("/demo/portal", tags=["auth"])
+def enter_customer_demo(request: Request) -> dict:
+    """Open the CUSTOMER product — the thing a paying customer actually gets.
+
+    The public demo used to hand a prospect the founder's cockpit. They then
+    paid, and received /portal: a different, narrower product. Reported live:
+    "I made an enterprise account but I cannot open it the way it is shown in
+    the demo." That mismatch is a refund waiting to happen, and it is a lie
+    told by a company whose product is checking whether other people's
+    websites tell the truth.
+
+    Nothing here is sample data. The business is one of the demo businesses
+    seeded by engines/demo_workspace.py, whose sites are Titan's OWN pages and
+    whose audits genuinely run every six hours. The score a visitor sees is the
+    score that page really has.
+
+    THE BUSINESS IS CHOSEN BY THE SERVER. The caller cannot name one, because a
+    caller who can name a business is a caller who can name somebody else's —
+    and this endpoint is reachable by anyone on the internet with no token at
+    all. demo_workspace.showcase() only ever returns a business carrying
+    is_demo, and returns None rather than substituting a real one.
+    """
+    from ..core import ratelimit
+    from ..engines import demo_workspace
+
+    # Named differently from the one in enter_demo above on purpose: both call
+    # the same bucket, and a mutation guard needs an anchor that matches in
+    # exactly one place. An ambiguous anchor disarms the first match and leaves
+    # the other call site untested, which is what `if role not in ROLES:` was
+    # quietly doing in identity.py.
+    portal_limit = ratelimit.check("demo", ratelimit.identity_for(request))
+    if not portal_limit["allowed"]:
+        raise HTTPException(status_code=429, detail=portal_limit)
+    if not auth.guest_enabled():
+        raise HTTPException(status_code=404, detail="Demo mode is disabled")
+
+    business = demo_workspace.showcase()
+    if not business:
+        # No fallback to a real client. Ever. An empty demo workspace is a
+        # refusal, not an opportunity to show somebody a stranger's audit.
+        raise HTTPException(
+            status_code=503,
+            detail=("The demonstration workspace is not available. It is "
+                    "seeded on boot and disabled by TITAN_DEMO_WORKSPACE=0."))
+
+    # Belt and braces. showcase() already filters on is_demo; this refuses to
+    # mint the session if that ever stops being true, rather than trusting a
+    # function two modules away to have stayed correct.
+    if not demo_workspace.is_demo_client(business):
+        raise HTTPException(status_code=503,
+                            detail="Demonstration business is not marked as one.")
+
+    token = clients.issue_session(business["id"])
+    if not token:
+        raise HTTPException(status_code=503,
+                            detail="Demonstration business could not be opened.")
+    return {
+        "token": token,
+        "portal_url": "/portal",
+        "demo": True,
+        "business_name": business.get("business_name", ""),
+        "website": business.get("website", ""),
+        "note": ("A real business record audited on Titan's own pages. Read-"
+                 "only: every endpoint this session can reach is a GET."),
+    }
 
 
 @router.post("/login", tags=["auth"])

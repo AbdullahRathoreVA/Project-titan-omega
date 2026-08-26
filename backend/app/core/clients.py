@@ -34,8 +34,12 @@ _lock = threading.RLock()
 
 # client_id -> record
 _clients: dict[str, dict] = {}
-# token -> client_id
-_sessions: dict[str, str] = {}
+# token -> (client_id, issued_at). The timestamp is the whole point: SESSION_TTL
+# below was declared with a reason attached and never once compared against
+# anything, so a portal token stayed valid for the entire life of the process.
+# On a free Space that rebuilds every few hours the defect was invisible; on any
+# container that stays up, every token ever handed out was still a live key.
+_sessions: dict[str, tuple[str, float]] = {}
 
 TRIAL_DAYS_DEFAULT = 60          # the "2 months free" the client asked for
 SESSION_TTL = 7 * 24 * 3600      # a week; they are business owners, not attackers
@@ -49,6 +53,15 @@ def _secret() -> str:
     # public keys. One door now: core/appsecret.py.
     from . import appsecret
     return appsecret.value()
+
+
+def _mint(cid: str) -> str:
+    """The only place a portal token is created. Both callers used to write
+    into _sessions directly, which is exactly how one of them would later be
+    added without an expiry."""
+    token = secrets.token_urlsafe(32)
+    _sessions[token] = (cid, time.time())
+    return token
 
 
 def _hash_password(password: str, salt: str) -> str:
@@ -139,8 +152,7 @@ def authenticate(username: str, password: str) -> Optional[str]:
             candidate = _hash_password(password, c["_salt"])
             if not hmac.compare_digest(candidate, c["_pwhash"]):
                 return None
-            token = secrets.token_urlsafe(32)
-            _sessions[token] = cid
+            token = _mint(cid)
             c["last_login"] = time.time()
             _log(cid, "auth", f"{c['business_name']} signed in")
             return token
@@ -166,17 +178,29 @@ def issue_session(cid: str) -> Optional[str]:
     with _lock:
         if cid not in _clients:
             return None
-        token = secrets.token_urlsafe(32)
-        _sessions[token] = cid
+        token = _mint(cid)
         _log(cid, "auth", f"{_clients[cid]['business_name']} opened by its owner")
         return token
 
 
 def resolve(token: str) -> Optional[str]:
-    """Token -> client_id. Fails closed: unknown token resolves to nothing."""
+    """Token -> client_id. Fails closed: unknown OR EXPIRED resolves to nothing.
+
+    SESSION_TTL used to be a constant with a comment and no comparison. An
+    expired token is dropped here rather than merely refused, so the dict does
+    not grow forever on a deployment that mints sessions for the public.
+    """
     if not token:
         return None
-    return _sessions.get(token)
+    with _lock:
+        entry = _sessions.get(token)
+        if not entry:
+            return None
+        cid, issued = entry
+        if time.time() - issued > SESSION_TTL:
+            _sessions.pop(token, None)
+            return None
+        return cid
 
 
 def revoke(token: str) -> None:
@@ -228,7 +252,7 @@ def set_password(cid: str, password: str) -> bool:
         c["_salt"] = secrets.token_hex(16)
         c["_pwhash"] = _hash_password(password, c["_salt"])
         # Any existing session for this client is now invalid.
-        for tok, owner in list(_sessions.items()):
+        for tok, (owner, _issued) in list(_sessions.items()):
             if owner == cid:
                 _sessions.pop(tok, None)
         return True
@@ -250,7 +274,7 @@ def delete_client(cid: str) -> bool:
         if cid not in _clients:
             return False
         _clients.pop(cid)
-        for tok, owner in list(_sessions.items()):
+        for tok, (owner, _issued) in list(_sessions.items()):
             if owner == cid:
                 _sessions.pop(tok, None)
         return True

@@ -324,6 +324,11 @@ _OPEN_PATHS = {
     "/api/login",
     "/api/auth",
     "/api/demo/enter",
+    # Opens the CUSTOMER product for a stranger, with no token. Public on
+    # purpose: it is the demo. It can only ever reach a business Titan owns —
+    # see demo_workspace.showcase(), which returns None rather than falling
+    # back to a real client.
+    "/api/demo/portal",
     "/api/session",
     "/health",
     "/api/voice-report",

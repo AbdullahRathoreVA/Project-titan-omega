@@ -5,6 +5,14 @@ Everything above it is the state that prompt refers to.
 
 Rewritten 2026-08-09. Supersedes the 2026-08-06 version.
 
+> **THIS COPY IS STALE. It stops at session 10 (2026-08-15).**
+> The current handoff lives OUTSIDE the repository at
+> `D:\projects\CONTINUE_HERE.md` and runs through session 13.
+> It is kept out of git deliberately — it records decisions, such as the
+> phone number Abdullah agreed to publish, that are reversible on a
+> website and permanent in a public git history.
+> Two sessions of findings are missing here. Do not plan from this file.
+
 ---
 
 ## 1. Machine — read this first

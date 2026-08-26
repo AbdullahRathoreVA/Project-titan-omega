@@ -9480,3 +9480,432 @@ def test_the_engine_does_not_claim_it_can_change_its_own_source():
 
     assert "cannot modify its own source" in params.status()["note"]
     assert "never activates its own proposals" in improve.report()["note"]
+
+
+# ── the public demo shows the CUSTOMER product ─────────────────────────────
+# Raised by Abdullah: "The demo sells a product no customer can receive." The
+# public demo handed a prospect the founder's sixteen-tab cockpit with sample
+# figures; a paying customer received /portal, a different and narrower
+# product. Nobody was lied to about a number — the numbers were all labelled
+# sample — but the SHAPE of the product was misrepresented, which is the same
+# offence one level up, from a company whose product checks whether other
+# people's websites tell the truth.
+
+
+@pytest.fixture
+def demo_business(isolated_clients):
+    """One demonstration business and one REAL client, so every test below can
+    tell the difference. Depends on isolated_clients rather than sitting beside
+    it in the signature: listed as siblings it runs second and wipes what the
+    first one just made."""
+    from app.core import clients as registry
+
+    real = registry.create_client(
+        business_name="A Real Paying Customer Ltd",
+        username="real-customer", password="a-real-password",
+        website="https://real-customer.example", industry="wholesale")
+
+    demo = registry.create_client(
+        business_name="[DEMO] Titan Omega — compliance guide",
+        username="demo-fixture", password="unused-random",
+        website="https://titanomega-ai.com/compliance/de",
+        industry="software", city="Berlin", country="Germany")
+    registry.update_raw(demo["id"], is_demo=True)
+    return {"demo_id": demo["id"], "real_id": real["id"]}
+
+
+def test_the_public_demo_opens_the_customer_product(client, demo_business):
+    """The fix. A stranger with no token gets a portal session, and it serves
+    them the customer dashboard."""
+    r = client.post("/api/demo/portal")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["demo"] is True
+    token = body["token"]
+
+    me = client.get("/api/client/me", headers={"X-Client-Token": token})
+    assert me.status_code == 200, me.text
+    assert me.json()["id"] == demo_business["demo_id"], (
+        "the public demo opened a business that is not the demo business")
+
+
+def test_the_public_demo_can_never_open_a_real_customers_business(
+        client, demo_business):
+    """The whole safety property. This endpoint is reachable by anyone on the
+    internet with no credential at all, so the ONLY thing standing between a
+    stranger and a paying customer's audit findings is that the server picks
+    the business and only ever picks a demo one.
+
+    Repeated, because 'it happened to pick the right one once' is not the
+    claim being made."""
+    for _ in range(6):
+        r = client.post("/api/demo/portal")
+        assert r.status_code == 200, r.text
+        cid = client.get("/api/client/me",
+                         headers={"X-Client-Token": r.json()["token"]}
+                         ).json()["id"]
+        assert cid != demo_business["real_id"], (
+            "the public demo handed a stranger a real customer's dashboard")
+
+
+def test_the_caller_cannot_choose_which_business_the_demo_opens(client,
+                                                               demo_business):
+    """A caller who can name a business is a caller who can name somebody
+    else's. Every attempt to steer it must be ignored, not honoured."""
+    for attempt in ({"cid": demo_business["real_id"]},
+                    {"client_id": demo_business["real_id"]},
+                    {"business": "A Real Paying Customer Ltd"}):
+        r = client.post("/api/demo/portal", json=attempt)
+        assert r.status_code == 200, r.text
+        cid = client.get("/api/client/me",
+                         headers={"X-Client-Token": r.json()["token"]}
+                         ).json()["id"]
+        assert cid == demo_business["demo_id"], (
+            f"the caller steered the demo with {attempt}")
+
+
+def test_an_empty_demo_workspace_refuses_rather_than_substituting(
+        client, isolated_clients, monkeypatch):
+    """No demo business exists and seeding one fails, but a real one is there.
+    The endpoint must refuse.
+
+    Falling back to 'the closest thing we have' is how a stranger ends up
+    reading a paying customer's findings, and it is exactly the shape of
+    mistake a helpful default makes.
+
+    ensure() is stubbed out because showcase() now seeds on demand — without
+    that stub this test would describe a state the code no longer reaches, and
+    would pass while guarding nothing."""
+    from app.core import clients as registry
+    from app.engines import demo_workspace
+
+    registry.create_client(
+        business_name="Only Real Customer Ltd", username="only-real",
+        password="a-real-password", website="https://only-real.example")
+    monkeypatch.setattr(demo_workspace, "ensure",
+                        lambda: {"enabled": True, "created": 0, "existing": 0})
+
+    r = client.post("/api/demo/portal")
+    assert r.status_code == 503, (
+        "an empty demo workspace served a real customer's business")
+    assert "demonstration" in r.json()["detail"].lower()
+
+
+def test_the_demo_works_on_a_fresh_boot_without_waiting_for_the_heartbeat(
+        client, isolated_clients):
+    """Found by running it, not by reading it.
+
+    ensure() was reachable only from cycle(), which runs on the heartbeat, so
+    on a fresh container the front door's primary call to action answered 503
+    until the first tick. This Space rebuilds often. Nothing here is seeded by
+    the test."""
+    r = client.post("/api/demo/portal")
+    assert r.status_code == 200, (
+        "the public demo is broken until the heartbeat ticks: " + r.text)
+
+    me = client.get("/api/client/me",
+                    headers={"X-Client-Token": r.json()["token"]}).json()
+    assert me.get("is_demo") is True
+
+
+def test_the_customer_portal_has_no_write_surface_at_all(client):
+    """Why a public portal session is safe: there is nothing to write.
+
+    Walks the REAL route table. Fails OPEN — add a POST under /api/client/ and
+    this test fails, which is the point, because /api/demo/portal hands that
+    prefix to anonymous visitors. /client/login is exempt: it takes a
+    credential and creates nothing."""
+    offenders = []
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        methods = getattr(route, "methods", set()) or set()
+        if not path.startswith("/api/client/"):
+            continue
+        if path == "/api/client/login":
+            continue
+        writes = methods - {"GET", "HEAD", "OPTIONS"}
+        if writes:
+            offenders.append(f"{sorted(writes)} {path}")
+    assert not offenders, (
+        "the customer portal now has write endpoints, and anonymous demo "
+        "visitors hold portal sessions: " + ", ".join(sorted(offenders)))
+
+
+def test_the_portal_says_out_loud_when_it_is_the_demo(client, demo_business):
+    """A demo that does not admit it is a demo is the original problem wearing
+    a different hat. The banner is driven by the server's own is_demo flag, so
+    a visitor cannot remove it from the URL."""
+    import pathlib
+
+    r = client.post("/api/demo/portal")
+    me = client.get("/api/client/me",
+                    headers={"X-Client-Token": r.json()["token"]}).json()
+    assert me.get("is_demo") is True, (
+        "the record the portal renders no longer carries the flag the banner "
+        "depends on")
+
+    page = (pathlib.Path(__file__).resolve().parents[2]
+            / "backend" / "app" / "static" / "client.html").read_text(
+                encoding="utf-8")
+    assert "me.is_demo" in page, "the portal no longer checks the demo flag"
+    assert "demobar" in page, "the demonstration banner is gone"
+
+
+def test_the_front_door_offers_the_customer_product_first():
+    """The component-level half. The primary demo button must call the
+    customer-product endpoint; the cockpit tour must not be presented as the
+    product."""
+    src = _jsx_without_comments("Login.tsx")
+    assert "/api/demo/portal" in src, (
+        "the front door no longer offers the customer product")
+    assert "client_token" in src, (
+        "the product demo no longer stores a portal session, so /portal will "
+        "show a login box instead of the product")
+    assert "operator console" in src.lower(), (
+        "the cockpit tour is no longer labelled as the operator console, so "
+        "it reads as the product again")
+
+
+# ── portal sessions expire ─────────────────────────────────────────────────
+# SESSION_TTL was declared with a reason written beside it ("a week; they are
+# business owners, not attackers") and never compared against anything. Every
+# portal token stayed valid for the life of the process. Found while exposing
+# session minting to the public, where an immortal token is also an unbounded
+# dict.
+
+
+def test_a_portal_session_expires(isolated_clients, monkeypatch):
+    from app.core import clients as registry
+
+    rec = registry.create_client(
+        business_name="Expiry Test Ltd", username="expiry-test",
+        password="a-real-password", website="https://expiry.example")
+    token = registry.authenticate("expiry-test", "a-real-password")
+    assert token and registry.resolve(token) == rec["id"]
+
+    # One second past the declared lifetime.
+    real_time = registry.time.time
+    monkeypatch.setattr(registry.time, "time",
+                        lambda: real_time() + registry.SESSION_TTL + 1)
+    assert registry.resolve(token) is None, (
+        "SESSION_TTL is declared and still not enforced")
+
+
+def test_an_expired_session_is_forgotten_not_merely_refused(isolated_clients,
+                                                            monkeypatch):
+    """Refusing an expired token while keeping it costs memory forever, and
+    this deployment now mints sessions for anonymous visitors."""
+    from app.core import clients as registry
+
+    registry.create_client(
+        business_name="Forget Test Ltd", username="forget-test",
+        password="a-real-password", website="https://forget.example")
+    token = registry.authenticate("forget-test", "a-real-password")
+    assert token in registry._sessions
+
+    real_time = registry.time.time
+    monkeypatch.setattr(registry.time, "time",
+                        lambda: real_time() + registry.SESSION_TTL + 1)
+    registry.resolve(token)
+    assert token not in registry._sessions, (
+        "expired sessions accumulate in memory")
+
+
+def test_a_live_portal_session_still_resolves(isolated_clients):
+    """The other direction. An expiry that expires everything is not a
+    feature."""
+    from app.core import clients as registry
+
+    rec = registry.create_client(
+        business_name="Live Test Ltd", username="live-test",
+        password="a-real-password", website="https://live.example")
+    token = registry.authenticate("live-test", "a-real-password")
+    assert registry.resolve(token) == rec["id"]
+
+
+# ── rate-limit buckets that were declared and never called ─────────────────
+# Two of the six buckets in ratelimit.LIMITS had zero callers. Both carried a
+# comment explaining the cost they existed to bound. Seventh and eighth
+# instances of the defect shape this repository keeps finding.
+
+
+def test_every_declared_rate_limit_bucket_has_a_caller():
+    """Fails OPEN: add a bucket to LIMITS and this test demands a caller.
+
+    A bucket with no caller is not a limit, and it reads in the source exactly
+    like a limit that is working."""
+    import pathlib
+    import re as _re
+
+    from app.core import ratelimit
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    called = set()
+    for path in root.rglob("*.py"):
+        for m in _re.finditer(r"""ratelimit\.check\(\s*["'](\w+)["']""",
+                              path.read_text(encoding="utf-8")):
+            called.add(m.group(1))
+
+    missing = sorted(set(ratelimit.LIMITS) - called)
+    assert not missing, (
+        "these rate-limit buckets are declared and never enforced, which "
+        "looks identical in the source to a limit that works: " +
+        ", ".join(missing))
+
+
+def test_the_public_product_demo_is_rate_limited(client, demo_business,
+                                                 monkeypatch):
+    """It is anonymous, it mints a session, and each visit drives a live crawl
+    of Titan's own site. Unmetered, that is a free amplifier pointed at us."""
+    from app.core import ratelimit
+
+    monkeypatch.setattr(ratelimit, "ENABLED", True)
+    ratelimit.reset()
+    limit = ratelimit.LIMITS["demo"][0]
+
+    codes = [client.post("/api/demo/portal").status_code
+             for _ in range(limit + 2)]
+    ratelimit.reset()
+    assert 429 in codes, "the public product demo has no rate limit"
+
+
+# ── the showcase selects on the FLAG, never on the URL ─────────────────────
+# Written after two mutation guards SURVIVED. showcase() has two selection
+# paths — an exact match on the named showcase URL, then a sorted fallback —
+# and the first test only ever exercised the first path, which the demo record
+# won on its URL regardless of whether the is_demo filter was there at all.
+# A test that passes for the wrong reason is worse than no test: it is a red
+# light wired to a green bulb.
+
+
+def test_the_showcase_selects_on_the_demo_flag_not_on_the_url(
+        isolated_clients):
+    """Attacks BOTH paths through showcase().
+
+    Path 1: a real business sitting on the showcase URL itself. Nothing stops a
+    customer entering any URL they like, ours included.
+
+    Path 2: the named showcase URL is absent entirely, so selection falls
+    through to the sorted fallback — where a real business whose name sorts
+    first would win. '[' sorts after every capital letter, so any ordinarily
+    named company beats '[DEMO] ...'.
+    """
+    from app.core import clients as registry
+    from app.engines import demo_workspace
+
+    # --- path 1: a real business on the showcase URL, created FIRST ---------
+    impostor = registry.create_client(
+        business_name="Impostor Ltd", username="impostor",
+        password="a-real-password",
+        website=demo_workspace.SHOWCASE_WEBSITE)
+    demo = registry.create_client(
+        business_name="[DEMO] compliance guide", username="demo-compliance",
+        password="unused-random",
+        website=demo_workspace.SHOWCASE_WEBSITE)
+    registry.update_raw(demo["id"], is_demo=True)
+
+    picked = demo_workspace.showcase()
+    assert picked and picked["id"] == demo["id"], (
+        "showcase() chose on the URL, so a real business parked on our own "
+        "address is handed to anonymous visitors")
+
+    # --- path 2: nothing on the showcase URL at all ------------------------
+    registry.delete_client(impostor["id"])
+    registry.delete_client(demo["id"])
+
+    real = registry.create_client(
+        business_name="AAA Real Customer Ltd", username="aaa-real",
+        password="a-real-password", website="https://aaa-real.example")
+    other_demo = registry.create_client(
+        business_name="[DEMO] wholesale", username="demo-wholesale",
+        password="unused-random",
+        website="https://titanomega-ai.com/seo/wholesale")
+    registry.update_raw(other_demo["id"], is_demo=True)
+
+    picked = demo_workspace.showcase()
+    assert picked and picked["id"] == other_demo["id"], (
+        "with no business on the showcase URL, the fallback chose a REAL "
+        f"customer ({real['business_name']}) because it sorts first")
+
+
+def test_the_route_refuses_a_business_that_is_not_marked_as_a_demo(
+        client, isolated_clients, monkeypatch):
+    """The second line of defence, tested on its own.
+
+    showcase() filters already. The route checks AGAIN rather than trusting a
+    function two modules away to have stayed correct, and this is the only test
+    that can tell whether that second check is real: it forces showcase() to
+    return a business that is not a demo and requires the route to refuse.
+    """
+    from app.core import clients as registry
+    from app.engines import demo_workspace
+
+    real = registry.create_client(
+        business_name="Real Only Ltd", username="real-only",
+        password="a-real-password", website="https://real-only.example")
+
+    monkeypatch.setattr(demo_workspace, "showcase",
+                        lambda: registry.public(real["id"]))
+
+    r = client.post("/api/demo/portal")
+    assert r.status_code == 503, (
+        "the route minted a public session for a business that is not marked "
+        "as a demonstration one")
+    assert "token" not in r.json(), "a session was handed out anyway"
+
+
+# ── durable storage is checkable from outside the Space ────────────────────
+# HF_TOKEN turns on free durable storage; without it every account is wiped on
+# the next rebuild. Every surface that reported it needed the founder token, so
+# the only way to discover the secret had not taken effect was to lose the
+# accounts. /api/doctor already publishes which integrations the running
+# container can see, as booleans. This was the most important row missing.
+
+
+def test_doctor_reports_whether_state_survives_a_rebuild(client):
+    r = client.get("/api/doctor")
+    assert r.status_code == 200
+    body = r.json()
+    for key in ("state_backup_configured", "state_backup_proven"):
+        assert key in body, f"/api/doctor no longer reports {key}"
+        assert isinstance(body[key], bool)
+
+
+def test_doctor_separates_intending_to_back_up_from_having_backed_up(
+        client, monkeypatch):
+    """A token being set says somebody meant to. It says nothing about whether
+    a byte reached the Hub. Collapsing the two is how 'somebody meant to'
+    becomes 'the data is safe'."""
+    from app.core import remote_state
+
+    monkeypatch.setattr(remote_state, "status",
+                        lambda **kw: {"configured": True, "last_push": None,
+                                      "repo": "someone/titan-state",
+                                      "local_is_ephemeral": True})
+    body = client.get("/api/doctor").json()
+    assert body["state_backup_configured"] is True
+    assert body["state_backup_proven"] is False, (
+        "a configured token was reported as a completed backup")
+
+
+def test_doctor_never_exposes_the_token_itself(client, monkeypatch):
+    """It reports booleans and a repo id. A diagnostic endpoint that is public
+    must not become a way to read a secret."""
+    monkeypatch.setenv("HF_TOKEN", "hf_ThisIsNotARealTokenJustATestString")
+    raw = client.get("/api/doctor").text
+    assert "hf_ThisIsNotARealTokenJustATestString" not in raw
+
+
+def test_a_broken_durability_check_reads_unknown_not_unconfigured(
+        client, monkeypatch):
+    """'Go set the token' and 'we are broken' are different actions, and a
+    check that cannot run must not be reported as the first one."""
+    from app.core import remote_state
+
+    def explode(**kw):
+        raise RuntimeError("hub unreachable")
+
+    monkeypatch.setattr(remote_state, "status", explode)
+    body = client.get("/api/doctor").json()
+    assert "state_backup_error" in body, (
+        "a failing durability check was silently reported as not configured")

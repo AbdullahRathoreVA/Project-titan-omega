@@ -118,6 +118,12 @@ td{padding:11px 10px 11px 0;border-top:1px solid var(--edge)}
 pre{background:#0b0f18;border:1px solid var(--edge);border-radius:10px;
   padding:16px;overflow-x:auto;font-size:.8rem;color:#b9c7da}
 .muted{color:var(--mut);font-size:.85rem}
+.demobar{border:1px solid rgba(201,162,39,.45);background:rgba(201,162,39,.09);
+  border-radius:12px;padding:14px 18px;margin-bottom:18px;font-size:.88rem;
+  line-height:1.6}
+.demobar b{color:var(--gold);letter-spacing:1.4px;font-size:.72rem;
+  text-transform:uppercase;display:block;margin-bottom:6px}
+.demobar a{font-weight:600}
 .pill{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.72rem;
   background:#1a2030;color:var(--mut);margin:2px 4px 2px 0}
 @media(max-width:640px){.hero{grid-template-columns:1fr;text-align:center}
@@ -138,6 +144,13 @@ pre{background:#0b0f18;border:1px solid var(--edge);border-radius:10px;
 </div>
 
 <div class="wrap" id="app" style="display:none">
+  <!-- Shown only when the server says this record carries is_demo. A visitor
+       cannot turn it off by editing the URL, because nothing about it comes
+       from the URL. -->
+  <div class="demobar" id="demobar" style="display:none">
+    <b>Demonstration</b>
+    <span id="demotext"></span>
+  </div>
   <header>
     <div class="biz">
       <img class="logo" id="logo" alt="">
@@ -330,12 +343,36 @@ async function boot() {
   $('#app').style.display = 'block';
 
   const me = await api('/client/me');
+
+  /* The honesty rule applies hardest here. This is the screen a prospect
+     decides on, so it says exactly what it is: a real business record whose
+     website is one of Titan's own pages, audited on the same schedule as a
+     paying customer's. The score below is that page's real score. Nothing on
+     this screen is invented, and the banner says which parts are ours. */
+  if (me.is_demo) {
+    $('#demobar').style.display = 'block';
+    $('#demotext').innerHTML =
+      'This is the customer product, running on a demonstration business. '
+      + 'The website being audited is <b style="display:inline;font-size:inherit;'
+      + 'text-transform:none;letter-spacing:0">one of Titan\'s own pages</b>, '
+      + 'so the score, the findings and the legal check below are a real audit '
+      + '— not sample numbers. Your own dashboard is this screen with your site '
+      + 'in place of ours. <a href="/join">Start free</a> · '
+      + '<a href="/pricing">See pricing</a>';
+  }
+
   $('#bname').textContent = me.business_name || '—';
   $('#bsub').textContent =
     [me.industry, me.city, me.country].filter(Boolean).join(' · ');
   if (me.logo_url) $('#logo').src = me.logo_url;
-  $('#tdays').textContent = me.trial_days_left;
-  if (me.trial_days_left <= 14) $('#trial').classList.add('warn');
+  if (me.is_demo) {
+    /* A demo business has a trial clock nobody is on. Showing "0 days left"
+       to a prospect is a number about nothing. */
+    $('#trial').style.display = 'none';
+  } else {
+    $('#tdays').textContent = me.trial_days_left;
+    if (me.trial_days_left <= 14) $('#trial').classList.add('warn');
+  }
 
   // activity
   $('#activity').innerHTML = (me.activity || []).length

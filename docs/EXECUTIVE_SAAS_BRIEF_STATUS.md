@@ -116,7 +116,8 @@ Honest list. None of this is stubbed or faked anywhere in the product.
 | 3–4/15 | The create-customer **wizard** and the Customer 360 **screen** | Their APIs are built and the operator surface (metrics, notifications, integrations, search) now has a screen. What is missing is the multi-step creation form and a per-customer detail page — both are forms over endpoints that already work. |
 | 5–8 | Progressive signup, onboarding, website detection, WordPress connect | Detection half exists **[H]**; the guided flow does not. |
 | 13–14 | Trial anti-abuse, Executive trial control | The trial *engine* (§12) already existed and the pricing page now displays it (§43). These two need billing to be real. |
-| 40–42 | Transactional email, quick actions, support mode | Not started. |
+| 40–42 | Transactional email, quick actions, support mode | Not started. §40 needs an email provider, which is a credential and therefore blocked; building a queue that cannot send would be a feature that reads as working. |
+| 139–140 | The demo must BE the customer product | **Done 2026-08-26.** `POST /api/demo/portal` opens the customer dashboard on a demonstration business, verified live at 89/B on a real audit of one of Titan's own pages. See [`THE_DEMO_AND_THE_PRODUCT.md`](THE_DEMO_AND_THE_PRODUCT.md). |
 | 3 | Billing migrated onto organisations | Deliberately not done. The subscriber path is the one that takes money; moving it in the same change that introduces the table underneath is how a paying customer loses access. |
 
 ## 5. Built, and honest about what it cannot yet see
@@ -146,8 +147,11 @@ real number — and `0.0` then genuinely means nobody paid.
 
 ## What to do next, in order
 
-1. Set `TITAN_FOUNDER_EMAIL` (+ a `TITAN_PASSWORD` of 12+ characters) on the
-   Space. That completes the cutover and retires the environment gate.
+1. ~~Set `TITAN_FOUNDER_EMAIL` (+ a `TITAN_PASSWORD` of 12+ characters).~~
+   **DONE — measured 2026-08-26.** `GET /api/auth` reports `mode:"identity"`,
+   `founder_account_exists:true` and `environment_gate_reachable:false`, so the
+   seed succeeded (which also proves the password is long enough — a shorter
+   one makes it refuse silently) and the plaintext gate has retired itself.
 2. ~~Organisations~~ and ~~tenant-isolation tests that attack~~ — **both done
    2026-08-20.** Next on that thread: migrate billing onto organisations, then
    provision a customer through the generic flow with no customer-specific
