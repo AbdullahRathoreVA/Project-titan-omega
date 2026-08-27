@@ -518,6 +518,10 @@ def doctor() -> dict:
         durable["state_backup_proven"] = bool((st.get("last_push") or {}).get("ok"))
         durable["state_repo"] = st.get("repo")
         durable["state_is_ephemeral"] = st.get("local_is_ephemeral")
+        # The half that actually matters. A snapshot on the Hub proves a backup
+        # happened; only this proves one came back.
+        restore = st.get("last_restore") or {}
+        durable["state_restored_at_boot"] = restore.get("outcome") or "unknown"
     except Exception as exc:
         # A check that cannot run is unknown, never "not configured". "Go set
         # the token" and "we are broken" are different actions.

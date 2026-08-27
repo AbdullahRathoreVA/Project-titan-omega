@@ -227,10 +227,22 @@ async def lifespan(app: FastAPI):
     # `remote_state.pull` REFUSES if a state file already exists, so this can
     # only ever restore towards an empty database -- overwriting a live one
     # with an older snapshot is the direction that loses data.
+    # The result used to be discarded. A restore that failed — expired token,
+    # renamed repo, Hub outage — wiped every account and said nothing, and the
+    # symptom was identical to a healthy first boot with no snapshot yet.
     with contextlib.suppress(Exception):
         from .core import remote_state as _remote
-        if _remote.configured() and not os.path.exists(persistence.STATE_FILE):
-            _remote.pull(persistence.STATE_FILE)
+        if not _remote.configured():
+            _remote.record_restore("not_configured", {"missing": _remote.missing()})
+        elif os.path.exists(persistence.STATE_FILE):
+            _remote.record_restore("skipped_local_state_exists")
+        else:
+            result = _remote.pull(persistence.STATE_FILE)
+            _remote.record_restore(
+                "restored" if result.get("ok") else "failed",
+                {"bytes": result.get("bytes"),
+                 "reason": result.get("reason")} if not result.get("ok")
+                else {"bytes": result.get("bytes")})
 
     seed(STORE)
     persistence.load(STORE)

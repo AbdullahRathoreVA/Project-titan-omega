@@ -70,6 +70,12 @@ _lock = threading.RLock()
 # a byte ever reached the Hub.
 _last_push: dict = {}
 
+# What happened to the restore on THIS container's boot. Empty until the boot
+# path records something, which it does on every outcome including the boring
+# ones — "a local file already existed" and "no token is set" are answers, and
+# an empty dict would be indistinguishable from "the boot code never ran".
+_last_restore: dict = {}
+
 
 def token() -> str:
     return (os.getenv("HF_TOKEN", "") or os.getenv("TITAN_HF_TOKEN", "")).strip()
@@ -201,6 +207,24 @@ def pull(dest: str) -> dict:
     return {"ok": True, "bytes": os.path.getsize(dest), "repo": repo_id()}
 
 
+def record_restore(outcome: str, detail: dict | None = None) -> None:
+    """Remember how the boot restore went, so it can be asked about later.
+
+    Called from the lifespan for EVERY outcome, not only failures. A dashboard
+    that shows nothing when a restore was skipped looks exactly like one that
+    shows nothing because the restore code was never reached.
+    """
+    import time as _time
+    _last_restore.clear()
+    _last_restore.update({"at": _time.time(), "outcome": outcome,
+                          **(detail or {})})
+
+
+def last_restore() -> dict | None:
+    """What happened on this container's boot, or None if nothing recorded."""
+    return dict(_last_restore) or None
+
+
 def remote_manifest() -> Optional[dict]:
     """What the Hub currently holds, or None. Used to prove a snapshot exists
     rather than assuming one does because a token is set."""
@@ -240,6 +264,9 @@ def status(*, check_remote: bool = False) -> dict:
         "local_path": local,
         "local_is_ephemeral": on_temp,
         "last_push": dict(_last_push) or None,
+        # Whether the accounts came BACK on this boot. A backup nobody has
+        # watched restore is a hope, not a backup.
+        "last_restore": dict(_last_restore) or None,
         "cost": "free — a private Hugging Face Dataset repo",
     }
 

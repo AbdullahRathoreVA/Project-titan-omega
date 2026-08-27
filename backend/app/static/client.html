@@ -242,9 +242,18 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let TOKEN = sessionStorage.getItem('client_token') || '';
 
-/* Plain-language layer. The audit speaks SEO; the owner speaks restaurant.
-   Every technical finding gets a human title, a line explaining what it costs
-   in customers, and an effort estimate so nothing feels open-ended. */
+/* Plain-language layer. The audit speaks SEO; the owner speaks their own
+   trade. Every technical finding gets a human title, a line explaining what it
+   costs in customers, and an effort estimate so nothing feels open-ended.
+
+   These lines used to speak RESTAURANT — "Label your food photos", "Mark up
+   your menu", "Most restaurant searches happen on a phone" — and every
+   business saw them, because nothing here has ever known what the customer
+   sells. Telling a wholesaler to label their food photos is not a translation
+   of the finding, it is a different finding about a business they do not run.
+   Each line now says the same true thing without naming a trade nobody
+   checked. The one place an industry IS known — the social playbook — says so
+   explicitly instead, via /api/client/social. */
 const PLAIN = {
   imprint: ["Add your legal details page",
     "Required by law in your country. Without it you can be fined, and a competitor can send you a legal warning and bill you for it.", "30 min"],
@@ -252,7 +261,7 @@ const PLAIN = {
     "Legally required as soon as your site has a contact form or collects any visitor data.", "30 min"],
   cookie_consent: ["Ask before tracking visitors",
     "Your site loads tracking scripts before asking permission. That is the most commonly fined privacy mistake.", "1 hour"],
-  local_business: ["Tell Google you are a restaurant",
+  local_business: ["Tell Google what kind of business you are",
     "Google and ChatGPT cannot currently tell what kind of business you are, so you are missing from map results and AI recommendations.", "1 hour"],
   schema: ["Add machine-readable business details",
     "This is how Google and ChatGPT decide what to say about you. Only about 17% of sites do it, so it is a real advantage.", "1 hour"],
@@ -261,11 +270,11 @@ const PLAIN = {
   "local:reviews": ["Get reviews regularly, not just once",
     "Rankings drop after about 3 weeks with no new review. Thirty recent reviews beat two hundred old ones.", "ongoing"],
   "local:onpage": ["Put your city in your page title",
-    "People search 'restaurant Berlin', not just 'restaurant'. Without your city you are invisible for those searches.", "20 min"],
+    "People search for what you do plus where you are, not just what you do. Without your city you are invisible for those searches.", "20 min"],
   "local:nap": ["Show your address and phone on every page",
     "Google cross-checks these against Maps, Yelp and Apple. Any mismatch weakens all of them.", "30 min"],
-  "local:schema": ["Mark up your menu",
-    "Lets AI assistants quote individual dishes when someone asks for a recommendation.", "1 hour"],
+  "local:schema": ["Mark up what you sell",
+    "Lets AI assistants quote an individual product or service when someone asks for a recommendation.", "1 hour"],
   "local:authority": ["Get listed in local guides",
     "Being on 'best of' lists is the single biggest factor in whether AI recommends you.", "ongoing"],
   https: ["Turn on the padlock (HTTPS)",
@@ -274,12 +283,12 @@ const PLAIN = {
     "This is the blue link people click in Google. It is your shop window.", "15 min"],
   meta_description: ["Write your search description",
     "The grey text under your link in Google, and what AI often quotes about you.", "15 min"],
-  images_alt: ["Label your food photos",
-    "Your photography is your product. Unlabelled photos cannot appear in image search.", "30 min"],
+  images_alt: ["Label your images",
+    "Unlabelled images cannot appear in image search, and a screen reader cannot describe them.", "30 min"],
   og: ["Fix how links look when shared",
     "Right now sharing your site to WhatsApp or Instagram shows no photo.", "20 min"],
   sitemap: ["Add a sitemap", "Helps search engines find all your pages faster.", "15 min"],
-  viewport: ["Fix your site on phones", "Most restaurant searches happen on a phone.", "30 min"],
+  viewport: ["Fix your site on phones", "Most local searches happen on a phone.", "30 min"],
   h1: ["Fix your main heading", "Tells search engines what the page is about.", "10 min"],
   canonical: ["Prevent duplicate pages", "Stops your pages competing with each other.", "10 min"],
   robots: ["Add a robots file", "Basic housekeeping for search engines.", "10 min"],
@@ -460,7 +469,7 @@ async function boot() {
     ? `In plain terms: there ${lc2 > 1 ? 'are' : 'is'} ${lc2} legal ${lc2 > 1 ? 'problems' : 'problem'} to fix first, then the search issues below.`
     : (seo.score >= 75
         ? 'In plain terms: your website is doing most things right. The list below is fine-tuning.'
-        : 'In plain terms: customers searching for a restaurant like yours are not finding you. The list below is why.');
+        : 'In plain terms: customers searching for a business like yours are not finding you. The list below is why.');
 
   // Start here: the 3 highest-impact fixes, in owner language
   const rank = {'legal-critical':0, critical:1, high:2, medium:3, low:4};

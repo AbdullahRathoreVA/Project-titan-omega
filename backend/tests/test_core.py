@@ -10028,3 +10028,105 @@ def test_the_pdf_does_not_promise_a_plan_it_withheld(isolated_clients):
          "legal": {"country": "PK", "findings": [], "legal_critical": 0}},
         social=pack)
     assert isinstance(pdf, (bytes, bytearray)) and len(pdf) > 800
+
+
+# ── a backup nobody watched restore is a hope, not a backup ────────────────
+# main.py pulls the snapshot back on a fresh container and THREW THE RESULT
+# AWAY, inside a contextlib.suppress. A restore that failed — expired token,
+# renamed repo, Hub outage, corrupt download — wiped every account and said
+# nothing, and the symptom was identical to a healthy first boot with no
+# snapshot yet.
+
+
+def test_the_boot_restore_records_every_outcome_including_the_boring_ones():
+    """Recording only failures leaves 'nothing recorded' meaning both 'it was
+    skipped' and 'the boot code never ran'."""
+    from app.core import remote_state
+
+    remote_state._last_restore.clear()
+    assert remote_state.last_restore() is None
+
+    remote_state.record_restore("skipped_local_state_exists")
+    out = remote_state.last_restore()
+    assert out and out["outcome"] == "skipped_local_state_exists"
+    assert out.get("at"), "the outcome carries no timestamp"
+
+    remote_state.record_restore("failed", {"reason": "token expired"})
+    out = remote_state.last_restore()
+    assert out["outcome"] == "failed" and out["reason"] == "token expired"
+    remote_state._last_restore.clear()
+
+
+def test_a_failed_restore_is_reported_as_failed_not_as_absent(client,
+                                                              monkeypatch):
+    """The whole point. 'We could not get your accounts back' and 'you have no
+    accounts yet' must not look the same on the one public diagnostic."""
+    from app.core import remote_state
+
+    monkeypatch.setattr(remote_state, "status",
+                        lambda **kw: {"configured": True,
+                                      "last_push": {"ok": True},
+                                      "repo": "someone/titan-state",
+                                      "local_is_ephemeral": True,
+                                      "last_restore": {
+                                          "outcome": "failed",
+                                          "reason": "401 from the Hub"}})
+    body = client.get("/api/doctor").json()
+    assert body["state_restored_at_boot"] == "failed", (
+        "a failed restore is not visible anywhere")
+
+
+def test_the_lifespan_actually_records_the_restore():
+    """A WIRING test. record_restore() being correct and being called are
+    different claims, and this codebase has shipped eight things that were the
+    first and not the second.
+
+    Comments are stripped first: the comment above the call names the function,
+    so a naive substring check would pass with the call deleted. That exact
+    mistake already shipped here once."""
+    import inspect
+    import re as _re
+
+    from app import main
+
+    src = inspect.getsource(main.lifespan)
+    src = _re.sub(r"#[^\n]*", "", src)
+    assert "record_restore" in src, (
+        "the lifespan no longer records what happened to the boot restore")
+    assert src.count("record_restore") >= 3, (
+        "the lifespan records only some outcomes; a skipped restore and a "
+        "restore that never ran would look identical")
+
+
+def test_doctor_reports_the_restore_outcome(client):
+    body = client.get("/api/doctor").json()
+    assert "state_restored_at_boot" in body
+    assert isinstance(body["state_restored_at_boot"], str)
+
+
+def test_the_plain_language_layer_does_not_assume_a_restaurant():
+    """Found by grepping the LIVE page for strings a test had just been written
+    to forbid in the tab next door.
+
+    The audit's plain-language layer translated every finding into restaurant
+    terms — "Label your food photos", "Mark up your menu", "Most restaurant
+    searches happen on a phone" — and showed them to every business, because
+    nothing there has ever known what the customer sells. Telling a wholesaler
+    to label their food photos is not a translation of the finding, it is a
+    different finding about a business they do not run.
+
+    Comments are stripped: the comment explaining this quotes the very strings
+    it forbids."""
+    import pathlib
+    import re as _re
+
+    page = (pathlib.Path(__file__).resolve().parents[1]
+            / "app" / "static" / "client.html").read_text(encoding="utf-8")
+    code = _re.sub(r"/\*.*?\*/", "", page, flags=_re.S)
+
+    for assumption in ("food photos", "Mark up your menu",
+                       "you are a restaurant", "restaurant searches",
+                       "a restaurant like yours", "individual dishes"):
+        assert assumption not in code, (
+            f"the audit tells every business {assumption!r}, including the "
+            "ones that do not serve food")
