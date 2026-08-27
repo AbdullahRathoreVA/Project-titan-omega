@@ -9926,9 +9926,10 @@ def test_a_broken_durability_check_reads_unknown_not_unconfigured(
 def test_the_playbook_admits_which_industries_it_was_measured_for():
     from app.engines import brand_playbook as bp
 
-    assert bp.covers("restaurant") and bp.covers("Cafe")
+    assert bp.coverage("restaurant")["covered"]
+    assert bp.coverage("Cafe")["covered"]
     for outside in ("wholesale", "software", "legal", "manufacturer", ""):
-        assert not bp.covers(outside), (
+        assert not bp.coverage(outside)["covered"], (
             f"the playbook claims to cover {outside!r}, and nothing in it was "
             "measured for that")
 
@@ -10130,3 +10131,194 @@ def test_the_plain_language_layer_does_not_assume_a_restaurant():
         assert assumption not in code, (
             f"the audit tells every business {assumption!r}, including the "
             "ones that do not serve food")
+
+
+# ── a kill switch that does not kill ───────────────────────────────────────
+# core/flags.py shipped with five flags, a five-layer resolver, explain(),
+# stored overrides, a migration and three founder endpoints. is_enabled() had
+# ZERO callers. Nothing in the product had ever asked whether a feature was on.
+#
+# So an operator could open the flags screen, set site_fix to disabled, watch
+# it read "off", and Titan would carry on proposing and applying edits to a
+# stranger's live website. Not merely decorative: somebody would believe they
+# had stopped it.
+#
+# Ninth instance of this repository's dominant defect shape, and the first
+# found ON PURPOSE — by evaluation/dead_code.py, written an hour earlier for
+# exactly this.
+
+
+def test_switching_off_site_fix_actually_stops_it(isolated_clients,
+                                                  monkeypatch):
+    """The whole point. Not 'the flag reads false' — 'the writing stops'."""
+    from app.core import flags, site_fix
+
+    monkeypatch.setenv("TITAN_FLAG_SITE_FIX", "0")
+    assert flags.is_enabled("site_fix") is False
+
+    out = site_fix.propose("cl_anything", {"findings": []})
+    assert out["ok"] is False
+    assert "site_fix" in out["error"], (
+        "propose refused for some other reason; this test would pass even "
+        "with the flag ignored")
+
+    applied = site_fix.apply("fix-anything")
+    assert applied["ok"] is False and "site_fix" in applied["error"], (
+        "a fix proposed while the feature was on is still appliable after "
+        "somebody switched it off, which is the moment they are trying to "
+        "stop the writing")
+
+
+def test_site_fix_still_works_when_the_flag_is_on(isolated_clients):
+    """A gate that refuses everything is not a feature flag."""
+    from app.core import flags, site_fix
+
+    assert flags.is_enabled("site_fix") is True
+    out = site_fix.propose("cl_no_such_client", {"findings": []})
+    assert out["ok"] is False
+    assert "site_fix" not in out["error"], (
+        "the flag is on and propose still refused on flag grounds")
+    assert "credential" in out["error"].lower()
+
+
+def test_switching_off_voice_actually_stops_it(monkeypatch):
+    from app.core import flags, voice_sessions
+
+    monkeypatch.setenv("TITAN_FLAG_VOICE", "0")
+    with pytest.raises(flags.FlagDisabled):
+        voice_sessions.start(channel="web")
+
+    monkeypatch.delenv("TITAN_FLAG_VOICE")
+    session = voice_sessions.start(channel="web")
+    assert session["id"], "voice refuses even with the flag on"
+
+
+def test_a_flag_nothing_consults_says_so():
+    """The honesty half, and the more important one.
+
+    Three of the five flags are still unenforced. Offering a switch that
+    changes nothing, without saying so, is how the original defect would
+    happen again — and next time nobody would be looking."""
+    from app.core import flags
+
+    for row in flags.all_flags():
+        if row["enforced"]:
+            assert row["note"] is None
+            assert row["enforced_at"], "enforced with no location named"
+        else:
+            assert row["note"] and "changes nothing" in row["note"], (
+                f"{row['key']} is consulted by nothing and does not say so")
+
+
+def test_every_flag_claiming_enforcement_has_a_real_call_site():
+    """Fails OPEN, like the rate-limit bucket walk.
+
+    enforced_at is a claim in a dataclass. This checks the claim against the
+    source, because a flag that SAYS it is enforced and is not is worse than
+    one that admits it: the first is believed."""
+    import pathlib
+
+    from app.core import flags
+
+    app_dir = pathlib.Path(__file__).resolve().parents[1] / "app"
+    sources = {p: p.read_text(encoding="utf-8") for p in app_dir.rglob("*.py")}
+
+    missing = []
+    for key, flag in flags.FLAGS.items():
+        for location in flag.enforced_at:
+            module, _, func = location.rpartition(".")
+            path = app_dir / (module.replace(".", "/") + ".py")
+            text = sources.get(path, "")
+            if f"def {func}(" not in text:
+                missing.append(f"{key}: {location} does not exist")
+            elif (f'flags.is_enabled("{key}")' not in text
+                  and f'flags.require("{key}")' not in text):
+                missing.append(f"{key}: {location} never consults the flag")
+    assert not missing, (
+        "these flags claim an enforcement point that does not enforce them: "
+        + "; ".join(missing))
+
+
+# ── the tenth instance should not be found by accident ─────────────────────
+# Eight capabilities have shipped tested, documented and called by nothing, and
+# every one was found by chance: knowledge.backfill(), params.apply_stored(),
+# improve.check_active(), core/identity.py entirely, clients.SESSION_TTL, the
+# demo and discover rate-limit buckets, and GET /api/client/social.
+#
+# The ninth — core/flags.py, an entire feature-flag system nothing consulted —
+# was found ON PURPOSE by evaluation/dead_code.py. These tests keep that tool
+# honest and keep the list from growing quietly.
+
+
+def test_the_dead_code_sweep_still_finds_the_defect_it_was_built_for():
+    """A detector nobody has tested against a known positive is a detector
+    nobody should believe. flags.is_enabled() is the known positive: it had
+    zero callers, and the sweep is what found it."""
+    from evaluation import dead_code
+
+    data = dead_code.collect()
+    assert "app.core.flags.is_enabled" in data["defined"], (
+        "the sweep no longer sees the function whose absence started this")
+
+    # And it must not cry wolf: a function handed to a registry by NAME is
+    # reached, and reporting it would train people to skim the output.
+    assert "audit_and_propose" in data["attribute_uses"], (
+        "the sweep would report fix_cycle.audit_and_propose, which is passed "
+        "to queue.register() one line below its own definition")
+
+
+def test_no_new_uncalled_capability_appears_without_being_noticed():
+    """A ratchet, not a ban.
+
+    Some of these are genuinely fine — a public helper kept for tests, a
+    leftover from a module that was replaced. What is NOT fine is the list
+    growing silently, because that is exactly how nine defects shipped. Adding
+    a public function with no caller now requires either wiring it up or
+    admitting it here, in writing.
+    """
+    from evaluation import dead_code
+
+    # Measured 2026-08-27, each read and classified by hand.
+    known = {
+        # Legitimate: a public helper whose only caller is a test, or a
+        # capability deliberately exposed for a future caller.
+        "app.core.verify.safe_or_none",
+        "app.core.api_runtime.safe_summary",
+        "app.core.obs.current_request_id",
+        "app.core.sessions.revoked_count",
+        "app.persistence.export_json",
+        "app.core.events.subscribe",
+        "app.core.tenancy.owner_of",
+        "app.core.orgs.by_slug",
+        "app.core.orgs.is_member",
+        # Leftovers from core/auth.py, replaced by core/sessions.py. Kept
+        # rather than deleted in the same change that touched the login.
+        "app.core.auth.make_token",
+        "app.core.auth.revoke_token",
+        # Real gaps, written down rather than quietly tolerated:
+        # nobody can change a password, and a subscriber cannot sign out.
+        "app.core.billing.sign_out",
+        "app.core.clients.set_password",
+        "app.core.identity.set_password",
+        # Research that exists and is not offered to anyone.
+        "app.engines.brand_playbook.audit_profile",
+        "app.engines.brand_playbook.bio_template",
+        "app.engines.evolution.adaptive_score",
+        # Helper with no current caller.
+        "app.api.router.has_arabic_script",
+    }
+
+    found = {row["qualified"] for row in dead_code.uncalled()}
+    new = sorted(found - known)
+    assert not new, (
+        "these public functions have no caller anywhere in app/**, which is "
+        "the exact state nine shipped defects were in. Wire them up, delete "
+        "them, or add them to the list above with a reason: " + ", ".join(new))
+
+    # The other direction. A name that leaves the list because it was wired up
+    # or deleted should be removed from it, so the list stays a real record
+    # rather than folklore.
+    stale = sorted(known - found)
+    assert not stale, (
+        "these are listed as uncalled and are not any more — remove them: "
+        + ", ".join(stale))

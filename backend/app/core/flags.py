@@ -52,6 +52,17 @@ class FlagError(ValueError):
     """Unknown flag, or an unknown scope. Never silently false."""
 
 
+class FlagDisabled(PermissionError):
+    """A feature was asked to run while its flag is off.
+
+    A distinct type from FlagError on purpose: "you named a flag that does not
+    exist" is a programming mistake, and "this capability is switched off" is
+    an operating decision. Callers handle them differently, and an endpoint
+    that returns 500 for the second one has not implemented a kill switch, it
+    has implemented a crash.
+    """
+
+
 @dataclass(frozen=True)
 class Flag:
     key: str
@@ -60,6 +71,17 @@ class Flag:
     # None means every plan. An empty frozenset would mean NO plan, which is a
     # very different thing and is why this is not defaulted to one.
     plans: Optional[frozenset] = None
+    # WHERE this flag is actually consulted. Empty means NOWHERE, and that is
+    # published as `enforced: false` rather than hidden.
+    #
+    # This field exists because every flag in this dict was unenforced for a
+    # whole release. The screen said "site_fix: enabled", an operator could set
+    # it to disabled, and core/site_fix.py never asked. Somebody would have
+    # believed they had stopped Titan editing a live website.
+    #
+    # A kill switch that does not kill is worse than no kill switch: no kill
+    # switch at least tells you to go and pull the plug yourself.
+    enforced_at: tuple = ()
 
 
 # The closed set. Adding a capability means adding it here, which is the point:
@@ -76,11 +98,13 @@ FLAGS: dict[str, Flag] = {
     "site_fix": Flag(
         "site_fix",
         "Propose and apply fixes to a connected WordPress site.",
-        default=True),
+        default=True,
+        enforced_at=("core.site_fix.propose", "core.site_fix.apply")),
     "voice": Flag(
         "voice",
         "Voice sessions and transcripts.",
-        default=True),
+        default=True,
+        enforced_at=("core.voice_sessions.start",)),
     "executive_metrics": Flag(
         "executive_metrics",
         "MRR, ARR, churn and conversion, each stating whether it was measured.",
@@ -203,12 +227,45 @@ def explain(key: str, *, user_id: str = "", org_id: str = "",
         "decided_by": decided_by,
         "description": flag.description,
         "layers": layers,
+        # Whether anything consults this flag. A switch that changes nothing
+        # must say so where it is offered, not in a docstring nobody opens.
+        "enforced": bool(flag.enforced_at),
+        "enforced_at": list(flag.enforced_at),
+        "note": (None if flag.enforced_at else
+                 "No code consults this flag yet, so turning it off changes "
+                 "nothing. Shown rather than hidden: a switch you believe "
+                 "works is worse than one you know does not."),
     }
 
 
 def is_enabled(key: str, *, user_id: str = "", org_id: str = "",
                plan: str = "") -> bool:
     return explain(key, user_id=user_id, org_id=org_id, plan=plan)["enabled"]
+
+
+def require(key: str, *, user_id: str = "", org_id: str = "",
+            plan: str = "") -> None:
+    """Raise FlagDisabled unless this capability is switched on.
+
+    The enforcement half. `is_enabled` returning False and nobody acting on it
+    is how this module spent a whole release as decoration, so the intended way
+    to gate a feature is this function, whose return value cannot be ignored by
+    forgetting to write an `if`.
+    """
+    verdict = explain(key, user_id=user_id, org_id=org_id, plan=plan)
+    if not verdict["enabled"]:
+        raise FlagDisabled(
+            f"{key} is switched off ({verdict['decided_by']} layer). "
+            f"{FLAGS[key].description}")
+
+
+def enforced(key: str) -> bool:
+    """Does any code actually consult this flag?
+
+    False means turning it off changes nothing, which a screen offering a
+    switch is obliged to say out loud.
+    """
+    return bool(_require(key).enforced_at)
 
 
 def all_flags(*, user_id: str = "", org_id: str = "", plan: str = "") -> list:

@@ -103,6 +103,11 @@ def start(channel: str = "web", agent: str = "titan-voice",
           language: str = "en", caller: str = "") -> dict:
     """Open a session. Returns the public record."""
     global _seq
+    # Raised rather than returned, matching the channel check below: this
+    # function's contract is already "raises on refusal", and a caller that
+    # gets a session object back has every right to assume it can speak.
+    from . import flags
+    flags.require("voice")
     channel = (channel or "web").lower()
     if channel not in CHANNELS:
         raise ValueError(f"Unknown channel: {channel}. One of {list(CHANNELS)}.")

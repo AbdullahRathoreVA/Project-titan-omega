@@ -383,6 +383,19 @@ def propose(client_id: str, audit: dict, *,
     reason, because "Titan found 9 problems and can fix 2 of them" is a true
     sentence and "Titan will fix your site" is not.
     """
+    # The kill switch, and the only reason one exists: this function edits a
+    # page on somebody else's live website. Flags were unenforced for a whole
+    # release — the screen said "site_fix: enabled", an operator could set it
+    # to disabled, and this function never asked.
+    #
+    # Returned rather than raised because the docstring above promises "Never
+    # raises" and callers depend on that. A kill switch that turns a safe
+    # refusal into a 500 has traded one incident for another.
+    from . import flags
+    if not flags.is_enabled("site_fix"):
+        return {"ok": False, "error": (
+            "Website fixes are switched off for this deployment "
+            "(feature flag: site_fix)."), "proposed": [], "skipped": []}
     cred = site_access.credential(client_id)
     if not cred:
         return {"ok": False, "error": (
@@ -679,6 +692,15 @@ def apply(fix_id: str) -> dict:
     `failed` with the reason, and the caller is told what the site actually
     says rather than what Titan hoped.
     """
+    # The half that actually writes. Checked separately from propose() on
+    # purpose: a fix proposed while the feature was on must not still be
+    # appliable after somebody switched it off, which is exactly the moment
+    # they are trying to stop the writing.
+    from . import flags
+    if not flags.is_enabled("site_fix"):
+        return {"ok": False, "error": (
+            "Website fixes are switched off for this deployment "
+            "(feature flag: site_fix).")}
     with _lock:
         fix = _fixes.get(fix_id)
         if not fix:

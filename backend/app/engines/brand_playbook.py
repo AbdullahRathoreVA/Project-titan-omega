@@ -253,10 +253,6 @@ def normalise_industry(industry: str) -> str:
     return key if key in COVERED_INDUSTRIES else ""
 
 
-def covers(industry: str) -> bool:
-    """Was this playbook measured for this kind of business?"""
-    return bool(normalise_industry(industry))
-
 
 def coverage(industry: str) -> dict:
     """Whether the weekly plan applies here, and if not, why not.
