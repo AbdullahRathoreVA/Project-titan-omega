@@ -1608,6 +1608,103 @@ def account_login(req: SignupIn, request: Request) -> dict:
     return {"token": token, "account": billing.public(req.email)}
 
 
+class PasswordChangeIn(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8)
+
+
+@router.post("/account/password", tags=["billing"])
+def account_change_password(req: PasswordChangeIn, request: Request,
+                            x_account_token: Optional[str] = Header(None)) -> dict:
+    """A subscriber changes their own password.
+
+    Until now NOBODY could change a password anywhere in this product — not the
+    founder, not a subscriber, not a business. billing had no setter at all,
+    and identity.set_password() and clients.set_password() both had zero
+    callers. Found by evaluation/dead_code.py.
+
+    The current password is required even though the caller already holds a
+    valid session, because otherwise a stolen token becomes a permanent
+    takeover: the thief changes the password and the owner is locked out of
+    their own billing.
+    """
+    from ..core import billing, ratelimit
+    email = billing.resolve(x_account_token or "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in first")
+    # Same bucket as the login. This endpoint verifies a password, so leaving
+    # it unmetered would just move credential stuffing one door along.
+    verdict = ratelimit.check("login", ratelimit.identity_for(request))
+    if not verdict["allowed"]:
+        raise HTTPException(status_code=429, detail=verdict)
+
+    out = billing.set_password(email, req.current_password, req.new_password)
+    if not out.get("ok"):
+        raise HTTPException(status_code=400, detail=out.get("error"))
+    persistence.save(STORE)
+    # Audited, never with the password. audit.py redacts on the way IN, so a
+    # field named *password* could not reach the table even by mistake, and
+    # record() never raises — a failed audit write must not break the change it
+    # is recording.
+    from ..core import audit
+    audit.record(email, "account.password_changed",
+                 target_type="account", target_id=email)
+    # The caller's own token died with the rest, which is the point. Hand back
+    # a fresh one so changing a password is not also a logout — a change people
+    # find annoying is a change people do not make.
+    return {"ok": True, "signed_out_everywhere": True,
+            "token": billing.authenticate(email, req.new_password)}
+
+
+@router.post("/account/logout", tags=["billing"])
+def account_logout(x_account_token: Optional[str] = Header(None)) -> dict:
+    """End this session. billing.sign_out() existed and had no caller."""
+    from ..core import billing
+    if not billing.resolve(x_account_token or ""):
+        raise HTTPException(status_code=401, detail="Sign in first")
+    ended = billing.sign_out(x_account_token or "")
+    persistence.save(STORE)
+    return {"ok": bool(ended)}
+
+
+@router.post("/me/password", tags=["auth"])
+def founder_change_password(req: PasswordChangeIn, request: Request) -> dict:
+    """The founder changes their own password.
+
+    Only reachable once the login runs on real accounts. Under the retiring
+    environment gate there is no stored password to change — the credential is
+    a Space variable, and pretending otherwise would report success for a
+    change that did not happen.
+
+    FOUNDER only today, and deliberately not described as more. This path sits
+    behind the middleware in main.py, which requires role == founder, so a
+    member holding a perfectly valid session cannot reach it. Members will need
+    their own door; saying "any real account" here would be a promise the
+    middleware breaks.
+    """
+    from ..core import identity, ratelimit
+    token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    user = identity.resolve(token)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail=("Sign in with a real account first. The environment gate "
+                    "has no stored password to change."))
+    verdict = ratelimit.check("login", ratelimit.identity_for(request))
+    if not verdict["allowed"]:
+        raise HTTPException(status_code=429, detail=verdict)
+
+    out = identity.change_password(user["email"], req.current_password,
+                                   req.new_password)
+    if not out.get("ok"):
+        raise HTTPException(status_code=400, detail=out.get("error"))
+    from ..core import audit
+    audit.record(user["email"], "identity.password_changed",
+                 target_type="user", target_id=user["email"])
+    return {"ok": True, "signed_out_everywhere": True,
+            "token": identity.authenticate(user["email"], req.new_password)}
+
+
 @router.get("/account", tags=["billing"])
 def account_me(x_account_token: Optional[str] = Header(None)) -> dict:
     from ..core import billing

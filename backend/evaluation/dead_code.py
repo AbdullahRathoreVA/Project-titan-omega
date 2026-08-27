@@ -22,6 +22,20 @@ application — excluding the ways a function can legitimately be reached withou
 a literal call, each of which is listed and justified below rather than being
 silently skipped.
 
+KNOWN LIMITATION — read before trusting a clean run.
+
+References are matched on the BARE NAME, not the qualified one, because
+resolving `from . import billing; billing.set_password(...)` back to a
+definition needs real import resolution. The consequence is concrete and was
+observed immediately: wiring up `billing.set_password()` made
+`clients.set_password()` disappear from this report, although nothing calls it
+and a business still cannot change its portal password.
+
+So a clean run means "no PUBLIC NAME is entirely unreferenced". It does not
+mean "no capability is unreachable". Matching qualified names would trade this
+false negative for a crop of false positives, and a detector people learn to
+skim is worth less than one with a limitation written on it.
+
 Run:  python -m evaluation.dead_code
       python -m evaluation.dead_code --json
 """

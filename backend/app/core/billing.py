@@ -255,6 +255,40 @@ def resolve(token: str) -> Optional[str]:
         return email if email in _accounts else None
 
 
+def set_password(email: str, current: str, new: str) -> dict:
+    """Change a subscriber's password. Requires the CURRENT one.
+
+    Requiring it is not politeness. Without it a stolen session token becomes a
+    permanent account takeover: the thief changes the password, and the owner
+    is locked out of their own billing.
+
+    Every other session for this account ends. That is the entire reason a
+    person changes a password, and one that leaves the thief signed in has
+    done nothing.
+    """
+    email = (email or "").strip().lower()
+    if len(new or "") < 8:
+        return {"ok": False, "error": "Password must be at least 8 characters."}
+    with _lock:
+        acct = _accounts.get(email)
+        if not acct:
+            return {"ok": False, "error": "No such account."}
+        if not hmac.compare_digest(_hash(current, acct["_salt"]),
+                                   acct["_pwhash"]):
+            # Deliberately the same wording the login uses. "Your current
+            # password is wrong" and "no such account" must not be
+            # distinguishable to somebody holding a token and guessing.
+            return {"ok": False, "error": "Wrong email or password"}
+        salt = secrets.token_hex(16)
+        acct["_salt"] = salt
+        acct["_pwhash"] = _hash(new, salt)
+        acct["password_changed_at"] = time.time()
+
+    from . import sessions
+    sessions.invalidate_all(email, kind="account")
+    return {"ok": True, "signed_out_everywhere": True}
+
+
 def sign_out(token: str) -> bool:
     from . import sessions
     return sessions.revoke(token)

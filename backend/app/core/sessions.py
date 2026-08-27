@@ -53,6 +53,18 @@ _lock = threading.RLock()
 # would have expired on its own.
 _revoked: dict[str, float] = {}
 
+# "kind:subject" -> the moment every session for that subject stopped counting.
+#
+# revoke() can only invalidate a token somebody is HOLDING, and these tokens
+# are stateless: nothing here knows which jti belongs to whom. So there was no
+# way to end all of one person's sessions — which is the entire point of
+# changing a password. Telling somebody to change it because it leaked, while
+# leaving whoever leaked it signed in, is theatre.
+#
+# One float per subject, bounded the same way _revoked is: a cutoff is useless
+# once no token issued before it could still be valid.
+_cutoffs: dict[str, float] = {}
+
 
 def _secret() -> bytes:
     # One door — see core/appsecret.py. Signing sessions with a fallback that
@@ -74,7 +86,24 @@ def issue(subject: str, kind: str = "founder",
     """Mint a token. Two calls never produce the same string."""
     now = time.time()
     ttl = ttl if ttl is not None else DEFAULT_TTL
-    payload = {"sub": subject, "kind": kind, "iat": int(now),
+    # `iat` carries sub-second precision on purpose. It used to be int(now),
+    # and a whole-second stamp cannot be compared against a "sign everyone out"
+    # moment without either leaving a one-second hole for the attacker or
+    # killing the replacement token minted in the same second. Neither is a
+    # rounding decision. `exp` stays whole — nothing compares against it that
+    # finely.
+    iat = round(now, 3)
+    with _lock:
+        # Signing somebody back in immediately after ending their sessions is a
+        # normal thing to do — it is what a password change does. Wall-clock
+        # alone cannot express "after" at this resolution, so the stamp is
+        # nudged past the cutoff rather than left to collide with it. Without
+        # this the replacement session dies on arrival and the person is logged
+        # out by the act of securing their account.
+        cutoff = _cutoffs.get(f"{kind}:{subject}")
+        if cutoff is not None and iat <= cutoff:
+            iat = round(cutoff + 0.001, 3)
+    payload = {"sub": subject, "kind": kind, "iat": iat,
                "exp": int(now + ttl), "jti": secrets.token_urlsafe(9)}
     body = _b64(json.dumps(payload, separators=(",", ":")).encode())
     sig = _b64(hmac.new(_secret(), body.encode(), hashlib.sha256).digest())
@@ -104,12 +133,38 @@ def verify(token: str, kind: Optional[str] = None) -> Optional[dict]:
     with _lock:
         if payload.get("jti") in _revoked:
             return None
+        # Every session for this subject was ended after this token was minted.
+        cutoff = _cutoffs.get(f"{payload.get('kind')}:{payload.get('sub')}")
+        # <=, not <. A token stamped in the same millisecond as the change dies
+        # with the ones before it. Anything issued afterwards is nudged past
+        # the cutoff by issue(), so nothing legitimate lands on this boundary.
+        if cutoff is not None and float(payload.get("iat", 0)) <= cutoff:
+            return None
     return payload
 
 
 def subject(token: str, kind: Optional[str] = None) -> Optional[str]:
     payload = verify(token, kind)
     return payload.get("sub") if payload else None
+
+
+def invalidate_all(subject_: str, kind: str = "account") -> float:
+    """End every session this subject currently holds. Returns the cutoff.
+
+    Tokens issued from now on are unaffected, so the caller can sign the person
+    straight back in — a password change should not require a second login, and
+    one that does is a password change people avoid making.
+    """
+    # Rounded to the SAME precision `iat` carries. Keeping more here than a
+    # token can record means a token minted a microsecond later still compares
+    # as older than the cutoff, and the replacement session dies on arrival.
+    # A test caught exactly that; a manual check with more slack between the
+    # two calls had not.
+    now = round(time.time(), 3)
+    with _lock:
+        _cutoffs[f"{kind}:{subject_}"] = now
+        _prune()
+    return now
 
 
 def revoke(token: str) -> bool:
@@ -136,6 +191,11 @@ def _prune() -> None:
     now = time.time()
     for jti in [j for j, exp in _revoked.items() if exp <= now]:
         del _revoked[jti]
+    # A cutoff stops mattering once no token issued before it could still be
+    # valid. The longest any token lives is ACCOUNT_TTL, so that is the window.
+    oldest_useful = now - max(DEFAULT_TTL, GUEST_TTL, ACCOUNT_TTL)
+    for key in [k for k, at in _cutoffs.items() if at <= oldest_useful]:
+        del _cutoffs[key]
 
 
 def revoked_count() -> int:
@@ -148,7 +208,10 @@ def revoked_count() -> int:
 def export_state() -> dict:
     with _lock:
         _prune()
-        return {"revoked": dict(_revoked)}
+        # Cutoffs persist for the same reason revocations do: a restart that
+        # un-ends everybody's sessions would hand the account back to whoever
+        # the password was changed to lock out.
+        return {"revoked": dict(_revoked), "cutoffs": dict(_cutoffs)}
 
 
 def import_state(data: dict) -> None:
@@ -156,12 +219,21 @@ def import_state(data: dict) -> None:
         return
     rows = data.get("revoked")
     if not isinstance(rows, dict):
-        return
+        # Older snapshots have no cutoffs either, and returning here used to be
+        # harmless. It is not any more: skipping the rest would silently drop
+        # every "sign everyone out" that had been recorded.
+        rows = {}
     with _lock:
         _revoked.clear()
         for jti, exp in rows.items():
             try:
                 _revoked[str(jti)] = float(exp)
+            except Exception:
+                continue
+        _cutoffs.clear()
+        for key, at in (data.get("cutoffs") or {}).items():
+            try:
+                _cutoffs[str(key)] = float(at)
             except Exception:
                 continue
         _prune()
@@ -171,3 +243,4 @@ def reset() -> None:
     """Test seam."""
     with _lock:
         _revoked.clear()
+        _cutoffs.clear()

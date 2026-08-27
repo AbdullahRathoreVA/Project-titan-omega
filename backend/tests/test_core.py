@@ -10295,11 +10295,10 @@ def test_no_new_uncalled_capability_appears_without_being_noticed():
         # rather than deleted in the same change that touched the login.
         "app.core.auth.make_token",
         "app.core.auth.revoke_token",
-        # Real gaps, written down rather than quietly tolerated:
-        # nobody can change a password, and a subscriber cannot sign out.
-        "app.core.billing.sign_out",
-        "app.core.clients.set_password",
-        "app.core.identity.set_password",
+        # NOTE: app.core.clients.set_password is a real gap and does NOT
+        # appear here, because the sweep matches bare names and
+        # billing.set_password now has a caller. A business still cannot change
+        # its portal password. See the limitation note in evaluation/dead_code.py.
         # Research that exists and is not offered to anyone.
         "app.engines.brand_playbook.audit_profile",
         "app.engines.brand_playbook.bio_template",
@@ -10322,3 +10321,195 @@ def test_no_new_uncalled_capability_appears_without_being_noticed():
     assert not stale, (
         "these are listed as uncalled and are not any more — remove them: "
         + ", ".join(stale))
+
+
+# ── nobody could change a password ─────────────────────────────────────────
+# evaluation/dead_code.py found billing.sign_out(), clients.set_password() and
+# identity.set_password() with zero callers, and billing had no password setter
+# at all. Net effect: NOBODY could change a password anywhere in this product,
+# and a subscriber could not sign out.
+
+
+def test_a_subscriber_can_change_their_password(client, isolated_billing):
+    from app.core import billing
+
+    billing.signup("pw@example.com", "original-password")
+    token = client.post("/api/account/login", json={
+        "email": "pw@example.com", "password": "original-password"}).json()["token"]
+
+    r = client.post("/api/account/password",
+                    headers={"X-Account-Token": token},
+                    json={"current_password": "original-password",
+                          "new_password": "a-brand-new-password"})
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+
+    # The new password works and the old one does not.
+    assert client.post("/api/account/login", json={
+        "email": "pw@example.com",
+        "password": "a-brand-new-password"}).status_code == 200
+    assert client.post("/api/account/login", json={
+        "email": "pw@example.com",
+        "password": "original-password"}).status_code == 401
+
+
+def test_changing_a_password_signs_out_every_other_session(
+        client, isolated_billing):
+    """The entire reason a person changes a password. One that leaves the
+    thief signed in has done nothing."""
+    from app.core import billing
+
+    billing.signup("leak@example.com", "leaked-password")
+    stolen = client.post("/api/account/login", json={
+        "email": "leak@example.com", "password": "leaked-password"}).json()["token"]
+    owner = client.post("/api/account/login", json={
+        "email": "leak@example.com", "password": "leaked-password"}).json()["token"]
+
+    assert client.get("/api/account",
+                      headers={"X-Account-Token": stolen}).status_code == 200
+
+    changed = client.post("/api/account/password",
+                          headers={"X-Account-Token": owner},
+                          json={"current_password": "leaked-password",
+                                "new_password": "a-brand-new-password"})
+    assert changed.status_code == 200
+
+    assert client.get("/api/account",
+                      headers={"X-Account-Token": stolen}).status_code == 401, (
+        "the stolen session outlived the password change")
+
+    # And the owner is handed a working session rather than being logged out —
+    # a change people find annoying is a change people do not make.
+    fresh = changed.json()["token"]
+    assert client.get("/api/account",
+                      headers={"X-Account-Token": fresh}).status_code == 200
+
+
+def test_changing_a_password_requires_the_current_one(client,
+                                                      isolated_billing):
+    """Without this a stolen token is a permanent account takeover: the thief
+    changes the password and the owner is locked out of their own billing."""
+    from app.core import billing
+
+    billing.signup("guard@example.com", "original-password")
+    token = client.post("/api/account/login", json={
+        "email": "guard@example.com",
+        "password": "original-password"}).json()["token"]
+
+    r = client.post("/api/account/password",
+                    headers={"X-Account-Token": token},
+                    json={"current_password": "not-the-right-one",
+                          "new_password": "a-brand-new-password"})
+    assert r.status_code == 400, "a stolen token could rewrite the password"
+
+    # And the original still works, so nothing was half-changed.
+    assert client.post("/api/account/login", json={
+        "email": "guard@example.com",
+        "password": "original-password"}).status_code == 200
+
+
+def test_a_password_change_needs_a_session_at_all(client, isolated_billing):
+    r = client.post("/api/account/password",
+                    json={"current_password": "x",
+                          "new_password": "a-brand-new-password"})
+    assert r.status_code == 401
+
+
+def test_a_subscriber_can_sign_out(client, isolated_billing):
+    """billing.sign_out() existed, was correct, and had no caller."""
+    from app.core import billing
+
+    billing.signup("out@example.com", "original-password")
+    token = client.post("/api/account/login", json={
+        "email": "out@example.com", "password": "original-password"}).json()["token"]
+
+    assert client.get("/api/account",
+                      headers={"X-Account-Token": token}).status_code == 200
+    assert client.post("/api/account/logout",
+                       headers={"X-Account-Token": token}).status_code == 200
+    assert client.get("/api/account",
+                      headers={"X-Account-Token": token}).status_code == 401
+
+
+# ── the session cutoff underneath it ───────────────────────────────────────
+# revoke() invalidates ONE token by its jti, and these tokens are stateless:
+# nothing knows which jti belongs to whom. So there was no way to end all of
+# somebody's sessions, which is what a password change is for.
+
+
+def test_invalidate_all_ends_only_that_subjects_sessions():
+    from app.core import sessions
+
+    sessions.reset()
+    victim = sessions.issue("a@example.com", kind="account")
+    other = sessions.issue("b@example.com", kind="account")
+    assert sessions.verify(victim, "account")
+    sessions.invalidate_all("a@example.com", kind="account")
+    assert sessions.verify(victim, "account") is None
+    assert sessions.verify(other, "account"), (
+        "ending one account's sessions ended somebody else's")
+    sessions.reset()
+
+
+def test_a_token_minted_after_the_cutoff_survives_it():
+    """`iat` used to be a whole second, which left the choice between a
+    one-second hole for the attacker and killing the replacement token minted
+    in the same second. Neither is a rounding decision."""
+    from app.core import sessions
+
+    sessions.reset()
+    sessions.invalidate_all("c@example.com", kind="account")
+    fresh = sessions.issue("c@example.com", kind="account")
+    assert sessions.verify(fresh, "account"), (
+        "a session minted after the cutoff was killed by it")
+    sessions.reset()
+
+
+def test_the_cutoff_survives_a_restart():
+    """A restart that un-ends everybody's sessions hands the account back to
+    whoever the password was changed to lock out."""
+    from app.core import sessions
+
+    sessions.reset()
+    stolen = sessions.issue("d@example.com", kind="account")
+    sessions.invalidate_all("d@example.com", kind="account")
+    state = sessions.export_state()
+
+    sessions.reset()
+    assert sessions.verify(stolen, "account"), "precondition: reset clears it"
+    sessions.import_state(state)
+    assert sessions.verify(stolen, "account") is None, (
+        "the cutoff did not survive the snapshot"
+    )
+    sessions.reset()
+
+
+def test_an_old_snapshot_without_cutoffs_still_loads():
+    """import_state used to return early when "revoked" was absent. Harmless
+    then; it would now silently drop every recorded sign-out."""
+    from app.core import sessions
+
+    sessions.reset()
+    # Mint FIRST, then import a snapshot whose cutoff is later. Minting after
+    # the import would prove nothing: issue() deliberately steps a new token
+    # past any cutoff, which is what keeps a password change from logging the
+    # owner out.
+    stale = sessions.issue("e@example.com", kind="account")
+    assert sessions.verify(stale, "account"), "precondition"
+
+    sessions.import_state({"cutoffs": {
+        "account:e@example.com": stale_iat(stale) + 1}})
+    assert sessions.verify(stale, "account") is None, (
+        "a snapshot carrying only cutoffs was ignored, so every recorded "
+        "sign-out would be lost on the next restart")
+    sessions.reset()
+
+
+def stale_iat(token: str) -> float:
+    """The `iat` inside a token, without verifying it."""
+    import base64
+    import json as _json
+
+    body = token.partition(".")[0]
+    raw = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
+    return float(_json.loads(raw)["iat"])

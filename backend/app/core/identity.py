@@ -259,6 +259,38 @@ def set_password(email: str, password: str) -> bool:
         return cur.rowcount > 0
 
 
+def change_password(email: str, current: str, new: str) -> dict:
+    """Change your own password. Requires the current one, and signs you out
+    everywhere else.
+
+    set_password() above is the ADMINISTRATIVE setter — it asks for no proof of
+    who you are, because its caller has already decided. This is the one a
+    person calls about their own account, and the difference is the current
+    password.
+    """
+    # authenticate() mints a token as its way of saying yes. It is thrown away
+    # here, and invalidate_all() below kills it along with the rest — it was
+    # issued before the cutoff, same as every other session for this account.
+    proof = authenticate(email, current)
+    if not proof:
+        # Same wording as a failed login. Somebody holding a session and
+        # guessing must not learn anything from the difference.
+        return {"ok": False, "error": "Invalid email or password."}
+    try:
+        changed = set_password(email, new)
+    except IdentityError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not changed:
+        return {"ok": False, "error": "Invalid email or password."}
+
+    from . import sessions
+    # kind="user", not "founder": identity.authenticate() issues user sessions.
+    # The founder kind belongs to the environment gate in core/auth.py, and
+    # ending the wrong kind would end nothing while reporting success.
+    sessions.invalidate_all(normalise_email(email), kind="user")
+    return {"ok": True, "signed_out_everywhere": True}
+
+
 def set_role(email: str, role: str) -> bool:
     _require_role(role)
     conn = _conn()
