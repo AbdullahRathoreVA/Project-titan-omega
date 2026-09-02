@@ -472,6 +472,10 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      'durable["state_backup_proven"] = bool(st.get("configured"))',
      "separates_intending_to_back_up_from_having_backed_up"),
     # --- nobody could change a password -----------------------------------
+    ("password: the portal setter is owner-gated", "app/api/router.py",
+     '    email = _owned(cid, x_account_token)\n    if not clients.set_password(cid, req.password):',
+     '    email = "nobody"\n    if not clients.set_password(cid, req.password):',
+     "cannot_set_another_businesss_portal_password"),
     ("password: the current one is required", "app/core/billing.py",
      'if not hmac.compare_digest(_hash(current, acct["_salt"]),',
      "if False:",

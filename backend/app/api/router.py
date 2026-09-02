@@ -1507,6 +1507,42 @@ def open_client_portal(cid: str,
                      "when the tab does.")}
 
 
+class PortalPasswordIn(BaseModel):
+    password: str = Field(..., min_length=8)
+
+
+@router.post("/account/clients/{cid}/portal-password", tags=["billing"])
+def set_portal_password(cid: str, req: PortalPasswordIn,
+                        x_account_token: Optional[str] = Header(None)) -> dict:
+    """The owner sets the portal password for one of their businesses.
+
+    clients.set_password() has been correct and unreachable since the registry
+    was written, so a business could never change its portal password. Found by
+    evaluation/dead_code.py, which then HID it again the moment
+    billing.set_password() gained a caller — the sweep matches bare names. It
+    was named explicitly in the ratchet so it would not be lost twice.
+
+    Owner-only. The portal password is created during onboarding as a random
+    unusable string, so the owner is who sets a real one. A portal session
+    cannot rewrite it: that session is minted for an owner who already proved
+    ownership, and letting it change the credential would turn a link shared
+    once into permanent access.
+
+    Every existing portal session for this business ends — clients.set_password
+    revokes them — which is the point of changing a password.
+    """
+    email = _owned(cid, x_account_token)
+    if not clients.set_password(cid, req.password):
+        raise HTTPException(status_code=404, detail="Not found")
+    persistence.save(STORE)
+    from ..core import audit
+    audit.record(email, "client.portal_password_set",
+                 target_type="client", target_id=cid)
+    return {"ok": True, "signed_out_everywhere": True,
+            "note": ("Every open portal session for this business has ended. "
+                     "Sign in again with the new password.")}
+
+
 @router.get("/account/clients", tags=["billing"])
 def account_clients(x_account_token: Optional[str] = Header(None)) -> dict:
     """The businesses THIS subscriber owns. Never anyone else's."""

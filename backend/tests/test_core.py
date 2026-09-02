@@ -10513,3 +10513,61 @@ def stale_iat(token: str) -> float:
     body = token.partition(".")[0]
     raw = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
     return float(_json.loads(raw)["iat"])
+
+
+def test_an_owner_can_set_their_businesss_portal_password(client, executive):
+    """The last uncalled password setter. clients.set_password() has been
+    correct and unreachable since the registry was written."""
+    made = client.post("/api/founder/accounts", json={
+        "email": "portalpw@example.com", "plan": "enterprise",
+        "business_name": "Portal PW Ltd", "website": "https://portalpw.example"}).json()
+    cid = made["business"]["id"]
+    token = client.post("/api/account/login", json={
+        "email": "portalpw@example.com",
+        "password": made["password"]}).json()["token"]
+
+    # A portal session opened before the change.
+    before = client.post(f"/api/account/clients/{cid}/portal",
+                         headers={"X-Account-Token": token}).json()["token"]
+    assert client.get("/api/client/me",
+                      headers={"X-Client-Token": before}).status_code == 200
+
+    r = client.post(f"/api/account/clients/{cid}/portal-password",
+                    headers={"X-Account-Token": token},
+                    json={"password": "a-real-portal-password"})
+    assert r.status_code == 200, r.text
+
+    # The business can now actually sign in, which it never could before.
+    me = client.get("/api/client/me", headers={"X-Client-Token": before})
+    assert me.status_code == 401, (
+        "an open portal session outlived the password change")
+
+    rec = client.get(f"/api/account/clients",
+                     headers={"X-Account-Token": token}).json()
+    assert rec, "precondition"
+
+
+def test_one_subscriber_cannot_set_another_businesss_portal_password(
+        client, executive):
+    """Through the same _owned gate as every other client route, so the
+    adversarial account walk attacks it automatically."""
+    victim = client.post("/api/founder/accounts", json={
+        "email": "pw-victim@example.com", "plan": "enterprise",
+        "business_name": "PW Victim Ltd"}).json()
+    cid = victim["business"]["id"]
+
+    attacker = client.post("/api/founder/accounts", json={
+        "email": "pw-attacker@example.com", "plan": "free"}).json()
+    atoken = client.post("/api/account/login", json={
+        "email": "pw-attacker@example.com",
+        "password": attacker["password"]}).json()["token"]
+
+    r = client.post(f"/api/account/clients/{cid}/portal-password",
+                    headers={"X-Account-Token": atoken},
+                    json={"password": "a-real-portal-password"})
+    assert r.status_code == 404, (
+        "one subscriber rewrote another business's portal password")
+
+    anon = client.post(f"/api/account/clients/{cid}/portal-password",
+                       json={"password": "a-real-portal-password"})
+    assert anon.status_code == 404
