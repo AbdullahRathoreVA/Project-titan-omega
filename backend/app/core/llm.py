@@ -343,6 +343,23 @@ def complete(system: str, prompt: str, max_tokens: int = 1500,
     matter opt into cheaper or stricter routing.
     """
     global _LAST_ERROR
+
+    # The plan limit, charged HERE rather than at the 36 call sites that reach
+    # this function. Every plan has declared ai_calls_per_month since billing
+    # was written and nothing ever consumed it, so a free signup could spend an
+    # unbounded amount of somebody else's API quota. A limit applied at 36 call
+    # sites is a limit missing from the 37th.
+    #
+    # Refused by returning None, which is this function's existing contract for
+    # "no answer" — every caller already falls back to deterministic logic on
+    # None, so a customer who runs out gets the non-AI behaviour rather than an
+    # exception from a code path nobody tested.
+    from . import quota
+    verdict = quota.spend(quota.AI_CALLS)
+    if not verdict["allowed"]:
+        _LAST_ERROR = verdict.get("reason") or "monthly AI limit reached"
+        return None
+
     chain = _provider_chain()
     if not chain:
         _LAST_ERROR = "no LLM provider configured"

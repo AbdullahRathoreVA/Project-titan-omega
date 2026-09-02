@@ -10288,7 +10288,13 @@ def test_no_new_uncalled_capability_appears_without_being_noticed():
         "app.core.sessions.revoked_count",
         "app.persistence.export_json",
         "app.core.events.subscribe",
-        "app.core.tenancy.owner_of",
+        # app.core.tenancy.owner_of USED to be here and had to come out,
+        # and not because anything started calling it. core/crm.py added a
+        # function of the same name, the sweep matches BARE names, and one
+        # owner_of having callers hides the other. Nothing in app/** calls
+        # tenancy.owner_of today. Written down rather than deleted quietly,
+        # because a list entry vanishing for the wrong reason is how the
+        # limitation in evaluation/dead_code.py turns into a blind spot.
         "app.core.orgs.by_slug",
         "app.core.orgs.is_member",
         # Leftovers from core/auth.py, replaced by core/sessions.py. Kept
@@ -10571,3 +10577,444 @@ def test_one_subscriber_cannot_set_another_businesss_portal_password(
     anon = client.post(f"/api/account/clients/{cid}/portal-password",
                        json={"password": "a-real-portal-password"})
     assert anon.status_code == 404
+
+
+# ── the plan limit that charged nobody ─────────────────────────────────────
+# Every plan has declared ai_calls_per_month since billing was written — Free
+# 50, Individual 500, Business 3000 — and billing.check_quota has always known
+# how to check it. Across 36 call sites reaching a language model, NOT ONE
+# metered the account. billing.consume was called exactly once in the whole
+# application, for audits.
+#
+# So a free signup could burn an unbounded amount of somebody else's API quota
+# while the pricing page said otherwise. Fourteenth instance of this
+# repository's dominant defect shape, and the first that costs money rather
+# than truth.
+
+
+def test_an_ai_call_is_charged_to_the_account_that_asked(isolated_billing):
+    from app.core import billing, quota
+
+    billing.signup("meter@example.com", "a-real-password")
+    quota.bind("meter@example.com")
+    try:
+        for _ in range(3):
+            assert quota.spend()["metered"] is True
+        assert billing.public("meter@example.com")["usage"]["ai_calls"] == 3
+    finally:
+        quota.reset()
+
+
+def test_running_out_of_ai_calls_refuses_the_next_one(isolated_billing):
+    """The point. Not "the counter went up" — "the next call does not happen"."""
+    from app.core import billing, quota
+
+    billing.signup("outof@example.com", "a-real-password")
+    limit = billing.PLANS["free"].ai_calls_per_month
+    quota.bind("outof@example.com")
+    try:
+        for _ in range(limit):
+            assert quota.spend()["allowed"] is True
+        verdict = quota.spend()
+        assert verdict["metered"] is True
+        assert verdict["allowed"] is False
+        assert str(limit) in verdict["reason"], (
+            "the refusal does not say what the limit was")
+    finally:
+        quota.reset()
+
+
+def test_llm_complete_refuses_when_the_account_is_out(isolated_billing,
+                                                      monkeypatch):
+    """Metered inside llm.complete(), not at the 36 call sites that reach it.
+    A limit applied at 36 places is a limit missing from the 37th."""
+    from app.core import billing, llm, quota
+
+    billing.signup("llmout@example.com", "a-real-password")
+    limit = billing.PLANS["free"].ai_calls_per_month
+    quota.bind("llmout@example.com")
+    try:
+        for _ in range(limit):
+            quota.spend()
+        # Every provider would happily answer; the refusal is ours.
+        monkeypatch.setattr(llm, "_provider_chain", lambda: ["groq"])
+        assert llm.complete("system", "prompt") is None
+        assert "limit" in (llm.last_error() or "").lower()
+    finally:
+        quota.reset()
+
+
+def test_titans_own_work_is_charged_to_nobody(isolated_billing):
+    """The founder's console, the heartbeat engines and the public demo are not
+    a subscriber's usage. Guessing an account for them would either invent
+    usage on somebody's bill or refuse Titan's own background work because a
+    stranger's plan ran out."""
+    from app.core import quota
+
+    quota.reset()
+    verdict = quota.spend()
+    assert verdict["metered"] is False, "unbound work was charged to somebody"
+    assert verdict["allowed"] is True, "unbound work was refused"
+
+
+def test_unmetered_is_reported_separately_from_allowed(isolated_billing):
+    """"We did not charge anyone" and "they were within their limit" are
+    different facts. A caller that cannot tell them apart will report unmetered
+    work as free work."""
+    from app.core import quota
+
+    quota.reset()
+    assert set(quota.spend()) >= {"metered", "allowed", "reason"}
+
+
+def test_a_broken_quota_check_is_not_silently_free(isolated_billing,
+                                                   monkeypatch):
+    from app.core import billing, quota
+
+    def explode(*a, **k):
+        raise RuntimeError("billing is down")
+
+    monkeypatch.setattr(billing, "consume", explode)
+    quota.bind("broken@example.com")
+    try:
+        verdict = quota.spend()
+        # Allowed, so an outage does not take the product down — but reported
+        # as NOT metered, so nobody reads it as free.
+        assert verdict["allowed"] is True
+        assert verdict["metered"] is False
+        assert "failed" in verdict["reason"]
+    finally:
+        quota.reset()
+
+
+def test_a_customer_can_see_what_they_have_spent(client, isolated_billing):
+    """A limit nobody can see is a surprise, not a limit. Also the only way to
+    prove the middleware binds the account: contextvars have to survive FastAPI
+    running a sync endpoint in a threadpool."""
+    from app.core import billing
+
+    billing.signup("seeusage@example.com", "a-real-password")
+    token = client.post("/api/account/login", json={
+        "email": "seeusage@example.com",
+        "password": "a-real-password"}).json()["token"]
+
+    r = client.get("/api/account/usage", headers={"X-Account-Token": token})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["billed_to"] == "seeusage@example.com", (
+        "the middleware did not bind the account, so nothing this request does "
+        "would be metered")
+    assert body["limits"]["ai_calls_per_month"] == \
+        billing.PLANS["free"].ai_calls_per_month
+    assert body["usage"]["ai_calls"] == 0
+
+
+def test_usage_needs_a_session(client, isolated_billing):
+    assert client.get("/api/account/usage").status_code == 401
+
+
+# ── signing up used to accept things nobody could be reached at ────────────
+# billing.signup checked `"@" not in email or len(email) < 5`, so `xx@xx`
+# became a customer and so did `@@@@@`. The signup funnel is the only
+# instrument that answers "is anybody actually using this?", and it was
+# counting junk.
+
+
+def test_an_address_nobody_could_receive_mail_at_is_refused(isolated_billing):
+    from app.core import billing
+
+    for bad in ("xx@xx", "@@@@@", "a b@c.com", "x@y", "no-at-sign.com",
+                "a@@b.com", "a@.com", "a@b..com", "", "   "):
+        try:
+            billing.signup(bad, "a-real-password")
+            raise AssertionError(f"signup accepted {bad!r}")
+        except ValueError:
+            pass
+
+
+def test_a_real_address_still_signs_up(isolated_billing):
+    """A validator that refuses everything is not a validator."""
+    from app.core import billing
+
+    for good in ("abdullah@gmail.com", "a.b+tag@sub.example.co.uk",
+                 "first.last@titanomega-ai.com"):
+        assert billing.signup(good, "a-real-password")["email"] == good
+
+
+def test_the_refusal_says_what_is_wrong_with_the_address():
+    """A form that says "invalid" teaches nothing. A person who typed
+    `me@gmail` needs to be told the domain has no dot."""
+    from app.core import emailaddr
+
+    assert "dot" in (emailaddr.reason_invalid("me@gmail") or "")
+    assert "@" in (emailaddr.reason_invalid("nobody") or "")
+    assert emailaddr.reason_invalid("abdullah@gmail.com") is None
+
+
+def test_deliverability_is_off_by_default_and_fails_open(monkeypatch):
+    """A network call on the signup path is a decision, not a default, and a
+    nameserver blinking must never cost a customer."""
+    from app.core import emailaddr
+
+    monkeypatch.delenv("TITAN_VERIFY_EMAIL_MX", raising=False)
+    out = emailaddr.deliverable("abdullah@gmail.com")
+    assert out["checked"] is False
+    assert out["deliverable"] is None, (
+        "an unchecked address was reported as undeliverable")
+
+
+def test_nothing_ever_claims_an_address_is_verified():
+    """Only a delivered message proves a mailbox exists, and sending needs a
+    provider Titan does not have. Reporting an unsent address as verified is
+    the same lie as an unmeasured number."""
+    from app.core import emailaddr
+
+    assert emailaddr.check("abdullah@gmail.com")["verified"] is False
+
+
+def test_a_new_account_is_not_marked_verified(isolated_billing):
+    from app.core import billing
+
+    acct = billing.signup("fresh@example.com", "a-real-password")
+    assert acct["email_verified"] is False
+
+
+# ── the signup page says what each plan gives ──────────────────────────────
+
+
+def test_the_signup_page_shows_every_limit_it_will_enforce():
+    """The card showed businesses and audits. It did not show the AI limit,
+    which was harmless while nothing enforced it and is a surprise now that
+    something does."""
+    import pathlib
+    import re as _re
+
+    page = (pathlib.Path(__file__).resolve().parents[1]
+            / "app" / "static" / "join.html").read_text(encoding="utf-8")
+    code = _re.sub(r"//[^\n]*", "", page)
+
+    for field in ("ai_calls_per_month", "audits_per_month", "clients",
+                  "trial_days"):
+        assert field in code, (
+            f"the signup page never mentions {field}, so a customer meets that "
+            f"limit for the first time when it stops them")
+
+
+def test_the_signup_page_hardcodes_no_plan_numbers():
+    """Same rule as the pricing page. A page that disagrees with what the
+    server enforces is a promise nobody made."""
+    import pathlib
+    import re as _re
+
+    from app.core import billing
+
+    page = (pathlib.Path(__file__).resolve().parents[1]
+            / "app" / "static" / "join.html").read_text(encoding="utf-8")
+    # Strip <style> and HTML comments FIRST. The first version of this
+    # test matched "50" inside `minmax(150px,1fr)`. A test that fails for
+    # the wrong reason costs as much trust as one that passes for it.
+    code = _re.sub(r"<style.*?</style>", "", page, flags=_re.S | _re.I)
+    code = _re.sub(r"<!--.*?-->", "", code, flags=_re.S)
+    code = _re.sub(r"//[^\n]*", "", code)
+    code = _re.sub(r"/\*.*?\*/", "", code, flags=_re.S)
+
+    for key in billing.ORDER:
+        plan = billing.PLANS[key]
+        # Whole numbers only, so a price of 19 does not match "2019".
+        if plan.price_usd:
+            assert not _re.search(rf"\b{plan.price_usd}\b", code), (
+                f"the {key} price is typed into the signup page")
+        limit = plan.ai_calls_per_month
+        if limit > 0:
+            assert not _re.search(rf"\b{limit}\b", code), (
+                f"the {key} AI limit is typed into the signup page")
+
+
+# ── a customer's own leads ─────────────────────────────────────────────────
+# Titan has had a working leads pipeline since early on — create, status,
+# stages, discovery, research, outreach drafting. Every route reaching it was
+# FOUNDER ONLY, over one flat dict with no owner field at all. So the product
+# could find leads for Abdullah and for nobody who paid for it.
+#
+# This is also the most dangerous change in the codebase, because a leads table
+# shared by every customer is one missing filter away from showing a business
+# its competitor's pipeline. Hence the attacks below.
+
+
+@pytest.fixture
+def two_customers(client, isolated_billing):
+    from app.core import billing
+    from app.store import STORE
+
+    STORE.leads.clear()
+    tokens = {}
+    for who in ("alice@example.com", "bob@example.com"):
+        billing.signup(who, "a-real-password")
+        tokens[who] = client.post("/api/account/login", json={
+            "email": who, "password": "a-real-password"}).json()["token"]
+    yield tokens
+    STORE.leads.clear()
+
+
+def _mk(client, token, name, **extra):
+    r = client.post("/api/account/leads", headers={"X-Account-Token": token},
+                    json={"name": name, **extra})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_customer_has_their_own_pipeline(client, two_customers):
+    alice = two_customers["alice@example.com"]
+    lead = _mk(client, alice, "Alice Prospect", contact="p@example.com")
+    assert lead["account"] == "alice@example.com"
+
+    listed = client.get("/api/account/leads",
+                        headers={"X-Account-Token": alice}).json()
+    assert [l["name"] for l in listed["items"]] == ["Alice Prospect"]
+
+
+def test_one_customer_never_sees_anothers_leads(client, two_customers):
+    alice, bob = two_customers["alice@example.com"], two_customers["bob@example.com"]
+    _mk(client, alice, "Alice Prospect")
+    _mk(client, bob, "Bob Prospect")
+
+    for token, expected in ((alice, "Alice Prospect"), (bob, "Bob Prospect")):
+        items = client.get("/api/account/leads",
+                           headers={"X-Account-Token": token}).json()["items"]
+        assert [l["name"] for l in items] == [expected], (
+            "a customer saw somebody else's pipeline")
+
+
+def test_the_counts_do_not_leak_either(client, two_customers):
+    """A count over the unfiltered table tells one customer how many leads
+    another has. Smaller than the records themselves, and still a leak."""
+    alice, bob = two_customers["alice@example.com"], two_customers["bob@example.com"]
+    for i in range(4):
+        _mk(client, bob, f"Bob Prospect {i}")
+    _mk(client, alice, "Alice Prospect")
+
+    body = client.get("/api/account/leads",
+                      headers={"X-Account-Token": alice}).json()
+    assert body["total"] == 1, "the total counted another customer's leads"
+    assert sum(body["counts"].values()) == 1
+
+
+def test_a_customer_cannot_touch_anothers_lead(client, two_customers):
+    alice, bob = two_customers["alice@example.com"], two_customers["bob@example.com"]
+    victim = _mk(client, alice, "Alice Prospect")
+
+    assert client.post(f"/api/account/leads/{victim['id']}/status",
+                       headers={"X-Account-Token": bob},
+                       json={"status": "won"}).status_code == 404
+    assert client.delete(f"/api/account/leads/{victim['id']}",
+                         headers={"X-Account-Token": bob}).status_code == 404
+
+    # And it is untouched.
+    still = client.get("/api/account/leads",
+                       headers={"X-Account-Token": alice}).json()["items"]
+    assert len(still) == 1 and still[0]["status"] == "new"
+
+
+def test_a_missing_lead_and_someone_elses_look_identical(client, two_customers):
+    """Two different answers enumerate other people's records."""
+    alice, bob = two_customers["alice@example.com"], two_customers["bob@example.com"]
+    victim = _mk(client, alice, "Alice Prospect")
+
+    theirs = client.delete(f"/api/account/leads/{victim['id']}",
+                           headers={"X-Account-Token": bob})
+    absent = client.delete("/api/account/leads/lead-does-not-exist",
+                           headers={"X-Account-Token": bob})
+    assert theirs.status_code == absent.status_code == 404
+    assert theirs.json() == absent.json(), (
+        "the refusal differs, so a prober can tell which lead ids exist")
+
+
+def test_the_owner_comes_from_the_session_not_the_body(client, two_customers):
+    """A caller who can name the owner can file into somebody else's pipeline —
+    and read it back out by filing into it."""
+    alice, bob = two_customers["alice@example.com"], two_customers["bob@example.com"]
+    lead = _mk(client, bob, "Planted", account="alice@example.com",
+               owner="alice@example.com")
+    assert lead["account"] == "bob@example.com", (
+        "the request body chose the owner")
+    assert client.get("/api/account/leads",
+                      headers={"X-Account-Token": alice}).json()["items"] == []
+
+
+def test_the_customer_crm_needs_a_session(client, isolated_billing):
+    assert client.get("/api/account/leads").status_code == 401
+    assert client.post("/api/account/leads", json={"name": "x"}).status_code == 401
+
+
+def test_the_founders_pipeline_is_not_the_customers(client, two_customers,
+                                                    fresh_store):
+    """The leak in the other direction, and just as much of a breach: a founder
+    screen that read the table directly would show a paying customer's
+    prospects to Abdullah."""
+    alice = two_customers["alice@example.com"]
+    _mk(client, alice, "Alice Prospect")
+
+    founder_view = client.get("/api/leads").json()
+    names = [l["name"] for l in founder_view["items"]]
+    assert "Alice Prospect" not in names, (
+        "the founder's own screen listed a customer's lead")
+
+
+def test_an_existing_lead_with_no_owner_stays_the_founders():
+    """The whole migration. Abdullah's pipeline predates customers, it is his,
+    and nothing moves it. A migration that reassigned it to the first customer
+    who signed up would be silent and unrecoverable."""
+    from app.core import crm
+
+    legacy = {"id": "lead-legacy", "name": "From before customers existed"}
+    assert crm.owner_of(legacy) == crm.FOUNDER
+    assert crm.owns(legacy, crm.FOUNDER)
+    assert not crm.owns(legacy, "someone@example.com")
+
+
+def test_a_win_rate_over_nothing_is_not_zero_percent():
+    """A rate over zero closed leads is not 0% — it is a number nobody
+    measured, and this codebase says so rather than showing a reassuring
+    zero."""
+    from app.core import crm
+
+    empty = crm.stats([])
+    assert empty["win_rate"]["value"] is None
+    assert empty["win_rate"]["measured"] is False
+    assert empty["win_rate"]["reason"]
+
+    closed = crm.stats([{"status": "won"}, {"status": "lost"}])
+    assert closed["win_rate"]["measured"] is True
+    assert closed["win_rate"]["value"] == 0.5
+
+
+def test_attention_says_why_and_what_to_do():
+    """An item that does not say why it is there teaches somebody to clear the
+    list rather than read it."""
+    from app.core import crm
+
+    rows = crm.attention([{"id": "l1", "name": "No contact", "status": "new",
+                           "stage_reached": 0, "contact": ""}])
+    assert rows, "a lead with no contact detail raised nothing"
+    for row in rows:
+        assert row["reason"] and row["why_it_matters"] and row["next"]
+
+
+def test_every_customer_lead_route_is_attacked_by_the_account_walk():
+    """The adversarial walk over /api/account attacks routes carrying {cid}.
+    These carry {lead_id}, so they would be missed — this asserts they are
+    covered by the tests above BY NAME, rather than trusting a walk that does
+    not reach them."""
+    import pathlib
+    import re as _re
+
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "app" / "api" / "router.py").read_text(encoding="utf-8")
+    routes = set(_re.findall(r'@router\.\w+\("(/account/leads[^"]*)"', src))
+    assert routes, "the customer CRM routes are gone"
+    tested = pathlib.Path(__file__).read_text(encoding="utf-8")
+    assert "test_a_customer_cannot_touch_anothers_lead" in tested
+    for route in routes:
+        if "{lead_id}" in route:
+            assert "/api/account/leads/{victim['id']}" in tested, (
+                f"{route} has no cross-tenant attack behind it")

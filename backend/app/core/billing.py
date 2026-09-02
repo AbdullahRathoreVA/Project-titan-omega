@@ -189,9 +189,26 @@ def _period_start() -> float:
 
 
 def signup(email: str, password: str, plan: str = "free") -> dict:
-    email = (email or "").strip().lower()
-    if "@" not in email or len(email) < 5:
-        raise ValueError("A valid email address is required.")
+    # The check here used to be `"@" not in email or len(email) < 5`, which
+    # accepted `xx@xx` and `@@@@@` as customers. That is not a cosmetic
+    # problem: the signup funnel is the only instrument that answers "is
+    # anybody actually using this?", and it was counting junk. Nothing could
+    # ever be sent to those accounts either, so a receipt or a trial-ending
+    # notice was undeliverable before it was written.
+    from . import emailaddr
+    email = emailaddr.normalise(email)
+    problem = emailaddr.reason_invalid(email)
+    if problem:
+        raise ValueError(problem)
+    # Deliverability is a SEPARATE question, off by default, and it fails open
+    # — see core/emailaddr.py. Unknown never becomes invalid, because a
+    # nameserver blinking must not cost a customer.
+    posted = emailaddr.deliverable(email)
+    if posted.get("deliverable") is False:
+        raise ValueError(
+            f"Mail cannot be delivered to {email.partition('@')[2]} — "
+            f"{posted.get('reason')}. Please use an address you can receive "
+            f"mail at.")
     if len(password or "") < 8:
         raise ValueError("Password must be at least 8 characters.")
     if plan not in PLANS:
@@ -203,6 +220,11 @@ def signup(email: str, password: str, plan: str = "free") -> dict:
         salt = secrets.token_hex(16)
         _accounts[email] = {
             "email": email,
+            # Always False, and never set to True by anything here. Only a
+            # delivered message proves a mailbox exists, and sending needs a
+            # provider Titan does not have. An unsent address reported as
+            # verified is the same lie as an unmeasured number.
+            "email_verified": False,
             "_salt": salt,
             "_pwhash": _hash(password, salt),
             "plan": plan,
@@ -303,6 +325,7 @@ def public(email: str) -> dict:
         used = acct["usage"]
         return {
             "email": acct["email"],
+            "email_verified": bool(acct.get("email_verified", False)),
             "plan": acct["plan"],
             "plan_name": plan.name,
             "status": acct["status"],

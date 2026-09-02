@@ -1692,6 +1692,146 @@ def account_change_password(req: PasswordChangeIn, request: Request,
             "token": billing.authenticate(email, req.new_password)}
 
 
+def _account_or_401(token) -> str:
+    """The subscriber this request belongs to, or 401.
+
+    One helper rather than the same four lines at each CRM route: the copy that
+    gets edited and the copy that does not is how a tenant filter goes missing.
+    """
+    from ..core import billing
+    email = billing.resolve(token or "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in first")
+    return email
+
+
+class CustomerLeadIn(BaseModel):
+    name: str = Field(..., min_length=1)
+    source: str = Field(default="manual")
+    contact: str = Field(default="")
+    note: str = Field(default="")
+    website: str = Field(default="")
+
+
+class CustomerLeadStatus(BaseModel):
+    status: str = Field(...)
+
+
+@router.get("/account/leads", tags=["crm"])
+def customer_leads(x_account_token: Optional[str] = Header(None)) -> dict:
+    """This customer's pipeline, and nothing else.
+
+    Titan has had a working leads pipeline since early on and every route
+    reaching it was FOUNDER ONLY, over a flat dict with no owner field. So the
+    product could find leads for Abdullah and for nobody who paid for it.
+
+    Everything here reads through crm.visible_to(), including the counts. A
+    count computed over the unfiltered table tells one customer how many leads
+    another has, which is a smaller leak than the records themselves and still
+    a leak.
+    """
+    from ..core import crm
+    email = _account_or_401(x_account_token)
+    items = sorted(crm.visible_to(STORE.leads, email),
+                   key=lambda l: l.get("updated_at", ""), reverse=True)
+    return {
+        "items": items,
+        "statuses": list(crm.STATUSES),
+        "attention": crm.attention(items),
+        **crm.stats(items),
+    }
+
+
+@router.post("/account/leads", tags=["crm"])
+def customer_create_lead(req: CustomerLeadIn,
+                         x_account_token: Optional[str] = Header(None)) -> dict:
+    """File a lead against THIS account.
+
+    The owner comes from the session, never from the body. A caller who can
+    name the owner is a caller who can file into somebody else's pipeline — or
+    read it back out by filing into it.
+    """
+    from ..core import crm
+    email = _account_or_401(x_account_token)
+    lead = crm.new_lead(
+        lead_id=STORE.new_id("lead"), account=email,
+        name=req.name, source=req.source, contact=req.contact,
+        note=req.note, website=req.website,
+        created_at=now().isoformat(), updated_at=now().isoformat())
+    STORE.leads[lead["id"]] = lead
+    persistence.save(STORE)
+    return lead
+
+
+@router.post("/account/leads/{lead_id}/status", tags=["crm"])
+def customer_lead_status(lead_id: str, req: CustomerLeadStatus,
+                         x_account_token: Optional[str] = Header(None)) -> dict:
+    from ..core import crm
+    email = _account_or_401(x_account_token)
+    status = (req.status or "").lower()
+    if status not in crm.STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Status must be one of {list(crm.STATUSES)}")
+    try:
+        lead = crm.require_owned(STORE.leads, lead_id, email)
+    except crm.NotYours:
+        # Identical to "no such lead". Two answers enumerate other people's.
+        raise HTTPException(status_code=404, detail="Lead not found")
+    lead["status"] = status
+    lead["updated_at"] = now().isoformat()
+    persistence.save(STORE)
+    return lead
+
+
+@router.delete("/account/leads/{lead_id}", tags=["crm"])
+def customer_delete_lead(lead_id: str,
+                         x_account_token: Optional[str] = Header(None)) -> dict:
+    from ..core import crm
+    email = _account_or_401(x_account_token)
+    try:
+        crm.require_owned(STORE.leads, lead_id, email)
+    except crm.NotYours:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    del STORE.leads[lead_id]
+    persistence.save(STORE)
+    return {"deleted": lead_id}
+
+
+@router.get("/account/usage", tags=["billing"])
+def account_usage(x_account_token: Optional[str] = Header(None)) -> dict:
+    """What this customer has used this month, and what their plan allows.
+
+    A limit nobody can see is a surprise rather than a limit. Every plan has
+    declared ai_calls_per_month since billing was written; nothing charged it
+    and nothing displayed it, so the number on the pricing page described
+    nothing that happened.
+
+    `billed_to` is what the CURRENT request resolved to through the middleware.
+    It is reported rather than assumed, because a request that binds nobody
+    spends nobody's quota, and the difference between "you have used none" and
+    "we were not counting" is the whole point.
+    """
+    from ..core import billing, quota
+    email = billing.resolve(x_account_token or "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in first")
+    acct = billing.public(email)
+    return {
+        "account": email,
+        "plan": acct.get("plan"),
+        "usage": acct.get("usage"),
+        "limits": acct.get("limits"),
+        "period_start": acct.get("period_start"),
+        # Proof the meter is pointed at this request, not a claim that it is.
+        "billed_to": quota.current() or None,
+        "note": ("A limit of -1 means unlimited. Usage resets at the start of "
+                 "each billing period. Work Titan does for itself — the "
+                 "heartbeat, the self-audit, the public demo — is charged to "
+                 "nobody and is not counted here."),
+    }
+
+
 @router.post("/account/logout", tags=["billing"])
 def account_logout(x_account_token: Optional[str] = Header(None)) -> dict:
     """End this session. billing.sign_out() existed and had no caller."""

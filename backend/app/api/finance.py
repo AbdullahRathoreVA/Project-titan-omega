@@ -140,7 +140,17 @@ def delete_expense(expense_id: str) -> dict:
 
 @router.get("/leads", tags=["crm"])
 def list_leads() -> dict:
-    items = sorted(STORE.leads.values(), key=lambda l: l.get("updated_at", ""), reverse=True)
+    """The FOUNDER's pipeline.
+
+    Filtered through crm.visible_to() like every other read, rather than
+    listing the table. Leads are no longer one flat set: customers own theirs
+    now, and a founder screen that read the table directly would show a
+    paying customer's prospects to Abdullah — the same leak in the other
+    direction, and just as much of a breach.
+    """
+    from ..core import crm
+    items = sorted(crm.visible_to(STORE.leads, crm.FOUNDER),
+                   key=lambda l: l.get("updated_at", ""), reverse=True)
     counts = {s: sum(1 for l in items if l.get("status") == s) for s in LEAD_STATUSES}
     return {"items": items, "counts": counts, "statuses": LEAD_STATUSES,
             "stages": LEAD_STAGES, **_funnel(items)}
@@ -155,17 +165,11 @@ class LeadCreate(BaseModel):
 
 @router.post("/leads", tags=["crm"])
 def create_lead(req: LeadCreate) -> dict:
-    lead = {
-        "id": STORE.new_id("lead"),
-        "name": req.name.strip()[:80],
-        "source": (req.source or "manual").lower()[:30],
-        "contact": req.contact.strip()[:200],
-        "note": req.note.strip()[:300],
-        "status": "new",
-        "stage_reached": 0,
-        "created_at": now().isoformat(),
-        "updated_at": now().isoformat(),
-    }
+    from ..core import crm
+    lead = crm.new_lead(
+        lead_id=STORE.new_id("lead"), account=crm.FOUNDER,
+        name=req.name, source=req.source, contact=req.contact, note=req.note,
+        created_at=now().isoformat(), updated_at=now().isoformat())
     STORE.leads[lead["id"]] = lead
     STORE.emit("revenue-head", "discovery", f"New lead: {lead['name']} ({lead['source']})", "info")
     persistence.save(STORE)
@@ -178,8 +182,12 @@ class LeadStatus(BaseModel):
 
 @router.post("/leads/{lead_id}/status", tags=["crm"])
 def set_lead_status(lead_id: str, req: LeadStatus) -> dict:
-    lead = STORE.leads.get(lead_id)
-    if lead is None:
+    from ..core import crm
+    try:
+        lead = crm.require_owned(STORE.leads, lead_id, crm.FOUNDER)
+    except crm.NotYours:
+        # The same 404 whether it does not exist or belongs to a customer.
+        # Two different answers enumerate other people's records.
         raise HTTPException(status_code=404, detail="Lead not found")
     status = req.status.lower()
     if status not in LEAD_STATUSES:
@@ -218,7 +226,7 @@ def discover_leads(req: LeadDiscover, request: Request) -> dict:
     create CRM records → audit the first few sites → draft outreach citing what
     was actually found. Nothing is sent to anyone.
     """
-    from ..core import ratelimit
+    from ..core import crm, ratelimit
     from ..engines import outreach, prospecting
 
     # LIMITS declared a "discover" bucket, with "lead discovery burns Tavily
@@ -230,9 +238,11 @@ def discover_leads(req: LeadDiscover, request: Request) -> dict:
     if not verdict["allowed"]:
         raise HTTPException(status_code=429, detail=verdict)
 
-    # Never re-file a business already in the pipeline.
+    # Never re-file a business already in the pipeline. Scoped to the founder's
+    # own, because reading every customer's leads to decide what HE has already
+    # seen would let one customer's pipeline suppress a lead from his.
     known = set()
-    for lead in STORE.leads.values():
+    for lead in crm.visible_to(STORE.leads, crm.FOUNDER):
         site = outreach.find_website(lead)
         if site:
             d = prospecting.registrable(site)
@@ -245,18 +255,11 @@ def discover_leads(req: LeadDiscover, request: Request) -> dict:
 
     created = []
     for c in found["candidates"]:
-        lead = {
-            "id": STORE.new_id("lead"),
-            "name": c["name"][:80],
-            "source": "discovered",
-            "contact": c["website"],
-            "note": (c["why"] or "")[:300],
-            "status": "new",
-            "stage_reached": 0,
-            "website": c["website"],
-            "created_at": now().isoformat(),
-            "updated_at": now().isoformat(),
-        }
+        lead = crm.new_lead(
+            lead_id=STORE.new_id("lead"), account=crm.FOUNDER,
+            name=c["name"], source="discovered", contact=c["website"],
+            note=(c["why"] or ""), website=c["website"],
+            created_at=now().isoformat(), updated_at=now().isoformat())
         STORE.leads[lead["id"]] = lead
         created.append(lead)
 
@@ -301,10 +304,12 @@ def research_lead(lead_id: str, req: LeadResearch | None = None) -> dict:
 
     Returns a DRAFT. Nothing is sent to anyone.
     """
+    from ..core import crm
     from ..engines import outreach
 
-    lead = STORE.leads.get(lead_id)
-    if lead is None:
+    try:
+        lead = crm.require_owned(STORE.leads, lead_id, crm.FOUNDER)
+    except crm.NotYours:
         raise HTTPException(status_code=404, detail="Lead not found")
 
     lang = (req.lang if req else "en") or "en"
@@ -326,7 +331,10 @@ def research_lead(lead_id: str, req: LeadResearch | None = None) -> dict:
 
 @router.delete("/leads/{lead_id}", tags=["crm"])
 def delete_lead(lead_id: str) -> dict:
-    if lead_id not in STORE.leads:
+    from ..core import crm
+    try:
+        crm.require_owned(STORE.leads, lead_id, crm.FOUNDER)
+    except crm.NotYours:
         raise HTTPException(status_code=404, detail="Lead not found")
     del STORE.leads[lead_id]
     persistence.save(STORE)

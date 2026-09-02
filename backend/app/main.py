@@ -569,6 +569,31 @@ async def count_visitors(request: Request, call_next):
 
 
 @app.middleware("http")
+async def bill_to(request: Request, call_next):
+    """Say which subscriber this request belongs to, once.
+
+    Read by core/quota.py, which core/llm.py asks before spending a model call.
+    Bound HERE rather than at each of the ~20 routes that resolve an account
+    token, because the one that gets forgotten is the one that runs unmetered —
+    which is how 36 LLM call sites came to charge nobody at all.
+
+    An absent or unrecognised token binds NOTHING, and unbound work is not
+    charged to anybody and never refused. Founder work, the heartbeat engines
+    and the public demo are not a subscriber's usage, and guessing an account
+    for them would either invent usage on somebody's bill or refuse Titan's own
+    background work because a stranger's plan ran out.
+    """
+    from .core import quota
+    quota.bind("")
+    token = request.headers.get("x-account-token", "").strip()
+    if token:
+        with contextlib.suppress(Exception):
+            from .core import billing as _billing
+            quota.bind(_billing.resolve(token) or "")
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def auth_guard(request: Request, call_next):
     path = request.url.path
     if (auth.require_auth() and path.startswith("/api")

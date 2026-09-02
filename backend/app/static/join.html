@@ -59,7 +59,12 @@
   input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 
   /* Plan picker */
-  .plans{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:16px}
+  .plans{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:16px}
+  .ptrial{display:inline-block;margin:4px 0 2px;padding:1px 7px;border-radius:20px;
+    font-size:.66rem;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
+    border:1px solid rgba(46,204,143,.45);background:rgba(46,204,143,.12);color:#2ecc8f}
+  .pf{margin:8px 0 0;padding-left:15px;font-size:.72rem;line-height:1.5;opacity:.75}
+  .pf li{margin:2px 0}
   .plan{background:var(--panel2);border:1px solid var(--edge);border-radius:11px;
         padding:14px;cursor:pointer;text-align:left;color:var(--ink);transition:border-color .16s,background .16s}
   .plan:hover{border-color:rgba(34,211,238,.4)}
@@ -261,6 +266,16 @@
       .catch(function () { /* offline: the normal sign-in path still works */ });
   })();
 
+  // Plan text is Titan's own, but it goes through innerHTML, and a page
+  // that escapes only the data it currently distrusts escapes the wrong thing
+  // the day the source changes.
+  function esc(s) {
+    return String(s === undefined || s === null ? "" : s).replace(
+      /[&<>"]/g, function (c) {
+        return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c];
+      });
+  }
+
   // --- plans: fetched, never hardcoded -----------------------------------
   fetch("/api/plans").then(function (r) { return r.json(); }).then(function (d) {
     var box = $("plans");
@@ -271,14 +286,42 @@
       b.className = "plan" + (p.key === "free" ? " sel" : "");
       b.dataset.key = p.key;
       var lim = p.limits || {};
-      var clients = lim.clients === -1 ? "Unlimited businesses" :
-                    lim.clients + (lim.clients === 1 ? " business" : " businesses");
-      var audits = lim.audits_per_month === -1 ? "unlimited audits" :
-                   lim.audits_per_month + " audits/mo";
+
+      // Every number below comes from /api/plans. None is typed here — a page
+      // that disagrees with what the server enforces is a promise nobody made,
+      // and the AI limit in particular is now actually charged, so a customer
+      // who is not shown it will meet it as a surprise.
+      function amount(n, one, many) {
+        if (n === -1) return "Unlimited " + many;
+        return n + " " + (n === 1 ? one : many);
+      }
+      var rows = [
+        amount(lim.clients, "business", "businesses"),
+        amount(lim.audits_per_month, "audit", "audits") + "/mo",
+        amount(lim.ai_calls_per_month, "AI call", "AI calls") + "/mo",
+      ];
+      if (lim.history_days) {
+        rows.push(lim.history_days === -1 ? "Full history"
+                                          : lim.history_days + " days of history");
+      }
+
+      var trial = "";
+      if ((p.trial_days || 0) > 0) {
+        trial = '<div class="ptrial">Free for ' + p.trial_days + ' day' +
+                (p.trial_days === 1 ? '' : 's') + '</div>';
+      }
+
+      // The two or three things this plan adds, in the product's own words.
+      var extras = (p.features || []).slice(0, 3).map(function (f) {
+        return '<li>' + esc(f) + '</li>';
+      }).join("");
+
       b.innerHTML =
-        '<div class="pn">' + p.name + '</div>' +
+        '<div class="pn">' + esc(p.name) + '</div>' +
         '<div class="pp">$' + p.price_usd + '<span>/mo</span></div>' +
-        '<div class="pl">' + clients + '<br>' + audits + '</div>';
+        trial +
+        '<div class="pl">' + rows.map(esc).join("<br>") + '</div>' +
+        (extras ? '<ul class="pf">' + extras + '</ul>' : '');
       b.addEventListener("click", function () {
         plan = p.key;
         Array.prototype.forEach.call(box.children, function (c) { c.classList.remove("sel"); });
