@@ -190,7 +190,8 @@ $('#go').onclick = async () => {
       method: 'POST', headers: {'X-Account-Token': login.token},
     })).json();
     if (out.ready) {
-      msg.textContent = 'Account created. Continue in PayPal to activate.';
+      msg.textContent = 'Account created. Opening secure checkout…';
+      await openCheckout(out, email, msg);
     } else {
       // Honest degradation: the account is real and free works. Say that
       // rather than leaving them staring at a dead button.
@@ -203,6 +204,66 @@ $('#go').onclick = async () => {
     msg.textContent = 'Network error — please try again.';
   }
 };
+
+
+// --- opening the processor's own checkout ---------------------------------
+// This used to be one line saying "Continue in PayPal to activate" and doing
+// nothing at all. A customer who chose a paid plan was told to continue
+// somewhere that did not exist.
+//
+// The processor is read from the SERVER response, never assumed. Same rule the
+// prices follow: a page that hardcodes a processor lies the day it changes.
+//
+// Titan never sees a card number in any branch below.
+function loadScript(src) {
+  return new Promise(function (resolve, reject) {
+    var existing = document.querySelector('script[src="' + src + '"]');
+    if (existing) { resolve(); return; }
+    var s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    // A blocked script fails SILENTLY otherwise, which is how a CSP problem
+    // becomes "the button does nothing" with no explanation anywhere.
+    s.onerror = function () { reject(new Error('blocked or unreachable: ' + src)); };
+    document.head.appendChild(s);
+  });
+}
+
+async function openCheckout(out, email, msg) {
+  try {
+    if (out.processor === 'paddle') {
+      await loadScript('https://cdn.paddle.com/paddle/v2/paddle.js');
+      if (!window.Paddle) throw new Error('Paddle.js did not initialise');
+      // Sandbox unless the server says production. The server defaults to
+      // sandbox so a mistake cannot charge a real card.
+      if (out.environment !== 'production') Paddle.Environment.set('sandbox');
+      Paddle.Initialize({ token: out.client_token });
+      Paddle.Checkout.open({
+        items: [{ priceId: out.price_id, quantity: 1 }],
+        customer: { email: email }
+      });
+      msg.textContent = 'Complete your purchase in the Paddle window.';
+      return;
+    }
+    // Any processor that hands back a URL the customer opens themselves.
+    if (out.checkout_url || out.url) {
+      window.location.href = out.checkout_url || out.url;
+      return;
+    }
+    // Ready, but this page does not know how to open it. Say exactly that
+    // rather than leaving a dead button and a cheerful message.
+    msg.className = 'msg';
+    msg.textContent = 'Your account is created. This page cannot open the ' +
+      (out.processor || 'configured') + ' checkout automatically — please ' +
+      'contact us to finish the upgrade. The free plan works in full ' +
+      'meanwhile.';
+  } catch (e) {
+    msg.className = 'msg err';
+    msg.textContent = 'Your account was created, but the checkout could not ' +
+      'be opened (' + e.message + '). You are on the free plan and it works ' +
+      'in full. Please try again or contact us.';
+  }
+}
 
 // Product schema, fetched rather than hardcoded so the marked-up prices are
 // always the prices the server actually charges. Titan's own audit tells

@@ -5225,8 +5225,16 @@ def test_a_trial_is_not_advertised_as_billable_without_a_processor(monkeypatch):
     assert student["trial_billable"] is False, \
         "a trial was advertised as billable with no payment processor"
 
+    # The server side alone is NOT enough, and this assertion used to claim it
+    # was — under a docstring saying "do not advertise a conversion that cannot
+    # happen". Without the client-side token the browser cannot open Paddle's
+    # checkout, so the conversion genuinely cannot happen.
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_live_xxx")
     monkeypatch.setenv("PADDLE_PRICE_ID_STUDENT", "pri_s")
+    assert billing.PLANS["student"].as_dict()["trial_billable"] is False, \
+        "a trial was advertised as billable while no checkout could open"
+
+    monkeypatch.setenv("PADDLE_CLIENT_TOKEN", "live_browser_safe_token")
     assert billing.PLANS["student"].as_dict()["trial_billable"] is True
 
 
@@ -7977,9 +7985,18 @@ def measures(monkeypatch, tmp_path):
 
 
 def _paid(monkeypatch):
-    """Configure a processor the way setting the Paddle keys will."""
+    """Configure a processor the way setting the Paddle keys will.
+
+    PADDLE_CLIENT_TOKEN is part of that and was missing here. The API key and a
+    price id make the SERVER ready; the browser cannot open Paddle's checkout
+    without a client-side token, so without it no customer can complete a
+    purchase and money is correctly still not measurable. "A processor is
+    connected" has to mean a card can be charged, or these tests assert a
+    revenue figure for a shop with no till.
+    """
     monkeypatch.setenv("PADDLE_API_KEY", "test-key")
     monkeypatch.setenv("PADDLE_PRICE_ID_INDIVIDUAL", "pri_test")
+    monkeypatch.setenv("PADDLE_CLIENT_TOKEN", "test-client-token")
 
 
 def test_revenue_is_not_measured_when_billing_is_not_connected(measures):
@@ -11018,3 +11035,252 @@ def test_every_customer_lead_route_is_attacked_by_the_account_walk():
         if "{lead_id}" in route:
             assert "/api/account/leads/{victim['id']}" in tested, (
                 f"{route} has no cross-tenant attack behind it")
+
+
+# ── setting the Paddle keys did not make a sale possible ───────────────────
+# Proven by running it on 2026-09-03. With PADDLE_API_KEY and the price ids
+# set — exactly what docs/PAYMENTS.md said to do:
+#
+#     processor_name()  -> "paddle"
+#     configured()      -> True
+#     checkout(...)     -> {"ready": False, "needs": "Set PAYPAL_PLAN_ID_INDIVIDUAL."}
+#
+# Every screen reported a connected processor while every customer clicking
+# Upgrade was told to configure PayPal. An earlier session found that
+# configured() tested Dodo and PayPal only and fixed the DETECTOR; nobody
+# wired the CHECKOUT. paddle_price_id() existed and its only callers were
+# paddle_configured() and missing_for_paddle() — never the code that takes
+# money.
+#
+# Fifteenth instance of the shape, and the one standing between the product
+# and revenue.
+
+
+@pytest.fixture
+def paddle_env(monkeypatch):
+    """Exactly what Abdullah is about to set, and nothing else."""
+    for var in ("DODO_PAYMENTS_API_KEY", "PAYPAL_CLIENT_ID", "PADDLE_LIVE",
+                "PADDLE_CLIENT_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_live_SERVER_SIDE_ONLY_SECRET")
+    for key in ("STUDENT", "INDIVIDUAL", "ENTERPRISE"):
+        monkeypatch.setenv(f"PADDLE_PRICE_ID_{key}", f"pri_{key.lower()}_123")
+    return monkeypatch
+
+
+def test_setting_the_paddle_keys_makes_a_sale_possible(paddle_env,
+                                                       isolated_billing):
+    """The regression that matters. checkout() must not fall through to
+    PayPal's environment variable when Paddle is the configured processor."""
+    from app.core import billing
+
+    paddle_env.setenv("PADDLE_CLIENT_TOKEN", "live_browser_safe_token")
+    out = billing.checkout("customer@example.com", "individual")
+
+    assert out["ready"] is True, (
+        f"Paddle is configured and a customer still cannot buy: {out}")
+    assert out["processor"] == "paddle"
+    assert out["price_id"] == "pri_individual_123"
+    assert "PAYPAL" not in str(out), (
+        "the Paddle path still mentions PayPal, which is what it used to "
+        "tell every customer to configure")
+
+
+def test_the_paddle_api_key_never_reaches_the_browser(paddle_env,
+                                                      isolated_billing):
+    """This payload is read by a browser. The API key is a server-side
+    credential; only the CLIENT-SIDE token belongs here, and Paddle documents
+    that one as safe to publish."""
+    import json as _json
+
+    from app.core import billing
+
+    paddle_env.setenv("PADDLE_CLIENT_TOKEN", "live_browser_safe_token")
+    out = billing.checkout("customer@example.com", "individual")
+    assert "SERVER_SIDE_ONLY_SECRET" not in _json.dumps(out), (
+        "the Paddle API key is in a payload the browser receives")
+    assert out["client_token"] == "live_browser_safe_token"
+
+
+def test_without_the_client_token_it_says_so_by_name(paddle_env,
+                                                     isolated_billing):
+    """The second wall. The API key configures the server; the browser cannot
+    open the overlay without a separate client-side token, and the checklist
+    did not mention it."""
+    from app.core import billing
+
+    out = billing.checkout("customer@example.com", "individual")
+    assert out["ready"] is False
+    assert "PADDLE_CLIENT_TOKEN" in out["needs"]
+    assert "PADDLE_CLIENT_TOKEN" in billing.missing_for_paddle(), (
+        "the missing-variables list reports nothing missing on a deployment "
+        "that still cannot take a payment")
+
+
+def test_server_ready_is_not_the_same_as_can_sell(paddle_env,
+                                                  isolated_billing):
+    """Two different questions. Reporting them as one is how "processor
+    connected" came to mean nothing."""
+    from app.core import billing
+
+    assert billing.paddle_configured() is True
+    assert billing.paddle_checkout_ready() is False
+
+    paddle_env.setenv("PADDLE_CLIENT_TOKEN", "live_browser_safe_token")
+    assert billing.paddle_checkout_ready() is True
+
+
+def test_checkout_defaults_to_the_sandbox(paddle_env, isolated_billing):
+    """A deployment that defaults to live is one typo away from taking a real
+    card during a test."""
+    from app.core import billing
+
+    paddle_env.setenv("PADDLE_CLIENT_TOKEN", "live_browser_safe_token")
+    assert billing.checkout("c@example.com", "individual")["environment"] \
+        == "sandbox"
+    paddle_env.setenv("PADDLE_LIVE", "1")
+    assert billing.checkout("c@example.com", "individual")["environment"] \
+        == "production"
+
+
+def test_a_missing_price_id_names_that_plan(paddle_env, isolated_billing):
+    from app.core import billing
+
+    paddle_env.setenv("PADDLE_CLIENT_TOKEN", "live_browser_safe_token")
+    paddle_env.delenv("PADDLE_PRICE_ID_ENTERPRISE", raising=False)
+    out = billing.checkout("c@example.com", "enterprise")
+    assert out["ready"] is False
+    assert "PADDLE_PRICE_ID_ENTERPRISE" in out["needs"]
+
+
+def test_the_payments_checklist_names_the_client_token():
+    """Following the old checklist left you server-ready and unable to sell."""
+    import pathlib
+
+    doc = (pathlib.Path(__file__).resolve().parents[2] / "docs"
+           / "PAYMENTS.md").read_text(encoding="utf-8")
+    assert "PADDLE_CLIENT_TOKEN" in doc, (
+        "the setup checklist still omits the credential the browser needs")
+
+
+# ── the rest of the chain between a click and a payment ────────────────────
+# Fixing checkout() was necessary and not sufficient. Two more links were
+# broken, and both fail SILENTLY.
+
+
+def _pricing_js() -> str:
+    """The pricing page's script, with comments stripped — except that `//`
+    cannot be stripped naively, because it eats every https:// URL. That is
+    written down in _jsx_without_comments and it caught this file too."""
+    import pathlib
+    import re as _re
+
+    src = (pathlib.Path(__file__).resolve().parents[1] / "app" / "static"
+           / "pricing.html").read_text(encoding="utf-8")
+    bodies = _re.findall(
+        r"<script(?![^>]*application/ld)[^>]*>(.*?)</script>", src, _re.S)
+    js = "\n".join(b for b in bodies if b.strip())
+    # Strip only FULL-LINE comments, so a URL inside a string survives.
+    return "\n".join(line for line in js.splitlines()
+                      if not line.strip().startswith("//"))
+
+
+def test_the_pricing_page_actually_opens_a_checkout():
+    """It used to set the text "Continue in PayPal to activate" and do nothing
+    at all — no redirect, no overlay, no button. A customer who chose a paid
+    plan was told to continue somewhere that did not exist."""
+    js = _pricing_js()
+    assert "openCheckout" in js, "nothing opens a checkout"
+    assert "Paddle.Checkout.open" in js, "the Paddle overlay is never opened"
+    assert "cdn.paddle.com/paddle/v2/paddle.js" in js, "Paddle.js is not loaded"
+
+
+def test_the_page_does_not_hardcode_the_processor():
+    """Same rule the prices follow: a page that hardcodes a processor lies the
+    day it changes."""
+    js = _pricing_js()
+    assert "out.processor" in js, "the processor is assumed, not read"
+    assert "PayPal to activate" not in js, (
+        "the page still tells every customer to continue in PayPal")
+
+
+def test_a_blocked_checkout_script_is_reported_not_swallowed():
+    """A blocked script fails silently, which is how a CSP problem becomes
+    "the button does nothing" with no explanation anywhere."""
+    js = _pricing_js()
+    assert "onerror" in js, "a script that fails to load is never noticed"
+
+
+def test_the_edge_lets_the_checkout_through():
+    """The Worker's CSP sits in front of the app, so no test can see the header
+    it adds — but the source of that header is in this repository and can be
+    read. Four directives would each have blocked the checkout silently:
+
+        script-src   -> Paddle.js never loads
+        frame-src    -> absent, so the overlay iframe is blocked by default-src
+        connect-src  -> Paddle.js cannot reach Paddle's API
+        payment=()   -> the Payment Request API switched off entirely
+
+    This does not prove the checkout works. Only a real purchase with the
+    browser console open does, and docs/PAYMENTS.md says so.
+    """
+    import pathlib
+
+    worker = (pathlib.Path(__file__).resolve().parents[2] / "deploy"
+              / "cloudflare-worker.js").read_text(encoding="utf-8")
+
+    assert "paddle.com" in worker, "the CSP does not allow the payment processor"
+    for directive in ("script-src", "frame-src", "connect-src"):
+        line = [l for l in worker.splitlines()
+                if directive in l and "paddle" in l.lower()]
+        assert line, f"{directive} does not allow Paddle, so checkout is blocked"
+
+    assert "payment=()" not in worker, (
+        "Permissions-Policy still switches the Payment Request API off "
+        "entirely, on a product whose problem is that it cannot take money")
+    assert "payment=(self)" in worker
+
+
+def test_the_worker_csp_still_denies_everything_else():
+    """Widening a CSP for a payment processor must not widen it generally."""
+    import pathlib
+
+    worker = (pathlib.Path(__file__).resolve().parents[2] / "deploy"
+              / "cloudflare-worker.js").read_text(encoding="utf-8")
+
+    assert "default-src 'self'" in worker
+    assert "object-src 'none'" in worker
+    assert "base-uri 'self'" in worker
+    assert "form-action 'self'" in worker
+    # One third-party domain, and only because it is the payment processor.
+    for stranger in ("googletagmanager", "google-analytics", "facebook",
+                     "doubleclick", "cloudflareinsights"):
+        assert stranger not in worker, (
+            f"{stranger} was allowed into the CSP")
+
+
+def test_a_trial_is_not_billable_until_a_card_can_be_charged(paddle_env,
+                                                             isolated_billing):
+    """processor_configured() says "a trial is only real if a card can be
+    charged at the end of it" and then asked whether a key was present. With a
+    Paddle API key and no client token, /api/plans advertised trial_billable
+    while no customer could complete a purchase.
+
+    Found because the dead-code ratchet flagged paddle_checkout_ready() as
+    uncalled — following that up was what exposed the claim."""
+    from app.core import billing
+
+    assert billing.paddle_configured() is True, "precondition: server is ready"
+    assert billing.can_take_payment() is False
+    assert billing.processor_configured() is False, (
+        "a trial that cannot convert is advertised as billable")
+    individual = [p for p in billing.plans()["plans"]
+                  if p["key"] == "individual"][0]
+    assert individual["trial_billable"] is False
+
+    paddle_env.setenv("PADDLE_CLIENT_TOKEN", "live_browser_safe_token")
+    assert billing.can_take_payment() is True
+    assert billing.processor_configured() is True
+    individual = [p for p in billing.plans()["plans"]
+                  if p["key"] == "individual"][0]
+    assert individual["trial_billable"] is True

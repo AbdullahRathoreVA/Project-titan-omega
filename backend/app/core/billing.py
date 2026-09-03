@@ -567,6 +567,36 @@ def paddle_configured() -> bool:
     return any(paddle_price_id(k) for k in ORDER if k != "free")
 
 
+def paddle_client_token() -> str:
+    """The token the BROWSER uses to open Paddle's checkout.
+
+    A different credential from PADDLE_API_KEY, and deliberately so: Paddle
+    publishes client-side tokens as safe for frontend code, while the API key
+    is server-side only. Checked against Paddle's overlay-checkout
+    documentation, not from memory.
+    """
+    return os.getenv("PADDLE_CLIENT_TOKEN", "").strip()
+
+
+def paddle_environment() -> str:
+    """"sandbox" or "production". Sandbox unless PADDLE_LIVE is set, because a
+    deployment that defaults to live is one typo away from taking a real card
+    during a test."""
+    return "production" if os.getenv("PADDLE_LIVE", "").strip() else "sandbox"
+
+
+def paddle_checkout_ready() -> bool:
+    """Can a CUSTOMER actually complete a Paddle checkout?
+
+    Separate from paddle_configured() on purpose. That one answers "is the
+    server set up", and it is what processor_name() and the money metrics read.
+    This one adds the client-side token, without which the browser cannot open
+    the overlay at all — so a deployment can be server-configured and still
+    unable to sell, and the two must not report the same thing.
+    """
+    return bool(paddle_configured() and paddle_client_token())
+
+
 def processor_name() -> str:
     # Paddle first: it is the only one of the three verified to onboard a
     # Pakistan-based seller, so if it is configured it is the intended one.
@@ -583,10 +613,28 @@ def configured() -> bool:
     return paddle_configured() or dodo_configured() or paypal_configured()
 
 
+def can_take_payment() -> bool:
+    """Can a CUSTOMER actually complete a purchase right now?
+
+    Distinct from configured(), which answers "is a processor set up on the
+    server". For Paddle those came apart the moment the checkout was wired:
+    the API key and a price id make the server ready, and the browser still
+    cannot open the overlay without PADDLE_CLIENT_TOKEN.
+
+    Reporting the two as one is how a pricing page comes to advertise a trial
+    that converts while no sale can complete.
+    """
+    if paddle_configured():
+        return paddle_checkout_ready()
+    return dodo_configured() or paypal_configured()
+
+
 def processor_configured() -> bool:
     """Alias used by the plan table. A trial is only real if a card can be
-    charged at the end of it."""
-    return configured()
+    charged at the end of it — so this asks whether one CAN be, not whether a
+    key is present. It used to call configured(), and with a Paddle API key
+    but no client token that advertised a conversion nobody could complete."""
+    return can_take_payment()
 
 
 def missing_for_paddle() -> list[str]:
@@ -600,7 +648,63 @@ def missing_for_paddle() -> list[str]:
             continue
         if not paddle_price_id(key):
             missing.append(f"PADDLE_PRICE_ID_{key.upper()}")
+    # The browser cannot open Paddle's overlay without this, so leaving it out
+    # of the list would report "nothing missing" on a deployment that still
+    # cannot take a payment. It is listed last because the others are the ones
+    # that make the server ready.
+    if not paddle_client_token():
+        missing.append("PADDLE_CLIENT_TOKEN")
     return missing
+
+
+def _paddle_checkout(email: str, plan_key: str, plan: Plan) -> dict:
+    """What the browser needs to open Paddle's own checkout.
+
+    Titan never takes a card number and never completes a payment on anyone's
+    behalf. This hands back the price id and the CLIENT-SIDE token, and the
+    customer approves inside Paddle's overlay.
+
+    PADDLE_API_KEY is never included. It is a server-side credential, this
+    payload is read by a browser, and there is a test asserting it never
+    appears here.
+    """
+    price_id = paddle_price_id(plan_key)
+    if not price_id:
+        return {
+            "ready": False, "processor": "paddle", "plan": plan_key,
+            "price_usd": plan.price_usd,
+            "needs": (f"Set PADDLE_PRICE_ID_{plan_key.upper()} to the Paddle "
+                      f"price id for the {plan.name} plan."),
+        }
+    token = paddle_client_token()
+    if not token:
+        return {
+            "ready": False, "processor": "paddle", "plan": plan_key,
+            "price_usd": plan.price_usd,
+            "needs": ("Set PADDLE_CLIENT_TOKEN. The API key configures the "
+                      "server; the browser opens Paddle's checkout with a "
+                      "separate CLIENT-SIDE token, which Paddle publishes as "
+                      "safe for frontend code. Find it in Paddle under "
+                      "Developer tools > Authentication. Without it the "
+                      "checkout overlay cannot be initialised, so nothing can "
+                      "be sold even though the server is otherwise ready."),
+        }
+    return {
+        "ready": True,
+        "processor": "paddle",
+        "plan": plan_key,
+        "price_usd": plan.price_usd,
+        "price_id": price_id,
+        # Safe to publish, by Paddle's own documentation. The API key is NOT
+        # here and must never be.
+        "client_token": token,
+        "environment": paddle_environment(),
+        "customer_email": email,
+        "flow": ("The page loads Paddle.js, calls Paddle.Initialize with "
+                 "client_token, and opens Paddle.Checkout.open with this "
+                 "price_id. The customer approves inside Paddle. Titan never "
+                 "sees card details and is told the result by webhook."),
+    }
 
 
 def _dodo_product_id(plan_key: str) -> str:
@@ -685,6 +789,13 @@ def checkout(email: str, plan_key: str) -> dict:
     if plan_key not in PLANS or plan_key == "free":
         raise ValueError("Choose a paid plan.")
     plan = PLANS[plan_key]
+
+    # Paddle FIRST. It is the only processor verified to onboard a Pakistan
+    # seller, processor_name() already prefers it, and until now checkout()
+    # skipped it entirely and fell through to PayPal's environment variable —
+    # so setting the Paddle keys produced "Set PAYPAL_PLAN_ID_INDIVIDUAL."
+    if paddle_configured():
+        return _paddle_checkout(email, plan_key, plan)
 
     if dodo_configured():
         return _dodo_checkout(email, plan_key, plan)

@@ -69,10 +69,28 @@ const UPSTREAM = "careermind2026-project-titan-omega.hf.space";
  * img-src allows any https origin because client logos are supplied by the
  * clients themselves and live on their own domains.
  */
+// Paddle's own domain, allowed by wildcard rather than by guessing subdomain
+// names. Paddle documents loading Paddle.js from cdn.paddle.com and does not
+// publish a CSP allowlist, so naming exact checkout hosts here would be an
+// invention that fails silently the day they change one.
+//
+// This is the narrowest thing that can work: one third-party domain, and only
+// because it is the payment processor. Nothing else is added.
+const PADDLE = "https://*.paddle.com";
+
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  // cdn.paddle.com serves Paddle.js. Without this the checkout script never
+  // loads and the Upgrade button does nothing, silently.
+  `script-src 'self' 'unsafe-inline' ${PADDLE}`,
   "style-src 'self' 'unsafe-inline'",
+  // Paddle's checkout is an IFRAME. frame-src was absent entirely, so it fell
+  // back to default-src 'self' and the overlay would have been blocked — the
+  // same shape as the media-src bug below, which also went unnoticed because
+  // a blocked load fails quietly.
+  `frame-src 'self' ${PADDLE}`,
+  // Paddle.js talks to Paddle's API from the browser.
+  `connect-src 'self' ${PADDLE}`,
   "img-src 'self' data: blob: https:",
   // Audio was blocked in production and nobody noticed, because a blocked
   // media load fails silently — the boot chime, speak(), speakPremium() and
@@ -85,7 +103,6 @@ const CSP = [
   // that the Worker adds in front of the app.
   "media-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self'",
   "worker-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
@@ -102,8 +119,19 @@ const SECURITY_HEADERS = {
   "Referrer-Policy": "strict-origin-when-cross-origin",
   // Microphone stays enabled for same-origin: the Urdu voice assistant needs
   // it. Everything else is switched off.
+  //
+  // `payment` was `()` — switched off entirely — on a product whose whole
+  // problem is that it cannot take money. It is (self) now, which re-enables
+  // the Payment Request API for this origin.
+  //
+  // NOT VERIFIED: card wallets (Apple Pay, Google Pay) run inside PADDLE's
+  // cross-origin iframe, and Permissions-Policy origin lists do not accept
+  // wildcards, so delegating to Paddle would mean naming an exact checkout
+  // host. That host is not documented and guessing it would be an invention.
+  // Card payments work without this; if a wallet button is missing, read the
+  // browser console and add the origin it names.
   "Permissions-Policy":
-    "camera=(), geolocation=(), payment=(), usb=(), microphone=(self)",
+    "camera=(), geolocation=(), payment=(self), usb=(), microphone=(self)",
   "Content-Security-Policy": CSP,
 };
 

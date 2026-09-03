@@ -471,6 +471,29 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      'durable["state_backup_proven"] = bool((st.get("last_push") or {}).get("ok"))',
      'durable["state_backup_proven"] = bool(st.get("configured"))',
      "separates_intending_to_back_up_from_having_backed_up"),
+    # --- setting the Paddle keys did not make a sale possible --------------
+    ("paddle: billable means a card can be charged", "app/core/billing.py",
+     "    if paddle_configured():\n        return paddle_checkout_ready()",
+     "    if paddle_configured():\n        return True",
+     "trial_is_not_billable_until_a_card_can_be_charged"),
+    # processor_name() said "paddle" while checkout() told every customer to
+    # configure PayPal. The detector was wired; the checkout was not.
+    ("paddle: checkout actually uses Paddle", "app/core/billing.py",
+     "    if paddle_configured():\n        return _paddle_checkout(email, plan_key, plan)",
+     "    if False:\n        return _paddle_checkout(email, plan_key, plan)",
+     "makes_a_sale_possible"),
+    ("paddle: the api key stays server-side", "app/core/billing.py",
+     '"client_token": token,',
+     '"client_token": os.getenv("PADDLE_API_KEY", ""),',
+     "api_key_never_reaches_the_browser"),
+    ("paddle: a missing client token is named", "app/core/billing.py",
+     "    token = paddle_client_token()\n    if not token:",
+     "    token = paddle_client_token() or 'assumed'\n    if False:",
+     "client_token_it_says_so_by_name"),
+    ("paddle: sandbox unless told otherwise", "app/core/billing.py",
+     'return "production" if os.getenv("PADDLE_LIVE", "").strip() else "sandbox"',
+     'return "production"',
+     "defaults_to_the_sandbox"),
     # --- a customer's own leads -------------------------------------------
     # A leads table shared by every customer is one missing filter away from
     # showing a business its competitor's pipeline.

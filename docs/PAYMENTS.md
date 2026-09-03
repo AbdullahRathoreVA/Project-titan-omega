@@ -77,8 +77,36 @@ Titan already implements steps 1, 2 and 4 behind one adapter seam
 - [ ] Set as Space secrets: `PADDLE_API_KEY`,
       `PADDLE_PRICE_ID_STUDENT`, `PADDLE_PRICE_ID_INDIVIDUAL`,
       `PADDLE_PRICE_ID_ENTERPRISE`
+- [ ] **`PADDLE_CLIENT_TOKEN`** — Paddle > Developer tools > Authentication.
+      **This is a different credential from the API key and the checkout
+      cannot open without it.** The API key configures the server; the browser
+      opens Paddle's overlay with a *client-side* token, which Paddle
+      documents as safe to publish in frontend code. This line was missing
+      from the checklist until 2026-09-03, so following the old version left
+      you server-ready and still unable to sell.
+- [ ] Optionally `PADDLE_LIVE=1`. **Without it the checkout runs against
+      Paddle's SANDBOX**, deliberately: a deployment that defaults to live is
+      one typo away from taking a real card during a test.
 - [ ] Point the processor's webhook at `POST /api/webhooks/billing`
 - [ ] Restart the Space — HF injects secrets only on restart
+
+### Check it worked, before trusting it
+
+`processor_name()` saying "paddle" is NOT proof a sale can complete. It was
+saying exactly that on 2026-09-03 while `checkout()` returned
+`Set PAYPAL_PLAN_ID_INDIVIDUAL.` to every customer, because the checkout path
+had no Paddle branch at all — only the detector did.
+
+Sign in as a subscriber and call it:
+
+```bash
+curl -s -X POST https://titanomega-ai.com/api/checkout/individual \
+     -H "X-Account-Token: <a real account token>"
+```
+
+`"ready": true` with a `price_id` and a `client_token` means a customer can
+complete a purchase. `"ready": false` names the exact variable still missing.
+Anything else is not a working payment path, whatever the dashboard says.
 
 Until that is done, signup and the free tier work normally and every checkout
 refusal names exactly which variable is missing. Nothing is silently broken.
