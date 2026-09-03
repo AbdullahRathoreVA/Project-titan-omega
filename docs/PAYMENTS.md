@@ -21,6 +21,76 @@ name.**
 | **Dodo Payments** | Same Merchant-of-Record model, pays to Payoneer and Wise. Confirm current Pakistan onboarding directly with them — availability was reported to have changed. |
 | **Payoneer** | Not a checkout. It is the **receiving** account the processor pays into, and it works well in Pakistan. |
 
+## Re-checked 2026-09-03 — what changed, and what did not
+
+The table above was researched 2026-08-08. Re-checked against current sources
+before Abdullah sets the keys. **The conclusion did not change: Paddle, paid out
+through Payoneer.** What follows is the detail behind that, so the decision can
+be re-argued rather than taken on trust.
+
+### The five real options, in order of fit
+
+| | Fee | Merchant of Record | Pakistan payout | Verdict for Titan |
+|---|---|---|---|---|
+| **Paddle** | ~5% + $0.50 | Yes | **Payoneer** or wire | ✅ **Use this.** Payoneer works well in Pakistan. Built for SaaS subscriptions specifically. |
+| **Lemon Squeezy** | 5% + $0.50 | Yes | bank wire, or PayPal | ⚠️ PayPal cannot receive in Pakistan, so wire only — in practice via a Wise USD account. Now Stripe-owned; some countries have been moved to an invite system, so confirm at signup. |
+| **Polar** | from 5% + $0.50 | Yes | varies | ⚠️ Newer. Rates fall with volume. Confirm Pakistan onboarding directly. |
+| **Dodo Payments** | similar | Yes | Payoneer / Wise | ❌ Abdullah confirmed it is **not available in Pakistan**. The adapter exists and is demoted. |
+| **Gumroad** | 10% + $0.50, plus card fees | Yes (since 2025) | PayPal / Stripe | ❌ ~13% effective, and built for one-off downloads rather than subscriptions. |
+| **Stripe** | 2.9% + $0.30 | **No** | — | ❌ No Pakistan-based sellers. Would need a US LLC, and you would then owe the tax compliance an MoR handles for you. |
+
+### Why Merchant of Record matters more than the fee
+
+Paddle's ~5% looks expensive next to Stripe's 2.9%. It is not comparable.
+
+A Merchant of Record is the legal seller. Paddle collects and remits sales tax
+and VAT across 200+ jurisdictions, issues compliant invoices, and absorbs
+chargebacks. With Stripe you are the seller of record, which means **you** are
+liable for EU VAT registration, UK VAT, and US state sales tax the moment you
+cross a threshold — from Pakistan, alone, with no accountant.
+
+The difference between 2.9% and 5% is about $2 on a $99 sale. A single missed
+VAT filing costs more than a year of that.
+
+### What Paddle will ask for
+
+Paddle's review is stricter than Lemon Squeezy's and specifically wants to see a
+real product at a real address before approving. Titan is in good shape for
+this — it is live, it has a working free tier, real pricing, a privacy policy,
+and an audit that runs. Two things worth doing first:
+
+- **Set `TITAN_STREET` / `TITAN_LOCALITY` / `TITAN_COUNTRY`.** Titan publishes a
+  postal address on its own pages when these are set, and refuses to publish a
+  partial one. A reviewer looking for a contactable business finds nothing today.
+- Make sure `/pricing` and `/privacy` are reachable. They are.
+
+Expect verification to take days, not minutes, and expect questions. That is
+the process working, not a rejection.
+
+### Payout mechanics
+
+- **Paddle → Payoneer.** Payoneer is not a checkout; it is the receiving account
+  Paddle pays into, and it is well supported in Pakistan.
+- **Minimum payout is around $100** and is adjustable in Paddle's dashboard.
+  Below the threshold the balance rolls over rather than being lost.
+- The Payoneer account **must be in Abdullah's own name** — see the section
+  below, which has not changed and is not negotiable.
+
+### The order to do this in
+
+1. Payoneer account, verified, own name.
+2. Paddle seller account; add Payoneer as the payout method; complete verification.
+3. One **subscription price** per paid tier: Student $4, Individual $19,
+   Enterprise $99. Note the **price id** for each (`pri_...`).
+4. Copy the **client-side token** from Paddle > Developer tools > Authentication.
+   This is a different credential from the API key — see the checklist below.
+5. Set all five variables as Space secrets, restart the Space.
+6. **Prove it with the curl in the checklist.** Do not skip this. On 2026-09-03
+   `processor_name()` reported "paddle" while every customer was being told to
+   configure PayPal, so that string is not evidence of anything.
+7. Make one real purchase against the **sandbox** first (the default), with the
+   browser console open. Only then set `PADDLE_LIVE=1`.
+
 ## Using somebody else's account — do not
 
 The idea of routing payments through a relative's PayPal in Canada, or any
