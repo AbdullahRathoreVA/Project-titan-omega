@@ -36,6 +36,23 @@ MAX_PASSAGE_CHARS = 600
 # Below this the best match is noise. Tuned so a question about something the
 # site never mentions returns nothing instead of the least-irrelevant sentence.
 MIN_SCORE = 0.8
+# IDF is computed as if the site had at least this many passages, the unseen
+# ones not containing the term. BM25's IDF shrinks with the passage count: on
+# a one-passage site every word has df == n and scores log(1.333) = 0.288, so
+# MIN_SCORE silenced questions whose words were literally on the page — and
+# Titan's market is small sites. Measured with the one-page scenario in
+# evaluation/retrieval_benchmark.py (each page of the benchmark site indexed
+# as the WHOLE site; answerable misses / near-miss questions from other pages
+# answered anyway):
+#     floor 1 (off) -> 4/10 missed, 1/30 near-miss   <- the old behaviour
+#     floor 4       -> 1/10 missed, 2/30 near-miss
+#     floor 6       -> 0/10 missed, 3/30 near-miss   <- chosen
+#     floor 8..40   -> 0/10 missed, 3/30 near-miss
+# 6 is the smallest value that closes the gap; larger ones bought nothing and
+# only widen the range of site sizes where a single common word clears the
+# bar. The full benchmark site (12 passages) and its 5 unanswerable questions
+# score identically at every floor.
+IDF_MIN_PASSAGES = 6
 
 # How many semantic candidates may enter the fusion. Short and confident beats
 # long and vague: RRF over the whole corpus swamps the exact keyword signal.
@@ -149,14 +166,35 @@ def split_sections(html: str) -> list[tuple[str, str]]:
     return [s for s in sections if s[1].strip()] or [("", strip_html(html))]
 
 
+_SENTENCE_END = re.compile(r"[.!?][\"')\]]*$")
+
+
 def _split(text: str) -> list[str]:
     """Sentence-ish chunks. Long runs are cut on whitespace rather than
-    mid-word, because a passage read aloud has to be a sentence."""
+    mid-word, because a passage read aloud has to be a sentence.
+
+    A SHORT sentence joins its neighbour instead of being dropped. "We ship
+    worldwide." is 18 characters and "We are closed on Sunday." is 24 —
+    exactly the facts a caller asks for — and a flat MIN_PASSAGE_CHARS cut
+    threw both away, which is why the benchmark was silent on "do you ship
+    internationally". It joins the sentence before it (the usual referent:
+    "Sampling adds a further two weeks before that."), or the one after when
+    it opens its section. A short fragment WITHOUT sentence punctuation is
+    still dropped: that is a menu label or a button, not a fact.
+    """
     out: list[str] = []
+    carry = ""  # short sentences waiting for the next full one
     for part in re.split(r"(?<=[.!?])\s+|\n{2,}", text):
         part = part.strip()
         if len(part) < MIN_PASSAGE_CHARS:
+            if not _SENTENCE_END.search(part):
+                continue
+            if out and not carry and len(out[-1]) + len(part) < MAX_PASSAGE_CHARS:
+                out[-1] = f"{out[-1]} {part}"
+            else:
+                carry = f"{carry} {part}".strip()
             continue
+        part, carry = f"{carry} {part}".strip(), ""
         while len(part) > MAX_PASSAGE_CHARS:
             cut = part.rfind(" ", 0, MAX_PASSAGE_CHARS)
             cut = cut if cut > MIN_PASSAGE_CHARS else MAX_PASSAGE_CHARS
@@ -164,6 +202,11 @@ def _split(text: str) -> list[str]:
             part = part[cut:].strip()
         if len(part) >= MIN_PASSAGE_CHARS:
             out.append(part)
+    if carry:
+        if out and len(out[-1]) + len(carry) < MAX_PASSAGE_CHARS:
+            out[-1] = f"{out[-1]} {carry}"
+        elif len(_tokens(carry)) >= 2:  # a section that is one short fact
+            out.append(carry)
     return out
 
 
@@ -290,6 +333,7 @@ def search(client_id: str, question: str, k: int = 3) -> dict:
         return {"ok": False, "hits": [], "reason": "Ask a real question."}
 
     n = len(passages)
+    n_idf = max(n, IDF_MIN_PASSAGES)
     k1, b = 1.5, 0.75
     scored = []
     for p in passages:
@@ -302,7 +346,7 @@ def search(client_id: str, question: str, k: int = 3) -> dict:
             f = terms.count(t)
             if not f:
                 continue
-            idf = math.log(1 + (n - df.get(t, 0) + 0.5) / (df.get(t, 0) + 0.5))
+            idf = math.log(1 + (n_idf - df.get(t, 0) + 0.5) / (df.get(t, 0) + 0.5))
             score += idf * (f * (k1 + 1)) / (f + k1 * (1 - b + b * length / avg_len))
         if score > 0:
             scored.append((score, p))

@@ -73,11 +73,24 @@ PARAMS: dict[str, Param] = {
         kind="float", low=0.10, high=3.00,
         benchmark="retrieval", metric="silence", higher_is_better=False,
         why_default=(
-            "0.8, and KNOWN to be questionable — BM25 scales with corpus size "
-            "through IDF, so on a one-passage corpus a two-term exact match "
-            "scores ~0.58 and is filtered out. Titan's market is small sites. "
-            "This is the open MEDIUM defect in the handoff; it is registered "
-            "here so a change to it must arrive with benchmark numbers.")),
+            "0.8. BM25 scales with corpus size through IDF, so on its own this "
+            "silenced small sites: a two-term exact match on a one-passage "
+            "site scored ~0.58. retrieval.idf_min_passages now holds the IDF "
+            "of a small site at the scale this cut-off works on; with it, the "
+            "benchmark answers 10/10 on the full site and on one-page sites.")),
+    "retrieval.idf_min_passages": Param(
+        name="retrieval.idf_min_passages",
+        module="app.core.knowledge", attr="IDF_MIN_PASSAGES",
+        kind="int", low=1, high=50,
+        benchmark="retrieval", metric="small_site_silence",
+        higher_is_better=False,
+        why_default=(
+            "6, swept on the benchmark's one-page sites. 1 (off) missed 4/10 "
+            "answerable questions whose words were on the page; 4 missed 1; 6 "
+            "and above missed 0. The cost is near-miss questions (another "
+            "page's) that get a passage anyway: 1/30 -> 3/30. Anything above 6 "
+            "measured the same, so it only widens the range of site sizes "
+            "where one common word clears MIN_SCORE.")),
 }
 
 

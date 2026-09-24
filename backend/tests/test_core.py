@@ -3221,6 +3221,30 @@ def test_a_chunk_never_spans_two_headings(isolated_knowledge):
             assert "Germany" not in body
 
 
+def test_a_short_sentence_is_kept_not_dropped(isolated_knowledge):
+    """"We ship worldwide." is 18 characters. A flat minimum-length cut threw it
+    away — the one sentence that answers "do you ship internationally" — and
+    "We are closed on Sunday." with it. The retrieval benchmark was silent on
+    2/10 answerable questions for exactly this reason."""
+    from app.core import knowledge
+
+    knowledge.ingest("shop", """
+<h2>Shipping</h2><p>We ship worldwide. Sample runs go by air freight and full
+production orders by sea freight from Karachi.</p>
+<h2>Opening hours</h2><p>The workshop is open Monday to Saturday, nine in the
+morning until six in the evening. We are closed on Sunday.</p>
+<h2>Phone</h2><p>Call us on 0300 1234567.</p><p>Read more</p>
+""", "https://shop.example")
+    texts = [p["text"] for p in knowledge._store["shop"]["passages"]]
+
+    assert any(t.startswith("We ship worldwide. Sample runs") for t in texts)
+    assert any(t.endswith("evening. We are closed on Sunday.") for t in texts)
+    assert "Call us on 0300 1234567." in texts      # a section of one short fact
+    assert not any("Read more" in t for t in texts)  # a label, not a fact
+    assert not any("Sunday" in t and "Karachi" in t for t in texts)
+    assert knowledge.search("shop", "do you ship internationally")["ok"] is True
+
+
 def test_a_page_with_no_headings_still_indexes(isolated_knowledge):
     """Plenty of small-business sites are built entirely from divs."""
     from app.core import knowledge
@@ -6062,32 +6086,21 @@ def test_the_semantic_floor_sits_above_the_sentence_model_noise_band():
 
 
 def test_bm25_threshold_is_relative_to_the_corpus_not_absolute():
-    """DOCUMENTS A KNOWN DEFECT — asserts the current behaviour, not the
-    desired one, so the day it is fixed this test fails and is updated
-    deliberately rather than a regression slipping past.
+    """A small site gets answers. This test used to DOCUMENT the defect — it
+    asserted the retriever returned nothing — so the fix had to change it
+    deliberately, with the benchmark that proves it.
 
     MIN_SCORE is a fixed 0.8, but a BM25 score scales with corpus size through
     IDF. With one indexed passage every term has df == n, so
         idf = log(1 + (1-1+0.5)/(1+0.5)) = log(1.333) = 0.288
-    and even a two-term exact match scores about 0.58 — below the cutoff. The
-    retriever therefore returns NOTHING for a question whose words are literally
-    on the page.
+    and even a two-term exact match scored about 0.58 — below the cutoff, on a
+    question whose words are literally on the page. IDF is now computed as if
+    the site had at least IDF_MIN_PASSAGES passages (calibration table beside
+    it): on the benchmark's one-page sites, answerable misses went 4/10 -> 0/10.
 
-    This matters commercially: Titan's market is small businesses, whose sites
-    have few pages. The recorded finding that lowering the semantic threshold
-    'changed nothing' is consistent with this being the real cause — the
-    keyword pass was being filtered out before fusion ever ran.
-
-    Fixing it needs a retrieval benchmark to prove the change, which is why it
-    is documented here rather than quietly tuned.
-
-    The embeddings pass is disabled explicitly here. Not doing so made this
-    test order-dependent — it passed alone and failed in the full suite,
-    because by then the ~130MB embedding model had finished downloading and the
-    semantic pass rescued the query. That is itself the finding worth keeping:
-    **on a small site, retrieval works only once a background download has
-    completed**, and returns nothing before then or wherever fastembed is
-    unavailable.
+    The embeddings pass is disabled explicitly. Not doing so made this test
+    order-dependent — once the ~130MB model finished downloading mid-suite the
+    semantic pass rescued the query, which is how the defect stayed hidden.
     """
     from app.core import embeddings, knowledge
 
@@ -6102,12 +6115,54 @@ def test_bm25_threshold_is_relative_to_the_corpus_not_absolute():
             "tiny", one_passage, "https://tiny.example")["passages"] == 1
 
         found = knowledge.search("tiny", "leather jackets")
-        assert found["ok"] is False, (
-            "the corpus-size defect appears to be FIXED — update this test "
-            "and record the retrieval benchmark that proves the improvement")
-        assert knowledge.MIN_SCORE == 0.8
+        assert found["ok"] is True
+        assert "leather jackets" in found["hits"][0]["text"]
+        # Still silent where the page is silent.
+        assert knowledge.search("tiny", "do you accept cryptocurrency")["ok"] is False
+
+        # The floor is what fixed it, and it is read at call time — the
+        # contract core/params.py needs before a value may be registered.
+        floor = knowledge.IDF_MIN_PASSAGES
+        knowledge.IDF_MIN_PASSAGES = 1
+        try:
+            assert knowledge.search("tiny", "leather jackets")["ok"] is False
+        finally:
+            knowledge.IDF_MIN_PASSAGES = floor
     finally:
         embeddings.encode = real_encode
+        knowledge.reset()
+
+
+def test_the_retrieval_benchmark_answers_small_sites_without_inventing():
+    """Locks in the measured result, like the semantic floor above. BM25 only,
+    so it is deterministic and downloads nothing.
+
+    Before the chunking and IDF-floor fixes: 2/10 answerable questions got
+    nothing on the full benchmark site, and 5/10 on one-page sites.
+    """
+    from app.core import knowledge
+    from evaluation import retrieval_benchmark
+
+    try:
+        r = retrieval_benchmark.run(use_embeddings=False)
+    finally:
+        knowledge.reset()
+    assert (r["silence"], r["small_site_silence"]) == (0, 0), (
+        r["misses"], r["small_site_misses"])
+    assert r["hit@3"] == 1.0
+    # Silence must not have been bought with invented answers.
+    assert r["false_answers"] <= 1 and r["small_site_false_answers"] <= 1
+    assert r["small_site_near_miss_answered"] <= 3, r["small_site_near_miss_examples"]
+
+
+def test_every_registered_parameter_is_a_live_module_global():
+    """core/params.py only accepts values read as module globals at call time.
+    A registered name that is not one would accept an override and change
+    nothing — worse than refusing it."""
+    from app.core import params
+
+    for name, spec in params.PARAMS.items():
+        assert spec.low <= params.current(name) <= spec.high, name
 
 
 # ── JavaScript-rendered pages (blueprint 011) ──────────────────────────────

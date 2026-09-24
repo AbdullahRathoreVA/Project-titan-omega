@@ -94,6 +94,12 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("retrieval: backfill is wired", "app/main.py",
      "await asyncio.to_thread(knowledge.backfill)", "pass",
      "backfill_is_actually"),
+    ("retrieval: small-site IDF floor", "app/core/knowledge.py",
+     "n_idf = max(n, IDF_MIN_PASSAGES)", "n_idf = n",
+     "relative_to_the_corpus or small_sites"),
+    ("retrieval: short sentences are kept", "app/core/knowledge.py",
+     "if not _SENTENCE_END.search(part):", "if True:",
+     "short_sentence or small_sites"),
     # --- tenancy ----------------------------------------------------------
     # The half the ownership gate does NOT cover: the caller owns the client
     # id in the URL, and the resource id belongs to somebody else.

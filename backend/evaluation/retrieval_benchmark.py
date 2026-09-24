@@ -16,6 +16,10 @@ Metrics reported:
   silence      the retriever returned NOTHING for an answerable question
   false_answer the retriever returned something for an UNANSWERABLE question
 
+  small_site_* the same questions with each page indexed ALONE, as a one-page
+               business site: answerable misses, unanswerable answered, and
+               near-miss (another page's question) answered
+
 `silence` and `false_answer` are the two that matter commercially and they pull
 against each other. Silence on an answerable question is the defect being
 chased. A false answer on an unanswerable one is worse — it is the receptionist
@@ -169,9 +173,53 @@ def run(use_embeddings: bool = False, backfill: bool = False) -> dict:
             "false_answers": len(false_answers),
             "misses": misses,
             "false_answer_examples": false_answers,
+            **_small_sites(knowledge),
         }
     finally:
         embeddings.encode = real_encode
+
+
+def _small_sites(knowledge) -> dict:
+    """The case the four-page corpus cannot show: a business whose WHOLE site
+    is one page. BM25's IDF shrinks with the passage count, so an absolute
+    score cut-off calibrated on the full corpus can silence a small site on
+    questions whose words are literally on the page. Each page is indexed
+    alone and asked the questions it answers, plus every UNANSWERABLE one.
+    """
+    silent, false, near = [], [], []
+    answerable = probes = near_probes = 0
+    for url, html in CORPUS.items():
+        cid = f"bench-page:{url}"
+        knowledge.ingest(cid, html, url)
+        text = knowledge.strip_html(html).lower()
+        for question, needle in ANSWERABLE:
+            found = knowledge.search(cid, question, k=3)
+            hits = found.get("hits", []) if found.get("ok") else []
+            if needle.lower() not in text:
+                # Answered on ANOTHER page, so not on this one-page site: the
+                # hard case, because it shares the site's vocabulary.
+                near_probes += 1
+                if hits:
+                    near.append((url.rsplit("/", 1)[-1], question))
+                continue
+            answerable += 1
+            if not any(needle.lower() in h["text"].lower() for h in hits):
+                silent.append((url.rsplit("/", 1)[-1], question))
+        for question in UNANSWERABLE:
+            probes += 1
+            found = knowledge.search(cid, question, k=3)
+            if found.get("ok") and found.get("hits"):
+                false.append((url.rsplit("/", 1)[-1], question,
+                              found["hits"][0]["text"][:60]))
+    return {"small_site_answerable": answerable,
+            "small_site_silence": len(silent),
+            "small_site_probes": probes,
+            "small_site_false_answers": len(false),
+            "small_site_near_miss_probes": near_probes,
+            "small_site_near_miss_answered": len(near),
+            "small_site_misses": silent,
+            "small_site_false_answer_examples": false,
+            "small_site_near_miss_examples": near}
 
 
 def _print(result: dict, label: str = "") -> None:
@@ -192,6 +240,17 @@ def _print(result: dict, label: str = "") -> None:
         print("  false answers:")
         for q, txt in result["false_answer_examples"]:
             print(f"    - {q!r} -> {txt!r}")
+    print(f"  one-page sites: missed {result['small_site_silence']}/"
+          f"{result['small_site_answerable']} answerable, answered "
+          f"{result['small_site_false_answers']}/{result['small_site_probes']}"
+          f" unanswerable and {result['small_site_near_miss_answered']}/"
+          f"{result['small_site_near_miss_probes']} near-miss (other pages')")
+    for page, q in result["small_site_misses"]:
+        print(f"    - missed on /{page}: {q!r}")
+    for page, q, txt in result["small_site_false_answer_examples"]:
+        print(f"    - false on /{page}: {q!r} -> {txt!r}")
+    for page, q in result["small_site_near_miss_examples"]:
+        print(f"    - near-miss answered on /{page}: {q!r}")
 
 
 if __name__ == "__main__":
