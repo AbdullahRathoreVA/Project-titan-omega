@@ -3245,6 +3245,30 @@ morning until six in the evening. We are closed on Sunday.</p>
     assert knowledge.search("shop", "do you ship internationally")["ok"] is True
 
 
+def test_question_words_and_plurals_do_not_decide_the_answer(isolated_knowledge):
+    """"where are you based" ranked a sentence about hides first because it
+    contained "where", and "take" never matched "Production takes ..."."""
+    from app.core import knowledge
+
+    knowledge.ingest("q", """
+<h2>Leather</h2><p>We also offer chrome tanned hides where a softer finish is required.</p>
+<h2>About</h2><p>Triad Thread Studio is a leather manufacturer based in Sialkot, Pakistan.</p>
+<h2>Shipping</h2><p>Full production orders go by sea freight from Karachi.</p>
+<h2>Lead times</h2><p>Production takes about six weeks from the day the specification sheet is confirmed.</p>
+""", "https://q.example")
+
+    assert "Sialkot" in knowledge.search("q", "where are you based")["hits"][0]["text"]
+    assert "six weeks" in knowledge.search(
+        "q", "how long does production take")["hits"][0]["text"]
+    # Queries only: the index keeps every word a page says.
+    assert knowledge._tokens("where do you ship", query=True) == ["ship"]
+    assert knowledge._tokens("where do you ship") == ["where", "do", "ship"]
+    # The weakest stemmer there is — plural and third-person -s, nothing more.
+    assert [knowledge._stem(w) for w in
+            ("jackets", "takes", "categories", "glass", "status", "organisation")] == [
+        "jacket", "take", "category", "glass", "status", "organisation"]
+
+
 def test_a_page_with_no_headings_still_indexes(isolated_knowledge):
     """Plenty of small-business sites are built entirely from divs."""
     from app.core import knowledge
@@ -6150,6 +6174,8 @@ def test_the_retrieval_benchmark_answers_small_sites_without_inventing():
     assert (r["silence"], r["small_site_silence"]) == (0, 0), (
         r["misses"], r["small_site_misses"])
     assert r["hit@3"] == 1.0
+    # Question words dropped + S-stemming: hit@1 0.70 -> 0.90, MRR 0.85 -> 0.95.
+    assert r["hit@1"] >= 0.9 and r["mrr"] >= 0.95, r["misses"]
     # Silence must not have been bought with invented answers.
     assert r["false_answers"] <= 1 and r["small_site_false_answers"] <= 1
     assert r["small_site_near_miss_answered"] <= 3, r["small_site_near_miss_examples"]

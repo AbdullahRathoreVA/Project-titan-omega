@@ -115,9 +115,48 @@ _WS = re.compile(r"\s+")
 _WORD = re.compile(r"[a-z0-9']+")
 
 
-def _tokens(text: str) -> list[str]:
-    return [w for w in _WORD.findall((text or "").lower())
-            if w not in _STOP and len(w) > 1]
+# Question words carry the SHAPE of a question, not its topic. "where are you
+# based" ranked "...chrome tanned hides where a softer finish is required"
+# first — on the word "where". Removed from QUERIES only; "may" is not here
+# because "open in May" is a fact.
+#
+# Measured on evaluation/retrieval_benchmark.py (BM25 path), together with
+# _stem below:
+#                         hit@1   MRR    near-miss answered (one-page sites)
+#     neither             0.70    0.85   3/30
+#     question words      0.80    0.90   2/30
+#     stemming            0.80    0.90   4/30
+#     both                0.90    0.95   3/30   <- shipped
+# Silence and false answers are identical in all four. Stemming's extra
+# near-miss is the contact page offering "production orders by sea freight"
+# for "what is the minimum order" — quoted, not invented.
+_QUESTION = frozenset("""
+what when where which who whom whose why how do does did can could would should
+""".split())
+
+
+def _stem(w: str) -> str:
+    """Harman's S-stemmer: plurals and third-person -s, nothing else.
+
+    "Production takes about six weeks" never matched "how long does production
+    take", and "Every jacket is cut ... by hand" lost to a passage saying
+    "jackets" twice. Deliberately the weakest stemmer there is: a Porter-style
+    one conflates "organisation" with "organ", and a receptionist that answers
+    a question about one with a passage about the other is inventing.
+    """
+    if len(w) > 4 and w.endswith("ies") and not w.endswith(("eies", "aies")):
+        return w[:-3] + "y"
+    if len(w) > 3 and w.endswith("es") and not w.endswith(("aes", "ees", "oes")):
+        return w[:-1]
+    if len(w) > 3 and w.endswith("s") and not w.endswith(("us", "ss")):
+        return w[:-1]
+    return w
+
+
+def _tokens(text: str, query: bool = False) -> list[str]:
+    return [_stem(w) for w in _WORD.findall((text or "").lower())
+            if w not in _STOP and len(w) > 1
+            and not (query and w in _QUESTION)]
 
 
 def strip_html(html: str) -> str:
@@ -318,7 +357,7 @@ def _reindex(rec: dict) -> None:
 
 def search(client_id: str, question: str, k: int = 3) -> dict:
     """BM25 over the client's own pages. Returns nothing when nothing fits."""
-    q = _tokens(question)
+    q = _tokens(question, query=True)
     with _lock:
         rec = _store.get(client_id)
         if not rec or not rec["passages"]:

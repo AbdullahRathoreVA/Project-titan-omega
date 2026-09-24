@@ -100,6 +100,12 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("retrieval: short sentences are kept", "app/core/knowledge.py",
      "if not _SENTENCE_END.search(part):", "if True:",
      "short_sentence or small_sites"),
+    ("retrieval: question words are not topics", "app/core/knowledge.py",
+     "and not (query and w in _QUESTION)]", "]",
+     "question_words or small_sites"),
+    ("retrieval: plurals match their stem", "app/core/knowledge.py",
+     "return [_stem(w) for w in", "return [w for w in",
+     "question_words or small_sites"),
     # --- tenancy ----------------------------------------------------------
     # The half the ownership gate does NOT cover: the caller owns the client
     # id in the URL, and the resource id belongs to somebody else.
