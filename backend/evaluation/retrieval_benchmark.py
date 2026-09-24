@@ -110,13 +110,11 @@ def run(use_embeddings: bool = False, backfill: bool = False) -> dict:
 
     from app.core import embeddings, knowledge
 
-    real_encode = embeddings.encode
-    if not use_embeddings:
-        # Isolate the keyword path. With embeddings on, a background model
-        # download decides the result, which is not a measurement.
-        embeddings.encode = lambda *a, **k: []
-    try:
-        knowledge.import_state({"clients": {}})
+    # A private store for this thread: improve._measure runs this inside the
+    # live server, and it used to wipe every real client's knowledge. With
+    # embeddings off, the keyword path is isolated — a background model
+    # download deciding the result is not a measurement.
+    with knowledge.sandbox(use_embeddings=use_embeddings):
         for url, html in CORPUS.items():
             knowledge.ingest("bench", html, url)
 
@@ -127,10 +125,10 @@ def run(use_embeddings: bool = False, backfill: bool = False) -> dict:
                     break
                 _t.sleep(1)
             knowledge.backfill("bench")
-            vecs = sum(1 for p in knowledge._store["bench"]["passages"]
+            vecs = sum(1 for p in knowledge._stores()["bench"]["passages"]
                        if p.get("vec"))
             print(f"  [backfill] {vecs}/"
-                  f"{len(knowledge._store['bench']['passages'])} passages "
+                  f"{len(knowledge._stores()['bench']['passages'])} passages "
                   f"have vectors; model={embeddings.status()['state']}")
 
         hit1 = hit3 = silence = 0
@@ -175,8 +173,6 @@ def run(use_embeddings: bool = False, backfill: bool = False) -> dict:
             "false_answer_examples": false_answers,
             **_small_sites(knowledge),
         }
-    finally:
-        embeddings.encode = real_encode
 
 
 def _small_sites(knowledge) -> dict:

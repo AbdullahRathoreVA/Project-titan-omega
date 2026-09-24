@@ -21,6 +21,7 @@ retrieval says so and returns nothing rather than the least-bad passage.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import re
 import threading
@@ -108,6 +109,36 @@ on or our she that the their them they this to was we were will with you your
 _lock = threading.RLock()
 # client_id -> {"passages": [{text, url, terms}], "df": {term: n}}
 _store: dict[str, dict] = {}
+# A benchmark's private store and embedding switch, per THREAD. See sandbox().
+_local = threading.local()
+
+
+def _stores() -> dict:
+    private = getattr(_local, "store", None)
+    return _store if private is None else private
+
+
+def _encode(texts: list, **kw):
+    return [] if getattr(_local, "no_embed", False) else embeddings.encode(texts, **kw)
+
+
+@contextlib.contextmanager
+def sandbox(use_embeddings: bool = True):
+    """A private, empty knowledge store for THIS thread — for benchmarks.
+
+    evaluation/retrieval_benchmark.py reset the module store with
+    import_state({"clients": {}}) and indexed its fake site into it. Run by
+    improve._measure — on every evaluate(), and every 6 hours from
+    check_active() once any change was active — that wiped every real
+    client's knowledge in production, and the next save persisted the
+    benchmark in its place. Thread-local, so live requests on other threads
+    keep answering from the real store while a benchmark runs.
+    """
+    _local.store, _local.no_embed = {}, not use_embeddings
+    try:
+        yield
+    finally:
+        _local.store, _local.no_embed = None, False
 
 _TAG = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.I | re.S)
 _HTML = re.compile(r"<[^>]+>")
@@ -268,7 +299,8 @@ def ingest(client_id: str, html_or_text: str, url: str = "") -> dict:
                            "worth telling the client.")}
 
     with _lock:
-        rec = _store.setdefault(client_id, {"passages": []})
+        store = _stores()
+        rec = store.setdefault(client_id, {"passages": []})
         if url:
             rec["passages"] = [p for p in rec["passages"] if p["url"] != url]
         for head, c in chunks:
@@ -283,15 +315,16 @@ def ingest(client_id: str, html_or_text: str, url: str = "") -> dict:
         if len(rec["passages"]) > MAX_PASSAGES:
             del rec["passages"][:len(rec["passages"]) - MAX_PASSAGES]
         _reindex(rec)
-        if len(_store) > MAX_CLIENTS:
-            for stale in list(_store)[:len(_store) - MAX_CLIENTS]:
-                del _store[stale]
+        if len(store) > MAX_CLIENTS:
+            for stale in list(store)[:len(store) - MAX_CLIENTS]:
+                del store[stale]
         total = len(rec["passages"])
         pending = [p for p in rec["passages"] if "vec" not in p]
 
     # Start the model warming the moment there is anything to search, so it is
     # usually ready before the first question. Never blocks this call.
-    embeddings.warm(background=True)
+    if not getattr(_local, "no_embed", False):
+        embeddings.warm(background=True)
     _embed_pending(client_id, pending)
 
     return {"ok": True, "passages": len(chunks), "total": total, "url": url,
@@ -316,7 +349,7 @@ def _embed_pending(client_id: str, pending: list[dict]) -> int:
     unavailable — the passages stay searchable by BM25 either way."""
     if not pending:
         return 0
-    vecs = embeddings.encode([_context_text(p) for p in pending])
+    vecs = _encode([_context_text(p) for p in pending])
     if not vecs or len(vecs) != len(pending):
         return 0
     with _lock:
@@ -332,14 +365,15 @@ def backfill(client_id: str = "") -> dict:
     downloading, so without this a client stays keyword-only until re-audited.
     """
     with _lock:
-        targets = ([client_id] if client_id else list(_store))
-        work = {c: [p for p in _store.get(c, {}).get("passages", [])
+        store = _stores()
+        targets = ([client_id] if client_id else list(store))
+        work = {c: [p for p in store.get(c, {}).get("passages", [])
                     if "vec" not in p]
                 for c in targets}
     done = sum(_embed_pending(c, ps) for c, ps in work.items() if ps)
     with _lock:
         remaining = sum(1 for c in targets
-                        for p in _store.get(c, {}).get("passages", [])
+                        for p in store.get(c, {}).get("passages", [])
                         if "vec" not in p)
     return {"embedded": done, "remaining": remaining,
             "retrieval": embeddings.status()}
@@ -359,7 +393,7 @@ def search(client_id: str, question: str, k: int = 3) -> dict:
     """BM25 over the client's own pages. Returns nothing when nothing fits."""
     q = _tokens(question, query=True)
     with _lock:
-        rec = _store.get(client_id)
+        rec = _stores().get(client_id)
         if not rec or not rec["passages"]:
             return {"ok": False, "hits": [],
                     "reason": ("Nothing has been indexed for this business "
@@ -400,7 +434,7 @@ def search(client_id: str, question: str, k: int = 3) -> dict:
     # passage both rankers like rises above one that only a single ranker
     # loves. If embeddings are not available this whole block is skipped and
     # the BM25 order stands.
-    qvec = embeddings.encode([question], is_query=True)
+    qvec = _encode([question], is_query=True)
     if qvec:
         vectors = [p.get("vec") for p in passages]
         if any(vectors):
@@ -541,7 +575,7 @@ def answer(client_id: str, question: str, lang: str = "en") -> dict:
 
 def stats(client_id: str) -> dict:
     with _lock:
-        rec = _store.get(client_id)
+        rec = _stores().get(client_id)
         if not rec:
             return {"indexed": False, "passages": 0, "pages": 0}
         urls = {p["url"] for p in rec["passages"] if p["url"]}
@@ -559,7 +593,7 @@ def export_state() -> dict:
         return {"clients": {cid: [{"text": p["text"], "url": p["url"],
                                    "heading": p.get("heading", "")}
                                   for p in rec["passages"]]
-                            for cid, rec in _store.items()}}
+                            for cid, rec in _stores().items()}}
 
 
 def import_state(data: dict) -> None:
@@ -569,7 +603,8 @@ def import_state(data: dict) -> None:
     if not isinstance(rows, dict):
         return
     with _lock:
-        _store.clear()
+        store = _stores()
+        store.clear()
         for cid, passages in list(rows.items())[:MAX_CLIENTS]:
             if not isinstance(passages, list):
                 continue
@@ -581,10 +616,10 @@ def import_state(data: dict) -> None:
                 if isinstance(p, dict) and p.get("text")]}
             if rec["passages"]:
                 _reindex(rec)
-                _store[cid] = rec
+                store[cid] = rec
 
 
 def reset() -> None:
     """Test seam."""
     with _lock:
-        _store.clear()
+        _stores().clear()

@@ -3269,6 +3269,36 @@ def test_question_words_and_plurals_do_not_decide_the_answer(isolated_knowledge)
         "jacket", "take", "category", "glass", "status", "organisation"]
 
 
+def test_measuring_a_change_never_touches_a_real_clients_knowledge(
+        isolated_knowledge):
+    """The retrieval benchmark reset the module store and indexed its fake
+    site into it. improve._measure runs it inside the live server — on every
+    evaluate(), and every 6 hours from check_active() once any change was
+    active — so it wiped every real client's knowledge, and the next save
+    persisted the benchmark in its place."""
+    import threading
+
+    from app.core import knowledge, params
+
+    knowledge.ingest("real-client", "<h2>Hours</h2><p>We are open every "
+                     "weekday from nine until five, including bank "
+                     "holidays.</p>", "https://real.example")
+    params.benchmark("retrieval")()      # exactly what improve._measure runs
+
+    assert sorted(knowledge.export_state()["clients"]) == ["real-client"]
+    assert knowledge.search("real-client", "when are you open")["ok"] is True
+
+    # Per THREAD: a live request keeps answering while a benchmark holds one.
+    seen = {}
+    with knowledge.sandbox(use_embeddings=False):
+        assert knowledge.search("real-client", "when are you open")["ok"] is False
+        live = threading.Thread(target=lambda: seen.update(
+            ok=knowledge.search("real-client", "when are you open")["ok"]))
+        live.start()
+        live.join()
+    assert seen["ok"] is True
+
+
 def test_a_page_with_no_headings_still_indexes(isolated_knowledge):
     """Plenty of small-business sites are built entirely from divs."""
     from app.core import knowledge

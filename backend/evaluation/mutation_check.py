@@ -106,6 +106,12 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("retrieval: plurals match their stem", "app/core/knowledge.py",
      "return [_stem(w) for w in", "return [w for w in",
      "question_words or small_sites"),
+    ("knowledge: a benchmark gets a private store", "app/core/knowledge.py",
+     "_local.store, _local.no_embed = {}, not use_embeddings",
+     "_local.no_embed = not use_embeddings", "never_touches_a_real_client"),
+    ("benchmark: runs in the sandbox", "evaluation/retrieval_benchmark.py",
+     "with knowledge.sandbox(use_embeddings=use_embeddings):", "if True:",
+     "never_touches_a_real_client"),
     # --- tenancy ----------------------------------------------------------
     # The half the ownership gate does NOT cover: the caller owns the client
     # id in the URL, and the resource id belongs to somebody else.
