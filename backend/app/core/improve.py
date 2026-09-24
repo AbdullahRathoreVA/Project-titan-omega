@@ -71,7 +71,14 @@ def _row(r) -> dict:
     out["regression"] = (None if out.get("regression") is None
                          else bool(out["regression"]))
     out["automatic_rollback"] = bool(out.get("automatic_rollback"))
+    # None until measured, like before_metric — never an empty "all clear".
+    raw = out.get("guard_metrics")
+    out["guard_metrics"] = json.loads(raw) if raw else None
     return out
+
+
+def _worse(now, then, higher_is_better: bool) -> bool:
+    return now < then if higher_is_better else now > then
 
 
 def get(proposal_id: str) -> Optional[dict]:
@@ -169,6 +176,7 @@ def propose(param: str, value: Any, *, reason: str,
         "before_metric": None,
         "after_metric": None,
         "regression": None,
+        "guard_metrics": None,
         "approver": None,
         "decided_at": None,
         "activated_at": None,
@@ -218,9 +226,11 @@ def _measure(param_name: str, value: Any) -> dict:
             raise RuntimeError(
                 f"FATAL: {spec.module}.{spec.attr} was not restored after "
                 f"measurement ({restored!r}, expected {original!r}).")
-    if spec.metric not in result:
+    missing = [m for m in (spec.metric, *(g for g, _ in spec.guards))
+               if m not in result]
+    if missing:
         raise RuntimeError(
-            f"Benchmark {spec.benchmark!r} reported no {spec.metric!r}; "
+            f"Benchmark {spec.benchmark!r} reported no {missing}; "
             f"got {sorted(result)}.")
     return result
 
@@ -236,8 +246,9 @@ def evaluate(proposal_id: str) -> dict:
             f"{row['status']}.")
 
     spec = params.PARAMS[row["param"]]
-    before = _measure(row["param"], row["baseline_value"])[spec.metric]
-    after = _measure(row["param"], row["proposed_value"])[spec.metric]
+    base = _measure(row["param"], row["baseline_value"])
+    cand = _measure(row["param"], row["proposed_value"])
+    before, after = base[spec.metric], cand[spec.metric]
 
     # Equal is NOT an improvement. A change that measures identically is churn
     # on a live product, and churn is a risk with no upside.
@@ -245,19 +256,27 @@ def evaluate(proposal_id: str) -> dict:
         regression = after <= before
     else:
         regression = after >= before
+    # Nor is one bought with another number the same benchmark measures:
+    # fewer silent answers paid for in invented ones is a worse receptionist.
+    guards = {m: {"before": base[m], "after": cand[m],
+                  "worse": _worse(cand[m], base[m], hib)}
+              for m, hib in spec.guards}
+    broken = [m for m, g in guards.items() if g["worse"]]
+    regression = regression or bool(broken)
 
     with _lock:
         conn = _conn()
         with conn:
             conn.execute(
                 "UPDATE proposals SET status = ?, before_metric = ?, "
-                "after_metric = ?, regression = ? WHERE id = ?",
+                "after_metric = ?, regression = ?, guard_metrics = ? "
+                "WHERE id = ?",
                 (EVALUATED, float(before), float(after),
-                 1 if regression else 0, proposal_id))
+                 1 if regression else 0, json.dumps(guards), proposal_id))
     events.emit("improvement.evaluated",
                 {"id": proposal_id, "param": row["param"],
                  "metric": spec.metric, "before": before, "after": after,
-                 "regression": regression},
+                 "regression": regression, "guards_broken": broken},
                 actor="improve",
                 severity="info" if not regression else "warn")
     return get(proposal_id)
@@ -278,10 +297,13 @@ def approve(proposal_id: str, approver: str) -> dict:
             f"{row['status']}. Approving an unmeasured change is a guess with "
             f"a signature on it.")
     if row["regression"]:
+        broken = [f"{m} went {g['before']} → {g['after']}"
+                  for m, g in (row["guard_metrics"] or {}).items() if g["worse"]]
         raise ValueError(
             f"This measured WORSE: {row['metric']} went "
-            f"{row['before_metric']} → {row['after_metric']}. It cannot be "
-            f"approved.")
+            f"{row['before_metric']} → {row['after_metric']}"
+            + (f", and {'; '.join(broken)}" if broken else "")
+            + ". It cannot be approved.")
 
     with _lock:
         conn = _conn()
@@ -389,21 +411,26 @@ def check_active() -> list:
         if spec is None or row["before_metric"] is None:
             continue
         try:
-            now = _measure(row["param"], row["proposed_value"])[spec.metric]
+            result = _measure(row["param"], row["proposed_value"])
         except Exception as exc:
             out.append({"id": row["id"], "param": row["param"],
                         "error": str(exc)[:160]})
             continue
 
-        worse = (now < row["before_metric"] if spec.higher_is_better
-                 else now > row["before_metric"])
+        now = result[spec.metric]
+        stored = row["guard_metrics"] or {}   # none for pre-guard proposals
+        broken = [f"{m} measured {result[m]} against {stored[m]['before']}"
+                  for m, hib in spec.guards
+                  if m in stored and _worse(result[m], stored[m]["before"], hib)]
+        worse = _worse(now, row["before_metric"], spec.higher_is_better) or bool(broken)
         entry = {"id": row["id"], "param": row["param"],
                  "metric": spec.metric, "baseline": row["before_metric"],
-                 "now": now, "rolled_back": False}
+                 "now": now, "guards_broken": broken, "rolled_back": False}
         if worse:
             rollback(row["id"],
                      why=(f"Automatic: {spec.metric} measured {now} against an "
-                          f"approved baseline of {row['before_metric']}."),
+                          f"approved baseline of {row['before_metric']}"
+                          + (f"; {'; '.join(broken)}" if broken else "") + "."),
                      automatic=True)
             entry["rolled_back"] = True
         out.append(entry)

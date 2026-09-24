@@ -6154,6 +6154,14 @@ def test_the_retrieval_benchmark_answers_small_sites_without_inventing():
     assert r["false_answers"] <= 1 and r["small_site_false_answers"] <= 1
     assert r["small_site_near_miss_answered"] <= 3, r["small_site_near_miss_examples"]
 
+    # Every metric and guard a registered parameter is judged on is a number
+    # this benchmark actually reports — a misspelt guard would never fire.
+    from app.core import params
+    for spec in params.PARAMS.values():
+        if spec.benchmark == "retrieval":
+            for m in (spec.metric, *(g for g, _ in spec.guards)):
+                assert isinstance(r.get(m), (int, float)), (spec.name, m)
+
 
 def test_every_registered_parameter_is_a_live_module_global():
     """core/params.py only accepts values read as module globals at call time.
@@ -7162,6 +7170,62 @@ def test_an_active_change_that_regresses_is_rolled_back_automatically(improving)
     assert row["status"] == improve.ROLLED_BACK
     assert row["automatic_rollback"] is True
     assert "Automatic" in row["rollback_reason"]
+
+
+def test_a_gain_bought_with_a_guard_metric_cannot_be_approved(improving):
+    """Fewer invented answers paid for in silent ones is a worse receptionist.
+    Judged on its own metric alone, this proposal used to be approvable."""
+    from app.core import improve, knowledge, params
+
+    def traded() -> dict:
+        tighter = knowledge.COS_FLOOR >= 0.70
+        return {"false_answers": 0 if tighter else 1,
+                "silence": 4 if tighter else 0}
+
+    params.register_benchmark("retrieval", traded)
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Fewer false answers.")
+    row = improve.evaluate(p["id"])
+
+    assert (row["before_metric"], row["after_metric"]) == (1, 0)  # its own metric
+    assert row["guard_metrics"]["silence"] == {"before": 0, "after": 4, "worse": True}
+    assert row["regression"] is True
+    with pytest.raises(ValueError, match="silence went 0 → 4"):
+        improve.approve(p["id"], "Abdullah")
+
+
+def test_auto_rollback_also_watches_the_guard_metrics(improving):
+    from app.core import improve, knowledge, params
+
+    state = {"silence": 0}
+
+    def bench() -> dict:
+        active = knowledge.COS_FLOOR >= 0.70
+        return {"false_answers": 0 if active else 1,
+                "silence": state["silence"] if active else 0}
+
+    params.register_benchmark("retrieval", bench)
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Measured better.")
+    improve.evaluate(p["id"])
+    improve.approve(p["id"], "Abdullah")
+    improve.activate(p["id"])
+    assert knowledge.COS_FLOOR == 0.70
+
+    state["silence"] = 3          # its own metric is still better; a guard is not
+    checked = improve.check_active()
+
+    assert checked[0]["rolled_back"] is True and checked[0]["guards_broken"]
+    assert knowledge.COS_FLOOR == improving["original"]
+    assert "silence" in improve.get(p["id"])["rollback_reason"]
+
+
+def test_a_benchmark_that_does_not_report_a_guard_cannot_judge(improving):
+    """A guard the benchmark stopped reporting would pass by omission."""
+    from app.core import improve, params
+
+    params.register_benchmark("retrieval", lambda: {"false_answers": 0})
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Measured better.")
+    with pytest.raises(RuntimeError, match="silence"):
+        improve.evaluate(p["id"])
 
 
 def test_only_registered_parameters_can_ever_be_proposed(improving):

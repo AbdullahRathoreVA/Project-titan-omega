@@ -38,7 +38,7 @@ import threading
 import time
 from typing import Any, Optional
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _lock = threading.RLock()
 _conn: Optional[sqlite3.Connection] = None
@@ -266,6 +266,13 @@ MIGRATIONS: list[tuple[int, str]] = [
             PRIMARY KEY (key, scope, scope_id)
         );
         CREATE INDEX IF NOT EXISTS feature_flags_key ON feature_flags (key);
+    """),
+    # What a proposal did to the OTHER numbers its benchmark measures. A
+    # change judged on one metric could buy it with another — fewer silent
+    # answers, paid for in invented ones — and be approved, because nothing
+    # recorded the second number. JSON {metric: {"before", "after", "worse"}}.
+    (9, """
+        ALTER TABLE proposals ADD COLUMN guard_metrics TEXT;
     """),
 ]
 

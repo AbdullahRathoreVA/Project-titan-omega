@@ -54,6 +54,11 @@ class Param:
     metric: str               # the number in that benchmark's result that decides
     higher_is_better: bool
     why_default: str          # the measured reason the shipped value was chosen
+    # Other numbers from the same benchmark that must NOT get worse, as
+    # (metric, higher_is_better). A change judged on one metric alone can buy
+    # it with another — silence traded for invented answers — which is the
+    # trade evaluation/retrieval_benchmark.py says no change may make.
+    guards: tuple = ()
 
 
 PARAMS: dict[str, Param] = {
@@ -66,7 +71,8 @@ PARAMS: dict[str, Param] = {
             "0.60, set by evaluation/calibrate_cosine.py. At 0.52 the floor sat "
             "below the 0.6-0.9 band where sentence models score ANY two English "
             "sentences, and semantic rescue answered 5 of 5 unanswerable "
-            "questions. Lowering this trades invented answers for coverage.")),
+            "questions. Lowering this trades invented answers for coverage."),
+        guards=(("silence", False),)),
     "retrieval.min_score": Param(
         name="retrieval.min_score",
         module="app.core.knowledge", attr="MIN_SCORE",
@@ -77,7 +83,9 @@ PARAMS: dict[str, Param] = {
             "silenced small sites: a two-term exact match on a one-passage "
             "site scored ~0.58. retrieval.idf_min_passages now holds the IDF "
             "of a small site at the scale this cut-off works on; with it, the "
-            "benchmark answers 10/10 on the full site and on one-page sites.")),
+            "benchmark answers 10/10 on the full site and on one-page sites."),
+        guards=(("false_answers", False), ("small_site_false_answers", False),
+                ("small_site_near_miss_answered", False))),
     "retrieval.idf_min_passages": Param(
         name="retrieval.idf_min_passages",
         module="app.core.knowledge", attr="IDF_MIN_PASSAGES",
@@ -90,7 +98,10 @@ PARAMS: dict[str, Param] = {
             "and above missed 0. The cost is near-miss questions (another "
             "page's) that get a passage anyway: 1/30 -> 3/30. Anything above 6 "
             "measured the same, so it only widens the range of site sizes "
-            "where one common word clears MIN_SCORE.")),
+            "where one common word clears MIN_SCORE."),
+        guards=(("silence", False), ("false_answers", False),
+                ("small_site_false_answers", False),
+                ("small_site_near_miss_answered", False))),
 }
 
 
