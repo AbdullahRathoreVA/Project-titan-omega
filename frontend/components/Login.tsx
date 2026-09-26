@@ -263,6 +263,9 @@ export function Login({
             <a href="/privacy" className="hover:text-hud-cyan">
               Privacy
             </a>
+            <a href="/terms" className="hover:text-hud-cyan">
+              Terms
+            </a>
             <button
               type="button"
               onClick={() => setShowSignIn((v) => !v)}

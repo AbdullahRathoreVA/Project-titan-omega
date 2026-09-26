@@ -62,7 +62,9 @@ and an audit that runs. Two things worth doing first:
 - **Set `TITAN_STREET` / `TITAN_LOCALITY` / `TITAN_COUNTRY`.** Titan publishes a
   postal address on its own pages when these are set, and refuses to publish a
   partial one. A reviewer looking for a contactable business finds nothing today.
-- Make sure `/pricing` and `/privacy` are reachable. They are.
+- Make sure `/pricing`, `/privacy`, `/terms` and `/refunds` are reachable.
+  Paddle's review looks for terms of service and a refund policy; the last two
+  pages were added on 2026-09-27 because Titan had neither.
 
 Expect verification to take days, not minutes, and expect questions. That is
 the process working, not a rejection.
@@ -84,7 +86,9 @@ the process working, not a rejection.
    Enterprise $99. Note the **price id** for each (`pri_...`).
 4. Copy the **client-side token** from Paddle > Developer tools > Authentication.
    This is a different credential from the API key — see the checklist below.
-5. Set all five variables as Space secrets, restart the Space.
+5. Create the webhook destination (checklist below) and set all six variables
+   as Space secrets — the API key, the client-side token, three price ids and
+   `PADDLE_WEBHOOK_SECRET` — then restart the Space.
 6. **Prove it with the curl in the checklist.** Do not skip this. On 2026-09-03
    `processor_name()` reported "paddle" while every customer was being told to
    configure PayPal, so that string is not evidence of anything.
@@ -135,8 +139,11 @@ does:
 5. The processor pays out on a schedule to **Payoneer**, and Payoneer withdraws
    to a Pakistani bank in PKR.
 
-Titan already implements steps 1, 2 and 4 behind one adapter seam
-(`core/billing.py`). Only the account and its keys are missing.
+Titan implements steps 1, 2 and 4 behind one adapter seam (`core/billing.py`).
+**Step 4 did not exist until 2026-09-27**, although this document said it did:
+there was no webhook route, and `set_plan()` had no caller but the founder's
+manual grant, so a customer who paid stayed on Free. It is now
+`POST /api/webhooks/billing`, verified with `PADDLE_WEBHOOK_SECRET`.
 
 ## Setup checklist
 
@@ -157,7 +164,13 @@ Titan already implements steps 1, 2 and 4 behind one adapter seam
 - [ ] Optionally `PADDLE_LIVE=1`. **Without it the checkout runs against
       Paddle's SANDBOX**, deliberately: a deployment that defaults to live is
       one typo away from taking a real card during a test.
-- [ ] Point the processor's webhook at `POST /api/webhooks/billing`
+- [ ] Paddle > Developer tools > Notifications > **New destination**:
+      URL `https://titanomega-ai.com/api/webhooks/billing`, events
+      `subscription.created`, `subscription.activated`, `subscription.updated`,
+      `subscription.canceled`, `subscription.paused`, `subscription.resumed`,
+      `subscription.past_due`, `subscription.trialing`. Copy the destination's
+      **secret key** into the Space secret **`PADDLE_WEBHOOK_SECRET`** —
+      without it the endpoint refuses everything (503), by design.
 - [ ] Restart the Space — HF injects secrets only on restart
 
 ### Check it worked, before trusting it

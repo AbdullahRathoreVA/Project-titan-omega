@@ -333,6 +333,9 @@ app.add_middleware(
 # no login token). These are low-risk (content generation / append-only logging)
 # and the Space URL is private.
 _OPEN_PATHS = {
+    # Paddle cannot hold a Titan token; the HMAC signature authenticates it
+    # (api/router.py billing_webhook), and no secret means nothing is accepted.
+    "/api/webhooks/billing",
     "/api/login",
     "/api/auth",
     "/api/demo/enter",
@@ -430,6 +433,19 @@ def privacy_page():
     against titanomega-ai.com — the same finding it charges clients to fix.
     Signup now collects email addresses and the target market is the EU."""
     return _static_page("privacy.html")
+
+
+@app.get("/terms", include_in_schema=False)
+def terms_page():
+    """Paddle's seller review checks for terms of service and a refund policy
+    before it approves a merchant. Titan had neither, so the payment account
+    could not be approved however complete the checkout code was."""
+    return _static_page("terms.html")
+
+
+@app.get("/refunds", include_in_schema=False)
+def refunds_page():
+    return _static_page("refunds.html")
 
 
 @app.get("/pricing", include_in_schema=False)

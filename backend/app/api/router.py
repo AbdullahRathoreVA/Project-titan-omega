@@ -1890,6 +1890,31 @@ def account_me(x_account_token: Optional[str] = Header(None)) -> dict:
     return billing.public(email)
 
 
+@router.post("/webhooks/billing", tags=["billing"])
+async def billing_webhook(request: Request) -> dict:
+    """Paddle tells Titan that a subscription started, renewed, lapsed or
+    ended. Unauthenticated by design — Paddle holds no Titan token — so the
+    HMAC signature IS the authentication, and without a secret nothing is
+    accepted."""
+    import json as _json
+
+    from ..core import billing
+    if not os.getenv("PADDLE_WEBHOOK_SECRET", "").strip():
+        raise HTTPException(status_code=503, detail=(
+            "PADDLE_WEBHOOK_SECRET is not set. Copy the secret key of the "
+            "notification destination in Paddle > Developer tools > "
+            "Notifications into the Space secrets, then restart."))
+    raw = await request.body()
+    if not billing.verify_paddle_signature(
+            raw, request.headers.get("paddle-signature", "")):
+        raise HTTPException(status_code=401, detail="Invalid Paddle-Signature.")
+    try:
+        event = _json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body is not JSON.")
+    return billing.apply_paddle_event(event if isinstance(event, dict) else {})
+
+
 @router.post("/checkout/{plan_key}", tags=["billing"])
 def checkout(plan_key: str,
              x_account_token: Optional[str] = Header(None)) -> dict:

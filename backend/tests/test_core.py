@@ -3221,6 +3221,84 @@ def test_a_chunk_never_spans_two_headings(isolated_knowledge):
             assert "Germany" not in body
 
 
+def test_a_short_sentence_is_kept_not_dropped(isolated_knowledge):
+    """"We ship worldwide." is 18 characters. A flat minimum-length cut threw it
+    away — the one sentence that answers "do you ship internationally" — and
+    "We are closed on Sunday." with it. The retrieval benchmark was silent on
+    2/10 answerable questions for exactly this reason."""
+    from app.core import knowledge
+
+    knowledge.ingest("shop", """
+<h2>Shipping</h2><p>We ship worldwide. Sample runs go by air freight and full
+production orders by sea freight from Karachi.</p>
+<h2>Opening hours</h2><p>The workshop is open Monday to Saturday, nine in the
+morning until six in the evening. We are closed on Sunday.</p>
+<h2>Phone</h2><p>Call us on 0300 1234567.</p><p>Read more</p>
+""", "https://shop.example")
+    texts = [p["text"] for p in knowledge._store["shop"]["passages"]]
+
+    assert any(t.startswith("We ship worldwide. Sample runs") for t in texts)
+    assert any(t.endswith("evening. We are closed on Sunday.") for t in texts)
+    assert "Call us on 0300 1234567." in texts      # a section of one short fact
+    assert not any("Read more" in t for t in texts)  # a label, not a fact
+    assert not any("Sunday" in t and "Karachi" in t for t in texts)
+    assert knowledge.search("shop", "do you ship internationally")["ok"] is True
+
+
+def test_question_words_and_plurals_do_not_decide_the_answer(isolated_knowledge):
+    """"where are you based" ranked a sentence about hides first because it
+    contained "where", and "take" never matched "Production takes ..."."""
+    from app.core import knowledge
+
+    knowledge.ingest("q", """
+<h2>Leather</h2><p>We also offer chrome tanned hides where a softer finish is required.</p>
+<h2>About</h2><p>Triad Thread Studio is a leather manufacturer based in Sialkot, Pakistan.</p>
+<h2>Shipping</h2><p>Full production orders go by sea freight from Karachi.</p>
+<h2>Lead times</h2><p>Production takes about six weeks from the day the specification sheet is confirmed.</p>
+""", "https://q.example")
+
+    assert "Sialkot" in knowledge.search("q", "where are you based")["hits"][0]["text"]
+    assert "six weeks" in knowledge.search(
+        "q", "how long does production take")["hits"][0]["text"]
+    # Queries only: the index keeps every word a page says.
+    assert knowledge._tokens("where do you ship", query=True) == ["ship"]
+    assert knowledge._tokens("where do you ship") == ["where", "do", "ship"]
+    # The weakest stemmer there is — plural and third-person -s, nothing more.
+    assert [knowledge._stem(w) for w in
+            ("jackets", "takes", "categories", "glass", "status", "organisation")] == [
+        "jacket", "take", "category", "glass", "status", "organisation"]
+
+
+def test_measuring_a_change_never_touches_a_real_clients_knowledge(
+        isolated_knowledge):
+    """The retrieval benchmark reset the module store and indexed its fake
+    site into it. improve._measure runs it inside the live server — on every
+    evaluate(), and every 6 hours from check_active() once any change was
+    active — so it wiped every real client's knowledge, and the next save
+    persisted the benchmark in its place."""
+    import threading
+
+    from app.core import knowledge, params
+
+    knowledge.ingest("real-client", "<h2>Hours</h2><p>We are open every "
+                     "weekday from nine until five, including bank "
+                     "holidays.</p>", "https://real.example")
+    params.benchmark("retrieval")()      # exactly what improve._measure runs
+
+    assert sorted(knowledge.export_state()["clients"]) == ["real-client"]
+    assert knowledge.search("real-client", "when are you open")["ok"] is True
+
+    # Per THREAD: a live request keeps answering while a benchmark holds one.
+    seen = {}
+    with knowledge.sandbox(use_embeddings=False):
+        assert knowledge.search("real-client", "when are you open")["ok"] is False
+        live = threading.Thread(target=lambda: seen.update(
+            ok=knowledge.search("real-client", "when are you open")["ok"]))
+        live.start()
+        live.join()
+    assert seen["ok"] is True
+
+
 def test_a_page_with_no_headings_still_indexes(isolated_knowledge):
     """Plenty of small-business sites are built entirely from divs."""
     from app.core import knowledge
@@ -6062,32 +6140,21 @@ def test_the_semantic_floor_sits_above_the_sentence_model_noise_band():
 
 
 def test_bm25_threshold_is_relative_to_the_corpus_not_absolute():
-    """DOCUMENTS A KNOWN DEFECT — asserts the current behaviour, not the
-    desired one, so the day it is fixed this test fails and is updated
-    deliberately rather than a regression slipping past.
+    """A small site gets answers. This test used to DOCUMENT the defect — it
+    asserted the retriever returned nothing — so the fix had to change it
+    deliberately, with the benchmark that proves it.
 
     MIN_SCORE is a fixed 0.8, but a BM25 score scales with corpus size through
     IDF. With one indexed passage every term has df == n, so
         idf = log(1 + (1-1+0.5)/(1+0.5)) = log(1.333) = 0.288
-    and even a two-term exact match scores about 0.58 — below the cutoff. The
-    retriever therefore returns NOTHING for a question whose words are literally
-    on the page.
+    and even a two-term exact match scored about 0.58 — below the cutoff, on a
+    question whose words are literally on the page. IDF is now computed as if
+    the site had at least IDF_MIN_PASSAGES passages (calibration table beside
+    it): on the benchmark's one-page sites, answerable misses went 4/10 -> 0/10.
 
-    This matters commercially: Titan's market is small businesses, whose sites
-    have few pages. The recorded finding that lowering the semantic threshold
-    'changed nothing' is consistent with this being the real cause — the
-    keyword pass was being filtered out before fusion ever ran.
-
-    Fixing it needs a retrieval benchmark to prove the change, which is why it
-    is documented here rather than quietly tuned.
-
-    The embeddings pass is disabled explicitly here. Not doing so made this
-    test order-dependent — it passed alone and failed in the full suite,
-    because by then the ~130MB embedding model had finished downloading and the
-    semantic pass rescued the query. That is itself the finding worth keeping:
-    **on a small site, retrieval works only once a background download has
-    completed**, and returns nothing before then or wherever fastembed is
-    unavailable.
+    The embeddings pass is disabled explicitly. Not doing so made this test
+    order-dependent — once the ~130MB model finished downloading mid-suite the
+    semantic pass rescued the query, which is how the defect stayed hidden.
     """
     from app.core import embeddings, knowledge
 
@@ -6102,12 +6169,64 @@ def test_bm25_threshold_is_relative_to_the_corpus_not_absolute():
             "tiny", one_passage, "https://tiny.example")["passages"] == 1
 
         found = knowledge.search("tiny", "leather jackets")
-        assert found["ok"] is False, (
-            "the corpus-size defect appears to be FIXED — update this test "
-            "and record the retrieval benchmark that proves the improvement")
-        assert knowledge.MIN_SCORE == 0.8
+        assert found["ok"] is True
+        assert "leather jackets" in found["hits"][0]["text"]
+        # Still silent where the page is silent.
+        assert knowledge.search("tiny", "do you accept cryptocurrency")["ok"] is False
+
+        # The floor is what fixed it, and it is read at call time — the
+        # contract core/params.py needs before a value may be registered.
+        floor = knowledge.IDF_MIN_PASSAGES
+        knowledge.IDF_MIN_PASSAGES = 1
+        try:
+            assert knowledge.search("tiny", "leather jackets")["ok"] is False
+        finally:
+            knowledge.IDF_MIN_PASSAGES = floor
     finally:
         embeddings.encode = real_encode
+        knowledge.reset()
+
+
+def test_the_retrieval_benchmark_answers_small_sites_without_inventing():
+    """Locks in the measured result, like the semantic floor above. BM25 only,
+    so it is deterministic and downloads nothing.
+
+    Before the chunking and IDF-floor fixes: 2/10 answerable questions got
+    nothing on the full benchmark site, and 5/10 on one-page sites.
+    """
+    from app.core import knowledge
+    from evaluation import retrieval_benchmark
+
+    try:
+        r = retrieval_benchmark.run(use_embeddings=False)
+    finally:
+        knowledge.reset()
+    assert (r["silence"], r["small_site_silence"]) == (0, 0), (
+        r["misses"], r["small_site_misses"])
+    assert r["hit@3"] == 1.0
+    # Question words dropped + S-stemming: hit@1 0.70 -> 0.90, MRR 0.85 -> 0.95.
+    assert r["hit@1"] >= 0.9 and r["mrr"] >= 0.95, r["misses"]
+    # Silence must not have been bought with invented answers.
+    assert r["false_answers"] <= 1 and r["small_site_false_answers"] <= 1
+    assert r["small_site_near_miss_answered"] <= 3, r["small_site_near_miss_examples"]
+
+    # Every metric and guard a registered parameter is judged on is a number
+    # this benchmark actually reports — a misspelt guard would never fire.
+    from app.core import params
+    for spec in params.PARAMS.values():
+        if spec.benchmark == "retrieval":
+            for m in (spec.metric, *(g for g, _ in spec.guards)):
+                assert isinstance(r.get(m), (int, float)), (spec.name, m)
+
+
+def test_every_registered_parameter_is_a_live_module_global():
+    """core/params.py only accepts values read as module globals at call time.
+    A registered name that is not one would accept an override and change
+    nothing — worse than refusing it."""
+    from app.core import params
+
+    for name, spec in params.PARAMS.items():
+        assert spec.low <= params.current(name) <= spec.high, name
 
 
 # ── JavaScript-rendered pages (blueprint 011) ──────────────────────────────
@@ -7107,6 +7226,62 @@ def test_an_active_change_that_regresses_is_rolled_back_automatically(improving)
     assert row["status"] == improve.ROLLED_BACK
     assert row["automatic_rollback"] is True
     assert "Automatic" in row["rollback_reason"]
+
+
+def test_a_gain_bought_with_a_guard_metric_cannot_be_approved(improving):
+    """Fewer invented answers paid for in silent ones is a worse receptionist.
+    Judged on its own metric alone, this proposal used to be approvable."""
+    from app.core import improve, knowledge, params
+
+    def traded() -> dict:
+        tighter = knowledge.COS_FLOOR >= 0.70
+        return {"false_answers": 0 if tighter else 1,
+                "silence": 4 if tighter else 0}
+
+    params.register_benchmark("retrieval", traded)
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Fewer false answers.")
+    row = improve.evaluate(p["id"])
+
+    assert (row["before_metric"], row["after_metric"]) == (1, 0)  # its own metric
+    assert row["guard_metrics"]["silence"] == {"before": 0, "after": 4, "worse": True}
+    assert row["regression"] is True
+    with pytest.raises(ValueError, match="silence went 0 → 4"):
+        improve.approve(p["id"], "Abdullah")
+
+
+def test_auto_rollback_also_watches_the_guard_metrics(improving):
+    from app.core import improve, knowledge, params
+
+    state = {"silence": 0}
+
+    def bench() -> dict:
+        active = knowledge.COS_FLOOR >= 0.70
+        return {"false_answers": 0 if active else 1,
+                "silence": state["silence"] if active else 0}
+
+    params.register_benchmark("retrieval", bench)
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Measured better.")
+    improve.evaluate(p["id"])
+    improve.approve(p["id"], "Abdullah")
+    improve.activate(p["id"])
+    assert knowledge.COS_FLOOR == 0.70
+
+    state["silence"] = 3          # its own metric is still better; a guard is not
+    checked = improve.check_active()
+
+    assert checked[0]["rolled_back"] is True and checked[0]["guards_broken"]
+    assert knowledge.COS_FLOOR == improving["original"]
+    assert "silence" in improve.get(p["id"])["rollback_reason"]
+
+
+def test_a_benchmark_that_does_not_report_a_guard_cannot_judge(improving):
+    """A guard the benchmark stopped reporting would pass by omission."""
+    from app.core import improve, params
+
+    params.register_benchmark("retrieval", lambda: {"false_answers": 0})
+    p = improve.propose("retrieval.cos_floor", 0.70, reason="Measured better.")
+    with pytest.raises(RuntimeError, match="silence"):
+        improve.evaluate(p["id"])
 
 
 def test_only_registered_parameters_can_ever_be_proposed(improving):
@@ -11284,3 +11459,157 @@ def test_a_trial_is_not_billable_until_a_card_can_be_charged(paddle_env,
     individual = [p for p in billing.plans()["plans"]
                   if p["key"] == "individual"][0]
     assert individual["trial_billable"] is True
+
+
+# ── Paddle webhook: a payment that upgrades nobody is a charge with no product ─
+#
+# The checkout told customers "Titan is told the result by webhook", and
+# docs/PAYMENTS.md said to point Paddle at POST /api/webhooks/billing. Neither
+# existed: set_plan() had no caller but the founder's manual grant, so a
+# customer who paid through Paddle stayed on the Free plan.
+
+_WH_SECRET = "pdl_ntfset_test_only_secret"
+_WH_URL = "/api/webhooks/billing"
+
+
+def _signed(body: dict, secret: str = _WH_SECRET, ts=None):
+    import hashlib
+    import hmac
+    import json as _json
+    import time as _time
+
+    raw = _json.dumps(body).encode()
+    stamp = str(int(ts if ts is not None else _time.time()))
+    h1 = hmac.new(secret.encode(), stamp.encode() + b":" + raw,
+                  hashlib.sha256).hexdigest()
+    return raw, {"Paddle-Signature": f"ts={stamp};h1={h1}",
+                 "Content-Type": "application/json"}
+
+
+def _sub_event(event_id, status, *, sub="sub_01", occurred="2026-09-27T10:00:00Z",
+               kind="subscription.created", email="payer@example.com",
+               price="pri_individual_123"):
+    return {"event_id": event_id, "event_type": kind, "occurred_at": occurred,
+            "data": {"id": sub, "status": status,
+                     "custom_data": {"titan_email": email},
+                     "items": [{"price": {"id": price}}]}}
+
+
+@pytest.fixture()
+def paddle_webhook(paddle_env, isolated_billing):
+    from app.core import billing
+
+    paddle_env.setenv("PADDLE_WEBHOOK_SECRET", _WH_SECRET)
+    billing.signup("payer@example.com", "a-long-password-1", "free")
+    return billing
+
+
+def test_a_paddle_payment_upgrades_the_account_that_paid(client, paddle_webhook):
+    raw, h = _signed(_sub_event("evt_pay_1", "active", sub="sub_pay"))
+    r = client.post(_WH_URL, content=raw, headers=h)
+    assert r.status_code == 200 and r.json()["plan"] == "individual", r.text
+    assert paddle_webhook.public("payer@example.com")["plan"] == "individual"
+
+    raw, h = _signed(_sub_event("evt_pay_2", "canceled", sub="sub_pay",
+                                kind="subscription.canceled",
+                                occurred="2026-10-27T10:00:00Z"))
+    assert client.post(_WH_URL, content=raw, headers=h).json()["plan"] == "free"
+    assert paddle_webhook.public("payer@example.com")["plan"] == "free"
+
+
+def test_a_forged_stale_or_unsigned_paddle_webhook_changes_nothing(
+        client, paddle_webhook):
+    import time as _time
+
+    body = _sub_event("evt_forged", "active", sub="sub_forged")
+    forged = _signed(body, secret="not-the-secret")
+    stale = _signed(body, ts=_time.time() - 3600)   # a captured request, replayed
+    unsigned = (_signed(body)[0], {"Content-Type": "application/json"})
+    for raw, h in (forged, stale, unsigned):
+        assert client.post(_WH_URL, content=raw, headers=h).status_code == 401
+    assert paddle_webhook.public("payer@example.com")["plan"] == "free"
+
+
+def test_without_a_webhook_secret_nothing_is_accepted(client, paddle_webhook,
+                                                      paddle_env):
+    paddle_env.delenv("PADDLE_WEBHOOK_SECRET")
+    raw, h = _signed(_sub_event("evt_nosecret", "active", sub="sub_nosecret"))
+    r = client.post(_WH_URL, content=raw, headers=h)
+    assert r.status_code == 503 and "PADDLE_WEBHOOK_SECRET" in r.text
+    assert paddle_webhook.public("payer@example.com")["plan"] == "free"
+
+
+def test_paddle_retries_and_late_events_are_not_reapplied(client, paddle_webhook):
+    """Webhooks arrive twice and out of order. A late "active" must not
+    resurrect a subscription that has since been cancelled."""
+    def post(event):
+        raw, h = _signed(event)
+        return client.post(_WH_URL, content=raw, headers=h).json()
+
+    first = _sub_event("evt_ord_1", "active", sub="sub_ord",
+                       occurred="2026-09-27T10:00:00Z")
+    post(first)
+    assert post(first)["duplicate"] == "evt_ord_1"
+    post(_sub_event("evt_ord_3", "canceled", sub="sub_ord",
+                    kind="subscription.canceled", occurred="2026-09-27T12:00:00Z"))
+    late = post(_sub_event("evt_ord_2", "active", sub="sub_ord",
+                           kind="subscription.updated",
+                           occurred="2026-09-27T11:00:00Z"))
+    assert "older" in late["ignored"]
+    assert paddle_webhook.public("payer@example.com")["plan"] == "free"
+
+
+def test_the_plan_comes_from_paddles_price_never_from_the_browser(
+        client, paddle_webhook):
+    """custom_data is written by the page, so it only says WHO paid. WHAT they
+    bought is the price id in Paddle's signed payload."""
+    from app.core import events
+
+    for event, why in (
+            (_sub_event("evt_px", "active", sub="sub_px", price="pri_forged"),
+             "unknown price id"),
+            (_sub_event("evt_who", "active", sub="sub_who",
+                        email="nobody@example.com"),
+             "no Titan account on this subscription")):
+        raw, h = _signed(event)
+        assert client.post(_WH_URL, content=raw, headers=h).json()["unmatched"] == why
+    assert paddle_webhook.public("payer@example.com")["plan"] == "free"
+    # Somebody may have paid, so the founder is told rather than nobody.
+    flagged = [e["payload"]["subscription_id"]
+               for e in events.trace(50, event="PaymentUnmatched")]
+    assert {"sub_px", "sub_who"} <= set(flagged)
+
+
+def test_checkout_tells_paddle_which_account_is_paying(paddle_env,
+                                                       isolated_billing):
+    import pathlib
+
+    from app.core import billing
+
+    paddle_env.setenv("PADDLE_CLIENT_TOKEN", "live_browser_safe_token")
+    out = billing.checkout("customer@example.com", "individual")
+    assert out["custom_data"] == {"titan_email": "customer@example.com"}
+    page = (pathlib.Path(billing.__file__).resolve().parents[1] / "static"
+            / "pricing.html").read_text(encoding="utf-8")
+    assert "customData: out.custom_data" in page
+
+
+# ── Terms and refund policy: Paddle will not approve a seller without them ──
+
+def test_terms_and_refund_policy_are_published_and_linked(client):
+    privacy = client.get("/privacy").text
+    for path, must in (("/terms", "Terms of service"),
+                       ("/refunds", "Full refund within 14 days of any payment")):
+        page = client.get(path)
+        assert page.status_code == 200 and must in page.text
+        # The clause Paddle asks sellers to publish.
+        assert "Paddle.com is the Merchant of Record for all our orders" in page.text
+        # Same operator and contact as the privacy notice — not a second story.
+        assert "rathoreabdullah816@gmail.com" in page.text
+        assert "rathoreabdullah816@gmail.com" in privacy
+    assert 'href="/refunds"' in client.get("/terms").text
+    for page in ("/pricing", "/join", "/privacy"):
+        html = client.get(page).text
+        assert 'href="/terms"' in html and 'href="/refunds"' in html, page
+    sitemap = client.get("/sitemap.xml").text
+    assert "/terms</loc>" in sitemap and "/refunds</loc>" in sitemap

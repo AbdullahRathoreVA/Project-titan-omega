@@ -200,7 +200,7 @@ def _page(title: str, desc: str, canonical: str, body: str,
 {body}
 <div class="foot">
   <a href="/join">Run a free audit</a> · <a href="/pricing">Pricing</a> ·
-  <a href="/privacy">Privacy</a>
+  <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a>
   {_contact_block()}
   <p>Every figure above comes from the same rule set Titan applies when it
   audits a real site. Legal information, not legal advice — confirm anything

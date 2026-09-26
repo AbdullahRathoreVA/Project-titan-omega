@@ -21,6 +21,7 @@ retrieval says so and returns nothing rather than the least-bad passage.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import re
 import threading
@@ -36,6 +37,23 @@ MAX_PASSAGE_CHARS = 600
 # Below this the best match is noise. Tuned so a question about something the
 # site never mentions returns nothing instead of the least-irrelevant sentence.
 MIN_SCORE = 0.8
+# IDF is computed as if the site had at least this many passages, the unseen
+# ones not containing the term. BM25's IDF shrinks with the passage count: on
+# a one-passage site every word has df == n and scores log(1.333) = 0.288, so
+# MIN_SCORE silenced questions whose words were literally on the page — and
+# Titan's market is small sites. Measured with the one-page scenario in
+# evaluation/retrieval_benchmark.py (each page of the benchmark site indexed
+# as the WHOLE site; answerable misses / near-miss questions from other pages
+# answered anyway):
+#     floor 1 (off) -> 4/10 missed, 1/30 near-miss   <- the old behaviour
+#     floor 4       -> 1/10 missed, 2/30 near-miss
+#     floor 6       -> 0/10 missed, 3/30 near-miss   <- chosen
+#     floor 8..40   -> 0/10 missed, 3/30 near-miss
+# 6 is the smallest value that closes the gap; larger ones bought nothing and
+# only widen the range of site sizes where a single common word clears the
+# bar. The full benchmark site (12 passages) and its 5 unanswerable questions
+# score identically at every floor.
+IDF_MIN_PASSAGES = 6
 
 # How many semantic candidates may enter the fusion. Short and confident beats
 # long and vague: RRF over the whole corpus swamps the exact keyword signal.
@@ -91,6 +109,36 @@ on or our she that the their them they this to was we were will with you your
 _lock = threading.RLock()
 # client_id -> {"passages": [{text, url, terms}], "df": {term: n}}
 _store: dict[str, dict] = {}
+# A benchmark's private store and embedding switch, per THREAD. See sandbox().
+_local = threading.local()
+
+
+def _stores() -> dict:
+    private = getattr(_local, "store", None)
+    return _store if private is None else private
+
+
+def _encode(texts: list, **kw):
+    return [] if getattr(_local, "no_embed", False) else embeddings.encode(texts, **kw)
+
+
+@contextlib.contextmanager
+def sandbox(use_embeddings: bool = True):
+    """A private, empty knowledge store for THIS thread — for benchmarks.
+
+    evaluation/retrieval_benchmark.py reset the module store with
+    import_state({"clients": {}}) and indexed its fake site into it. Run by
+    improve._measure — on every evaluate(), and every 6 hours from
+    check_active() once any change was active — that wiped every real
+    client's knowledge in production, and the next save persisted the
+    benchmark in its place. Thread-local, so live requests on other threads
+    keep answering from the real store while a benchmark runs.
+    """
+    _local.store, _local.no_embed = {}, not use_embeddings
+    try:
+        yield
+    finally:
+        _local.store, _local.no_embed = None, False
 
 _TAG = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.I | re.S)
 _HTML = re.compile(r"<[^>]+>")
@@ -98,9 +146,48 @@ _WS = re.compile(r"\s+")
 _WORD = re.compile(r"[a-z0-9']+")
 
 
-def _tokens(text: str) -> list[str]:
-    return [w for w in _WORD.findall((text or "").lower())
-            if w not in _STOP and len(w) > 1]
+# Question words carry the SHAPE of a question, not its topic. "where are you
+# based" ranked "...chrome tanned hides where a softer finish is required"
+# first — on the word "where". Removed from QUERIES only; "may" is not here
+# because "open in May" is a fact.
+#
+# Measured on evaluation/retrieval_benchmark.py (BM25 path), together with
+# _stem below:
+#                         hit@1   MRR    near-miss answered (one-page sites)
+#     neither             0.70    0.85   3/30
+#     question words      0.80    0.90   2/30
+#     stemming            0.80    0.90   4/30
+#     both                0.90    0.95   3/30   <- shipped
+# Silence and false answers are identical in all four. Stemming's extra
+# near-miss is the contact page offering "production orders by sea freight"
+# for "what is the minimum order" — quoted, not invented.
+_QUESTION = frozenset("""
+what when where which who whom whose why how do does did can could would should
+""".split())
+
+
+def _stem(w: str) -> str:
+    """Harman's S-stemmer: plurals and third-person -s, nothing else.
+
+    "Production takes about six weeks" never matched "how long does production
+    take", and "Every jacket is cut ... by hand" lost to a passage saying
+    "jackets" twice. Deliberately the weakest stemmer there is: a Porter-style
+    one conflates "organisation" with "organ", and a receptionist that answers
+    a question about one with a passage about the other is inventing.
+    """
+    if len(w) > 4 and w.endswith("ies") and not w.endswith(("eies", "aies")):
+        return w[:-3] + "y"
+    if len(w) > 3 and w.endswith("es") and not w.endswith(("aes", "ees", "oes")):
+        return w[:-1]
+    if len(w) > 3 and w.endswith("s") and not w.endswith(("us", "ss")):
+        return w[:-1]
+    return w
+
+
+def _tokens(text: str, query: bool = False) -> list[str]:
+    return [_stem(w) for w in _WORD.findall((text or "").lower())
+            if w not in _STOP and len(w) > 1
+            and not (query and w in _QUESTION)]
 
 
 def strip_html(html: str) -> str:
@@ -149,14 +236,35 @@ def split_sections(html: str) -> list[tuple[str, str]]:
     return [s for s in sections if s[1].strip()] or [("", strip_html(html))]
 
 
+_SENTENCE_END = re.compile(r"[.!?][\"')\]]*$")
+
+
 def _split(text: str) -> list[str]:
     """Sentence-ish chunks. Long runs are cut on whitespace rather than
-    mid-word, because a passage read aloud has to be a sentence."""
+    mid-word, because a passage read aloud has to be a sentence.
+
+    A SHORT sentence joins its neighbour instead of being dropped. "We ship
+    worldwide." is 18 characters and "We are closed on Sunday." is 24 —
+    exactly the facts a caller asks for — and a flat MIN_PASSAGE_CHARS cut
+    threw both away, which is why the benchmark was silent on "do you ship
+    internationally". It joins the sentence before it (the usual referent:
+    "Sampling adds a further two weeks before that."), or the one after when
+    it opens its section. A short fragment WITHOUT sentence punctuation is
+    still dropped: that is a menu label or a button, not a fact.
+    """
     out: list[str] = []
+    carry = ""  # short sentences waiting for the next full one
     for part in re.split(r"(?<=[.!?])\s+|\n{2,}", text):
         part = part.strip()
         if len(part) < MIN_PASSAGE_CHARS:
+            if not _SENTENCE_END.search(part):
+                continue
+            if out and not carry and len(out[-1]) + len(part) < MAX_PASSAGE_CHARS:
+                out[-1] = f"{out[-1]} {part}"
+            else:
+                carry = f"{carry} {part}".strip()
             continue
+        part, carry = f"{carry} {part}".strip(), ""
         while len(part) > MAX_PASSAGE_CHARS:
             cut = part.rfind(" ", 0, MAX_PASSAGE_CHARS)
             cut = cut if cut > MIN_PASSAGE_CHARS else MAX_PASSAGE_CHARS
@@ -164,6 +272,11 @@ def _split(text: str) -> list[str]:
             part = part[cut:].strip()
         if len(part) >= MIN_PASSAGE_CHARS:
             out.append(part)
+    if carry:
+        if out and len(out[-1]) + len(carry) < MAX_PASSAGE_CHARS:
+            out[-1] = f"{out[-1]} {carry}"
+        elif len(_tokens(carry)) >= 2:  # a section that is one short fact
+            out.append(carry)
     return out
 
 
@@ -186,7 +299,8 @@ def ingest(client_id: str, html_or_text: str, url: str = "") -> dict:
                            "worth telling the client.")}
 
     with _lock:
-        rec = _store.setdefault(client_id, {"passages": []})
+        store = _stores()
+        rec = store.setdefault(client_id, {"passages": []})
         if url:
             rec["passages"] = [p for p in rec["passages"] if p["url"] != url]
         for head, c in chunks:
@@ -201,15 +315,16 @@ def ingest(client_id: str, html_or_text: str, url: str = "") -> dict:
         if len(rec["passages"]) > MAX_PASSAGES:
             del rec["passages"][:len(rec["passages"]) - MAX_PASSAGES]
         _reindex(rec)
-        if len(_store) > MAX_CLIENTS:
-            for stale in list(_store)[:len(_store) - MAX_CLIENTS]:
-                del _store[stale]
+        if len(store) > MAX_CLIENTS:
+            for stale in list(store)[:len(store) - MAX_CLIENTS]:
+                del store[stale]
         total = len(rec["passages"])
         pending = [p for p in rec["passages"] if "vec" not in p]
 
     # Start the model warming the moment there is anything to search, so it is
     # usually ready before the first question. Never blocks this call.
-    embeddings.warm(background=True)
+    if not getattr(_local, "no_embed", False):
+        embeddings.warm(background=True)
     _embed_pending(client_id, pending)
 
     return {"ok": True, "passages": len(chunks), "total": total, "url": url,
@@ -234,7 +349,7 @@ def _embed_pending(client_id: str, pending: list[dict]) -> int:
     unavailable — the passages stay searchable by BM25 either way."""
     if not pending:
         return 0
-    vecs = embeddings.encode([_context_text(p) for p in pending])
+    vecs = _encode([_context_text(p) for p in pending])
     if not vecs or len(vecs) != len(pending):
         return 0
     with _lock:
@@ -250,14 +365,15 @@ def backfill(client_id: str = "") -> dict:
     downloading, so without this a client stays keyword-only until re-audited.
     """
     with _lock:
-        targets = ([client_id] if client_id else list(_store))
-        work = {c: [p for p in _store.get(c, {}).get("passages", [])
+        store = _stores()
+        targets = ([client_id] if client_id else list(store))
+        work = {c: [p for p in store.get(c, {}).get("passages", [])
                     if "vec" not in p]
                 for c in targets}
     done = sum(_embed_pending(c, ps) for c, ps in work.items() if ps)
     with _lock:
         remaining = sum(1 for c in targets
-                        for p in _store.get(c, {}).get("passages", [])
+                        for p in store.get(c, {}).get("passages", [])
                         if "vec" not in p)
     return {"embedded": done, "remaining": remaining,
             "retrieval": embeddings.status()}
@@ -275,9 +391,9 @@ def _reindex(rec: dict) -> None:
 
 def search(client_id: str, question: str, k: int = 3) -> dict:
     """BM25 over the client's own pages. Returns nothing when nothing fits."""
-    q = _tokens(question)
+    q = _tokens(question, query=True)
     with _lock:
-        rec = _store.get(client_id)
+        rec = _stores().get(client_id)
         if not rec or not rec["passages"]:
             return {"ok": False, "hits": [],
                     "reason": ("Nothing has been indexed for this business "
@@ -290,6 +406,7 @@ def search(client_id: str, question: str, k: int = 3) -> dict:
         return {"ok": False, "hits": [], "reason": "Ask a real question."}
 
     n = len(passages)
+    n_idf = max(n, IDF_MIN_PASSAGES)
     k1, b = 1.5, 0.75
     scored = []
     for p in passages:
@@ -302,7 +419,7 @@ def search(client_id: str, question: str, k: int = 3) -> dict:
             f = terms.count(t)
             if not f:
                 continue
-            idf = math.log(1 + (n - df.get(t, 0) + 0.5) / (df.get(t, 0) + 0.5))
+            idf = math.log(1 + (n_idf - df.get(t, 0) + 0.5) / (df.get(t, 0) + 0.5))
             score += idf * (f * (k1 + 1)) / (f + k1 * (1 - b + b * length / avg_len))
         if score > 0:
             scored.append((score, p))
@@ -317,7 +434,7 @@ def search(client_id: str, question: str, k: int = 3) -> dict:
     # passage both rankers like rises above one that only a single ranker
     # loves. If embeddings are not available this whole block is skipped and
     # the BM25 order stands.
-    qvec = embeddings.encode([question], is_query=True)
+    qvec = _encode([question], is_query=True)
     if qvec:
         vectors = [p.get("vec") for p in passages]
         if any(vectors):
@@ -458,7 +575,7 @@ def answer(client_id: str, question: str, lang: str = "en") -> dict:
 
 def stats(client_id: str) -> dict:
     with _lock:
-        rec = _store.get(client_id)
+        rec = _stores().get(client_id)
         if not rec:
             return {"indexed": False, "passages": 0, "pages": 0}
         urls = {p["url"] for p in rec["passages"] if p["url"]}
@@ -476,7 +593,7 @@ def export_state() -> dict:
         return {"clients": {cid: [{"text": p["text"], "url": p["url"],
                                    "heading": p.get("heading", "")}
                                   for p in rec["passages"]]
-                            for cid, rec in _store.items()}}
+                            for cid, rec in _stores().items()}}
 
 
 def import_state(data: dict) -> None:
@@ -486,7 +603,8 @@ def import_state(data: dict) -> None:
     if not isinstance(rows, dict):
         return
     with _lock:
-        _store.clear()
+        store = _stores()
+        store.clear()
         for cid, passages in list(rows.items())[:MAX_CLIENTS]:
             if not isinstance(passages, list):
                 continue
@@ -498,10 +616,10 @@ def import_state(data: dict) -> None:
                 if isinstance(p, dict) and p.get("text")]}
             if rec["passages"]:
                 _reindex(rec)
-                _store[cid] = rec
+                store[cid] = rec
 
 
 def reset() -> None:
     """Test seam."""
     with _lock:
-        _store.clear()
+        _stores().clear()
