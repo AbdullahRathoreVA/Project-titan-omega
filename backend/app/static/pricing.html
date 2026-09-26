@@ -151,7 +151,8 @@ async function load() {
       const plan = data.plans.find(p => p.key === chosen);
       $('#dlgSub').textContent = plan.price_usd === 0
         ? 'Free plan — no card, no trial timer.'
-        : `${plan.name} — $${plan.price_usd}/month. You will confirm payment separately.`;
+        : `${plan.name} — $${plan.price_usd}/month. You will confirm payment separately. ` +
+          'Already have an account? Use its email and password to upgrade.';
       $('#msg').textContent = '';
       $('#dlg').showModal();
     };
@@ -172,7 +173,12 @@ $('#go').onclick = async () => {
       body: JSON.stringify({ email, password, plan: chosen }),
     });
     const body = await r.json();
-    if (!r.ok) {
+    // An existing account choosing a paid plan is an UPGRADE, not an error.
+    // This dialog is the only way into checkout, so stopping at "already
+    // exists" left every free customer with no way to pay.
+    const existing = !r.ok && chosen !== 'free' &&
+      /already exists/i.test(String(body.detail || ''));
+    if (!r.ok && !existing) {
       msg.className = 'msg err';
       // The server's message is specific ("already exists", "at least 8
       // characters"); showing a generic failure would hide the fix.
@@ -185,22 +191,33 @@ $('#go').onclick = async () => {
       return;
     }
     // Paid: sign in, then ask the server where to send the customer.
-    const login = await (await fetch('/api/account/login', {
+    const lr = await fetch('/api/account/login', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ email, password }),
-    })).json();
+    });
+    const login = await lr.json();
+    if (!lr.ok) {
+      // Without this a wrong password fell through to a 401 from checkout and
+      // was reported as "paid plans are not accepting payment yet".
+      msg.className = 'msg err';
+      msg.textContent = existing
+        ? 'That email already has an account, and the password is not right.'
+        : (login.detail || 'Could not sign in.');
+      return;
+    }
+    const done = existing ? 'Signed in.' : 'Account created.';
     const out = await (await fetch('/api/checkout/' + chosen, {
       method: 'POST', headers: {'X-Account-Token': login.token},
     })).json();
     if (out.ready) {
-      msg.textContent = 'Account created. Opening secure checkout…';
+      msg.textContent = done + ' Opening secure checkout…';
       await openCheckout(out, email, msg);
     } else {
       // Honest degradation: the account is real and free works. Say that
       // rather than leaving them staring at a dead button.
       msg.className = 'msg';
-      msg.innerHTML = 'Account created, but paid plans are not accepting ' +
-        'payment yet. You are on the free plan and it works in full.';
+      msg.innerHTML = done + ' Paid plans are not accepting payment yet. ' +
+        'You are on the free plan and it works in full.';
     }
   } catch (e) {
     msg.className = 'msg err';

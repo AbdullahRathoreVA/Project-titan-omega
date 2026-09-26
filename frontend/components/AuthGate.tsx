@@ -112,6 +112,8 @@ export function AuthGate() {
           <a className="hover:text-hud-cyan" href="/pricing">Pricing</a>
           <a className="hover:text-hud-cyan" href="/privacy">Privacy</a>
           <a className="hover:text-hud-cyan" href="/terms">Terms</a>
+          <a className="hover:text-hud-cyan" href="/refunds">Refunds</a>
+          <a className="hover:text-hud-cyan" href="mailto:rathoreabdullah816@gmail.com">Contact</a>
           <a className="hover:text-hud-cyan" href="/portal">Client portal</a>
         </nav>
       </main>

@@ -11594,6 +11594,15 @@ def test_checkout_tells_paddle_which_account_is_paying(paddle_env,
     assert "customData: out.custom_data" in page
 
 
+def test_pricing_lets_an_existing_account_upgrade(client):
+    # The pricing dialog is the only way into checkout. It signed up first and
+    # stopped at "already exists", so a free customer had no way to pay.
+    page = client.get("/pricing").text
+    assert "/already exists/i.test(" in page and "'Signed in.'" in page
+    # A wrong password must say so, not "paid plans are not accepting payment".
+    assert "if (!lr.ok)" in page
+
+
 # ── Terms and refund policy: Paddle will not approve a seller without them ──
 
 def test_terms_and_refund_policy_are_published_and_linked(client):

@@ -266,6 +266,12 @@ export function Login({
             <a href="/terms" className="hover:text-hud-cyan">
               Terms
             </a>
+            <a href="/refunds" className="hover:text-hud-cyan">
+              Refunds
+            </a>
+            <a href="mailto:rathoreabdullah816@gmail.com" className="hover:text-hud-cyan">
+              Contact
+            </a>
             <button
               type="button"
               onClick={() => setShowSignIn((v) => !v)}
