@@ -112,6 +112,18 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("benchmark: runs in the sandbox", "evaluation/retrieval_benchmark.py",
      "with knowledge.sandbox(use_embeddings=use_embeddings):", "if True:",
      "never_touches_a_real_client"),
+    # --- Paddle webhook: the only unauthenticated write to a customer's plan --
+    ("paddle webhook: signature is checked", "app/core/billing.py",
+     "return any(hmac.compare_digest(expected, s) for s in sigs)", "return True",
+     "forged_stale_or_unsigned"),
+    ("paddle webhook: a stale request is refused", "app/core/billing.py",
+     "if abs((now if now is not None else time.time()) - int(ts)) > WEBHOOK_TOLERANCE_S:",
+     "if False:", "forged_stale_or_unsigned"),
+    ("paddle webhook: a redelivery is not re-applied", "app/core/billing.py",
+     "if event_id and event_id in seen:", "if False:", "late_events"),
+    ("paddle webhook: a late event cannot undo a newer one", "app/core/billing.py",
+     'if occurred and occurred <= last.get(sub_id, ""):', "if False:",
+     "late_events"),
     # --- tenancy ----------------------------------------------------------
     # The half the ownership gate does NOT cover: the caller owns the client
     # id in the URL, and the resource id belongs to somebody else.

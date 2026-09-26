@@ -11459,3 +11459,157 @@ def test_a_trial_is_not_billable_until_a_card_can_be_charged(paddle_env,
     individual = [p for p in billing.plans()["plans"]
                   if p["key"] == "individual"][0]
     assert individual["trial_billable"] is True
+
+
+# ── Paddle webhook: a payment that upgrades nobody is a charge with no product ─
+#
+# The checkout told customers "Titan is told the result by webhook", and
+# docs/PAYMENTS.md said to point Paddle at POST /api/webhooks/billing. Neither
+# existed: set_plan() had no caller but the founder's manual grant, so a
+# customer who paid through Paddle stayed on the Free plan.
+
+_WH_SECRET = "pdl_ntfset_test_only_secret"
+_WH_URL = "/api/webhooks/billing"
+
+
+def _signed(body: dict, secret: str = _WH_SECRET, ts=None):
+    import hashlib
+    import hmac
+    import json as _json
+    import time as _time
+
+    raw = _json.dumps(body).encode()
+    stamp = str(int(ts if ts is not None else _time.time()))
+    h1 = hmac.new(secret.encode(), stamp.encode() + b":" + raw,
+                  hashlib.sha256).hexdigest()
+    return raw, {"Paddle-Signature": f"ts={stamp};h1={h1}",
+                 "Content-Type": "application/json"}
+
+
+def _sub_event(event_id, status, *, sub="sub_01", occurred="2026-09-27T10:00:00Z",
+               kind="subscription.created", email="payer@example.com",
+               price="pri_individual_123"):
+    return {"event_id": event_id, "event_type": kind, "occurred_at": occurred,
+            "data": {"id": sub, "status": status,
+                     "custom_data": {"titan_email": email},
+                     "items": [{"price": {"id": price}}]}}
+
+
+@pytest.fixture()
+def paddle_webhook(paddle_env, isolated_billing):
+    from app.core import billing
+
+    paddle_env.setenv("PADDLE_WEBHOOK_SECRET", _WH_SECRET)
+    billing.signup("payer@example.com", "a-long-password-1", "free")
+    return billing
+
+
+def test_a_paddle_payment_upgrades_the_account_that_paid(client, paddle_webhook):
+    raw, h = _signed(_sub_event("evt_pay_1", "active", sub="sub_pay"))
+    r = client.post(_WH_URL, content=raw, headers=h)
+    assert r.status_code == 200 and r.json()["plan"] == "individual", r.text
+    assert paddle_webhook.public("payer@example.com")["plan"] == "individual"
+
+    raw, h = _signed(_sub_event("evt_pay_2", "canceled", sub="sub_pay",
+                                kind="subscription.canceled",
+                                occurred="2026-10-27T10:00:00Z"))
+    assert client.post(_WH_URL, content=raw, headers=h).json()["plan"] == "free"
+    assert paddle_webhook.public("payer@example.com")["plan"] == "free"
+
+
+def test_a_forged_stale_or_unsigned_paddle_webhook_changes_nothing(
+        client, paddle_webhook):
+    import time as _time
+
+    body = _sub_event("evt_forged", "active", sub="sub_forged")
+    forged = _signed(body, secret="not-the-secret")
+    stale = _signed(body, ts=_time.time() - 3600)   # a captured request, replayed
+    unsigned = (_signed(body)[0], {"Content-Type": "application/json"})
+    for raw, h in (forged, stale, unsigned):
+        assert client.post(_WH_URL, content=raw, headers=h).status_code == 401
+    assert paddle_webhook.public("payer@example.com")["plan"] == "free"
+
+
+def test_without_a_webhook_secret_nothing_is_accepted(client, paddle_webhook,
+                                                      paddle_env):
+    paddle_env.delenv("PADDLE_WEBHOOK_SECRET")
+    raw, h = _signed(_sub_event("evt_nosecret", "active", sub="sub_nosecret"))
+    r = client.post(_WH_URL, content=raw, headers=h)
+    assert r.status_code == 503 and "PADDLE_WEBHOOK_SECRET" in r.text
+    assert paddle_webhook.public("payer@example.com")["plan"] == "free"
+
+
+def test_paddle_retries_and_late_events_are_not_reapplied(client, paddle_webhook):
+    """Webhooks arrive twice and out of order. A late "active" must not
+    resurrect a subscription that has since been cancelled."""
+    def post(event):
+        raw, h = _signed(event)
+        return client.post(_WH_URL, content=raw, headers=h).json()
+
+    first = _sub_event("evt_ord_1", "active", sub="sub_ord",
+                       occurred="2026-09-27T10:00:00Z")
+    post(first)
+    assert post(first)["duplicate"] == "evt_ord_1"
+    post(_sub_event("evt_ord_3", "canceled", sub="sub_ord",
+                    kind="subscription.canceled", occurred="2026-09-27T12:00:00Z"))
+    late = post(_sub_event("evt_ord_2", "active", sub="sub_ord",
+                           kind="subscription.updated",
+                           occurred="2026-09-27T11:00:00Z"))
+    assert "older" in late["ignored"]
+    assert paddle_webhook.public("payer@example.com")["plan"] == "free"
+
+
+def test_the_plan_comes_from_paddles_price_never_from_the_browser(
+        client, paddle_webhook):
+    """custom_data is written by the page, so it only says WHO paid. WHAT they
+    bought is the price id in Paddle's signed payload."""
+    from app.core import events
+
+    for event, why in (
+            (_sub_event("evt_px", "active", sub="sub_px", price="pri_forged"),
+             "unknown price id"),
+            (_sub_event("evt_who", "active", sub="sub_who",
+                        email="nobody@example.com"),
+             "no Titan account on this subscription")):
+        raw, h = _signed(event)
+        assert client.post(_WH_URL, content=raw, headers=h).json()["unmatched"] == why
+    assert paddle_webhook.public("payer@example.com")["plan"] == "free"
+    # Somebody may have paid, so the founder is told rather than nobody.
+    flagged = [e["payload"]["subscription_id"]
+               for e in events.trace(50, event="PaymentUnmatched")]
+    assert {"sub_px", "sub_who"} <= set(flagged)
+
+
+def test_checkout_tells_paddle_which_account_is_paying(paddle_env,
+                                                       isolated_billing):
+    import pathlib
+
+    from app.core import billing
+
+    paddle_env.setenv("PADDLE_CLIENT_TOKEN", "live_browser_safe_token")
+    out = billing.checkout("customer@example.com", "individual")
+    assert out["custom_data"] == {"titan_email": "customer@example.com"}
+    page = (pathlib.Path(billing.__file__).resolve().parents[1] / "static"
+            / "pricing.html").read_text(encoding="utf-8")
+    assert "customData: out.custom_data" in page
+
+
+# ── Terms and refund policy: Paddle will not approve a seller without them ──
+
+def test_terms_and_refund_policy_are_published_and_linked(client):
+    privacy = client.get("/privacy").text
+    for path, must in (("/terms", "Terms of service"),
+                       ("/refunds", "Full refund within 14 days of any payment")):
+        page = client.get(path)
+        assert page.status_code == 200 and must in page.text
+        # The clause Paddle asks sellers to publish.
+        assert "Paddle.com is the Merchant of Record for all our orders" in page.text
+        # Same operator and contact as the privacy notice — not a second story.
+        assert "rathoreabdullah816@gmail.com" in page.text
+        assert "rathoreabdullah816@gmail.com" in privacy
+    assert 'href="/refunds"' in client.get("/terms").text
+    for page in ("/pricing", "/join", "/privacy"):
+        html = client.get(page).text
+        assert 'href="/terms"' in html and 'href="/refunds"' in html, page
+    sitemap = client.get("/sitemap.xml").text
+    assert "/terms</loc>" in sitemap and "/refunds</loc>" in sitemap

@@ -111,6 +111,7 @@ export function AuthGate() {
         <nav className="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-slate-500">
           <a className="hover:text-hud-cyan" href="/pricing">Pricing</a>
           <a className="hover:text-hud-cyan" href="/privacy">Privacy</a>
+          <a className="hover:text-hud-cyan" href="/terms">Terms</a>
           <a className="hover:text-hud-cyan" href="/portal">Client portal</a>
         </nav>
       </main>

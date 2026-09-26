@@ -49,6 +49,8 @@ PUBLIC_PATHS = (
     # clients for missing pages would be the same mistake twice.
     ("/join", 0.9, "weekly"),
     ("/privacy", 0.3, "yearly"),
+    ("/terms", 0.3, "yearly"),
+    ("/refunds", 0.3, "yearly"),
     ("/portal", 0.4, "monthly"),
 )
 

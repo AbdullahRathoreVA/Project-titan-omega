@@ -87,6 +87,9 @@
 
   <footer>
     Prices in USD. Cancel any time.
+    &middot; <a href="/terms">Terms</a>
+    &middot; <a href="/refunds">Refunds</a>
+    &middot; <a href="/privacy">Privacy</a>
     &middot; <a href="/">Command centre</a>
     &middot; <a href="/portal">Client portal</a>
   </footer>
@@ -240,7 +243,9 @@ async function openCheckout(out, email, msg) {
       Paddle.Initialize({ token: out.client_token });
       Paddle.Checkout.open({
         items: [{ priceId: out.price_id, quantity: 1 }],
-        customer: { email: email }
+        customer: { email: email },
+        // Tells the webhook WHICH Titan account paid (api/webhooks/billing).
+        customData: out.custom_data || { titan_email: email }
       });
       msg.textContent = 'Complete your purchase in the Paddle window.';
       return;

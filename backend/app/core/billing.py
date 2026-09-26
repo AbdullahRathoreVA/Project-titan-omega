@@ -597,6 +597,87 @@ def paddle_checkout_ready() -> bool:
     return bool(paddle_configured() and paddle_client_token())
 
 
+# ------------------------------------------------------ Paddle webhook --
+# The checkout told customers "Titan is told the result by webhook" and
+# docs/PAYMENTS.md said to point Paddle at POST /api/webhooks/billing. Neither
+# existed: set_plan() had no caller except the founder's manual grant, so a
+# customer who paid stayed on Free. This is the missing half.
+WEBHOOK_TOLERANCE_S = 300        # a captured request cannot be replayed later
+_WEBHOOK_STATE = "billing.paddle_webhook"
+_ACTIVE = ("active", "trialing", "past_due")   # past_due: Paddle is retrying
+_ENDED = ("canceled", "paused")
+
+
+def verify_paddle_signature(raw: bytes, header: str,
+                            now: Optional[float] = None) -> bool:
+    """Paddle-Signature is `ts=<unix>;h1=<hex>`: an HMAC-SHA256 of
+    "<ts>:<raw body>" keyed with the notification destination's secret.
+    Fails closed — no secret, no header or a stale timestamp is a refusal."""
+    secret = os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()
+    fields = [p.partition("=") for p in (header or "").split(";")]
+    ts = next((v.strip() for k, _, v in fields if k.strip() == "ts"), "")
+    sigs = [v.strip() for k, _, v in fields if k.strip() == "h1"]
+    if not (secret and ts.isdigit() and sigs):
+        return False
+    if abs((now if now is not None else time.time()) - int(ts)) > WEBHOOK_TOLERANCE_S:
+        return False
+    expected = hmac.new(secret.encode(), ts.encode() + b":" + raw,
+                        hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(expected, s) for s in sigs)
+
+
+def _plan_for_price(price_id: str) -> str:
+    return next((k for k in ORDER if k != "free" and price_id
+                 and paddle_price_id(k) == price_id), "")
+
+
+def apply_paddle_event(event: dict) -> dict:
+    """Turn one VERIFIED subscription notification into a plan change.
+
+    The plan comes from the price id in Paddle's signed payload, never from
+    custom data a browser supplied. Duplicates and out-of-order deliveries,
+    both normal for webhooks, are ignored rather than re-applied.
+    """
+    from . import db, emailaddr
+
+    kind = event.get("event_type") or ""
+    data = event.get("data") or {}
+    if not kind.startswith("subscription."):
+        return {"ok": True, "ignored": f"{kind or 'event'} changes no plan"}
+
+    state = db.get(_WEBHOOK_STATE, {}) or {}
+    seen, last = state.get("seen", []), state.get("last", {})
+    event_id, sub_id = event.get("event_id", ""), data.get("id", "")
+    occurred = event.get("occurred_at", "")
+    if event_id and event_id in seen:
+        return {"ok": True, "duplicate": event_id}
+    if occurred and occurred <= last.get(sub_id, ""):
+        return {"ok": True, "ignored": "older than an event already applied"}
+
+    email = emailaddr.normalise((data.get("custom_data") or {}).get("titan_email", ""))
+    items = data.get("items") or [{}]
+    plan = _plan_for_price(((items[0] or {}).get("price") or {}).get("id", ""))
+    status = data.get("status", "")
+    problem = ("no Titan account on this subscription" if email not in _accounts
+               else "unknown price id" if status in _ACTIVE and not plan
+               else "" if status in _ACTIVE + _ENDED
+               else f"unhandled status {status!r}")
+    if problem:
+        # Somebody may have paid. Never silent: the founder resolves it by hand.
+        events.emit("PaymentUnmatched", {"subscription_id": sub_id,
+                                         "event": kind, "why": problem},
+                    actor="billing", severity="warn")
+        return {"ok": True, "unmatched": problem, "subscription_id": sub_id}
+
+    account = set_plan(email, plan if status in _ACTIVE else "free",
+                       subscription_id=sub_id, status=status)
+    state["seen"] = (seen + [event_id])[-500:] if event_id else seen
+    state["last"] = {**last, sub_id: occurred or last.get(sub_id, "")}
+    db.put(_WEBHOOK_STATE, state)
+    return {"ok": True, "applied": kind, "plan": account.get("plan"),
+            "status": status}
+
+
 def processor_name() -> str:
     # Paddle first: it is the only one of the three verified to onboard a
     # Pakistan-based seller, so if it is configured it is the intended one.
@@ -700,6 +781,10 @@ def _paddle_checkout(email: str, plan_key: str, plan: Plan) -> dict:
         "client_token": token,
         "environment": paddle_environment(),
         "customer_email": email,
+        # Rides the checkout into the transaction and the subscription, which
+        # is how the webhook knows WHICH Titan account paid: Paddle's own
+        # subscription events carry a customer id, not an email.
+        "custom_data": {"titan_email": email},
         "flow": ("The page loads Paddle.js, calls Paddle.Initialize with "
                  "client_token, and opens Paddle.Checkout.open with this "
                  "price_id. The customer approves inside Paddle. Titan never "
