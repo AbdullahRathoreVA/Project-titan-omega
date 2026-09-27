@@ -82,12 +82,14 @@ the process working, not a rejection.
 
 1. Payoneer account, verified, own name.
 2. Paddle seller account; add Payoneer as the payout method; complete verification.
-3. One **subscription price** per paid tier: Student $4, Individual $19,
-   Enterprise $99. Note the **price id** for each (`pri_...`).
+3. One **subscription price** per paid tier: Student $5 (3-day trial),
+   Individual $10 (7-day trial), Enterprise $20 (30-day trial), Agency $50 (no
+   trial) — set by Abdullah on 2026-09-28, and the same as `billing.PLANS`.
+   Note the **price id** for each (`pri_...`).
 4. Copy the **client-side token** from Paddle > Developer tools > Authentication.
    This is a different credential from the API key — see the checklist below.
-5. Create the webhook destination (checklist below) and set all six variables
-   as Space secrets — the API key, the client-side token, three price ids and
+5. Create the webhook destination (checklist below) and set all seven variables
+   as Space secrets — the API key, the client-side token, four price ids and
    `PADDLE_WEBHOOK_SECRET` — then restart the Space.
 6. **Prove it with the curl in the checklist.** Do not skip this. On 2026-09-03
    `processor_name()` reported "paddle" while every customer was being told to
@@ -149,11 +151,12 @@ manual grant, so a customer who paid stayed on Free. It is now
 
 - [ ] Payoneer account, verified, in Abdullah's own name
 - [ ] Paddle seller account; add Payoneer as the payout method
-- [ ] One **subscription price** per paid tier: Student $4, Individual $19,
-      Enterprise $99
+- [ ] One **subscription price** per paid tier: Student $5 / 3-day trial,
+      Individual $10 / 7-day trial, Enterprise $20 / 30-day trial, Agency $50 /
+      no trial
 - [ ] Set as Space secrets: `PADDLE_API_KEY`,
       `PADDLE_PRICE_ID_STUDENT`, `PADDLE_PRICE_ID_INDIVIDUAL`,
-      `PADDLE_PRICE_ID_ENTERPRISE`
+      `PADDLE_PRICE_ID_ENTERPRISE`, `PADDLE_PRICE_ID_AGENCY`
 - [ ] **`PADDLE_CLIENT_TOKEN`** — Paddle > Developer tools > Authentication.
       **This is a different credential from the API key and the checkout
       cannot open without it.** The API key configures the server; the browser

@@ -2824,7 +2824,8 @@ def test_dodo_without_a_product_id_says_exactly_what_to_create(
     out = billing.checkout("b@example.com", "individual")
     assert out["ready"] is False
     assert "DODO_PRODUCT_ID_INDIVIDUAL" in out["needs"]
-    assert "19" in out["needs"], "it should name the price to create"
+    price = f"${billing.PLANS['individual'].price_usd:.0f}/month"
+    assert price in out["needs"], "it should name the price to create"
 
 
 def test_a_failing_processor_reports_the_real_error(monkeypatch, isolated_billing):
@@ -5227,20 +5228,30 @@ def test_politeness_is_enforced_by_the_runtime_not_by_callers():
 # ── trials and the Paddle detector ─────────────────────────────────────────
 
 def test_trial_lengths_match_what_abdullah_set(monkeypatch):
-    """10 enterprise / 7 individual / a YEAR for students. The year is
-    deliberate: a student has no client website to audit, so a five-day
-    student trial tests nothing and converts nobody. Cursor gives students a
-    free year for the same reason."""
+    """Set by Abdullah on 2026-09-28: 3 student / 7 individual / 30
+    enterprise, and no trial on Agency, whose price pays for his own time.
+    The Paddle prices carry the same trials; change both together."""
     from app.core import billing
 
     for var in ("TITAN_TRIAL_DAYS_STUDENT", "TITAN_TRIAL_DAYS_INDIVIDUAL",
-                "TITAN_TRIAL_DAYS_ENTERPRISE"):
+                "TITAN_TRIAL_DAYS_ENTERPRISE", "TITAN_TRIAL_DAYS_AGENCY"):
         monkeypatch.delenv(var, raising=False)
 
-    assert billing.trial_days("student") == 365
+    assert billing.trial_days("student") == 3
     assert billing.trial_days("individual") == 7
-    assert billing.trial_days("enterprise") == 10
+    assert billing.trial_days("enterprise") == 30
+    assert billing.trial_days("agency") == 0
     assert billing.trial_days("free") == 0
+
+
+def test_prices_match_what_abdullah_set():
+    """Set by Abdullah on 2026-09-28. The Paddle catalog must match: its
+    review compares the site's prices with what is sold."""
+    from app.core import billing
+
+    assert {k: billing.PLANS[k].price_usd for k in billing.ORDER} == {
+        "free": 0.0, "student": 5.0, "individual": 10.0, "enterprise": 20.0,
+        "agency": 50.0}
 
 
 def test_trial_length_is_changeable_without_a_deploy(monkeypatch):
@@ -5269,7 +5280,7 @@ def test_paddle_was_invisible_to_the_processor_detector(monkeypatch):
     for var in ("PADDLE_API_KEY", "DODO_PAYMENTS_API_KEY", "PAYPAL_CLIENT_ID",
                 "PAYPAL_CLIENT_SECRET"):
         monkeypatch.delenv(var, raising=False)
-    for k in ("STUDENT", "INDIVIDUAL", "ENTERPRISE"):
+    for k in ("STUDENT", "INDIVIDUAL", "ENTERPRISE", "AGENCY"):
         monkeypatch.delenv(f"PADDLE_PRICE_ID_{k}", raising=False)
 
     assert billing.paddle_configured() is False
@@ -5299,7 +5310,7 @@ def test_a_trial_is_not_advertised_as_billable_without_a_processor(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
     student = billing.PLANS["student"].as_dict()
-    assert student["trial_days"] == 365
+    assert student["trial_days"] == 3
     assert student["trial_billable"] is False, \
         "a trial was advertised as billable with no payment processor"
 
@@ -8152,7 +8163,7 @@ def measures(monkeypatch, tmp_path):
     db.connect(persistence.STATE_FILE)
     for var in ("PADDLE_API_KEY", "PADDLE_PRICE_ID_INDIVIDUAL",
                 "PADDLE_PRICE_ID_STUDENT", "PADDLE_PRICE_ID_ENTERPRISE",
-                "DODO_API_KEY", "PAYPAL_CLIENT_ID"):
+                "PADDLE_PRICE_ID_AGENCY", "DODO_API_KEY", "PAYPAL_CLIENT_ID"):
         monkeypatch.delenv(var, raising=False)
     billing.reset()
     yield metrics
@@ -11238,7 +11249,7 @@ def paddle_env(monkeypatch):
                 "PADDLE_CLIENT_TOKEN"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_live_SERVER_SIDE_ONLY_SECRET")
-    for key in ("STUDENT", "INDIVIDUAL", "ENTERPRISE"):
+    for key in ("STUDENT", "INDIVIDUAL", "ENTERPRISE", "AGENCY"):
         monkeypatch.setenv(f"PADDLE_PRICE_ID_{key}", f"pri_{key.lower()}_123")
     return monkeypatch
 

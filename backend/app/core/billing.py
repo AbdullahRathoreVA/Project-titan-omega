@@ -47,18 +47,17 @@ from . import events
 
 
 # Trial lengths, per plan, overridable without a deploy:
-#   TITAN_TRIAL_DAYS_STUDENT / _INDIVIDUAL / _ENTERPRISE
+#   TITAN_TRIAL_DAYS_STUDENT / _INDIVIDUAL / _ENTERPRISE / _AGENCY
 #
-# Abdullah set these: 10 days on Enterprise, 7 on Individual, and a full YEAR
-# on Student. The year is deliberate and matches what the market does — Cursor
-# gives verified students a free year, and a student evaluating a business SEO
-# tool has no client website to audit in five days, so a short student trial
-# tests nothing and converts nobody.
+# Abdullah set these on 2026-09-28, replacing the earlier year-long student
+# trial: 3 days on Student, 7 on Individual, a month (30 days) on Enterprise,
+# and none on Agency, whose price pays for his own time from day one.
 #
 # They are env-driven because a trial length is a pricing experiment, and a
-# pricing experiment that needs a redeploy never gets run.
-_DEFAULT_TRIAL_DAYS = {"free": 0, "student": 365, "individual": 7,
-                       "enterprise": 10}
+# pricing experiment that needs a redeploy never gets run. The Paddle price
+# carries its own trial; the two must be changed together.
+_DEFAULT_TRIAL_DAYS = {"free": 0, "student": 3, "individual": 7,
+                       "enterprise": 30, "agency": 0}
 
 
 def trial_days(plan_key: str) -> int:
@@ -120,7 +119,7 @@ PLANS: dict[str, Plan] = {
         note="Includes the legal findings in full. That check is the thing "
              "worth paying for — hiding it would sell nothing."),
     "student": Plan(
-        "student", "Student", 4.0,
+        "student", "Student", 5.0,
         clients=3, audits_per_month=30, ai_calls_per_month=500,
         keeps_history_days=180,
         features=(
@@ -131,7 +130,7 @@ PLANS: dict[str, Plan] = {
         ),
         note="Requires a valid student email or proof of enrolment."),
     "individual": Plan(
-        "individual", "Individual", 19.0,
+        "individual", "Individual", 10.0,
         clients=10, audits_per_month=200, ai_calls_per_month=3000,
         keeps_history_days=365,
         features=(
@@ -142,7 +141,7 @@ PLANS: dict[str, Plan] = {
             "Priority model routing",
         )),
     "enterprise": Plan(
-        "enterprise", "Enterprise", 99.0,
+        "enterprise", "Enterprise", 20.0,
         clients=-1, audits_per_month=-1, ai_calls_per_month=-1,
         keeps_history_days=-1,
         features=(
@@ -154,9 +153,28 @@ PLANS: dict[str, Plan] = {
             "API access",
         ),
         note="-1 means no enforced limit."),
+    # Enterprise already has no enforced limit, so Agency cannot be sold on a
+    # bigger number. Everything it adds is either built (the client's logo on
+    # their portal and reports: clients.logo_url, client_report.py) or
+    # Abdullah's own time, which he chose to promise on 2026-09-28. Adding a
+    # line here that neither the code nor he delivers is a false advert, and
+    # Paddle's review compares the site against what is sold.
+    "agency": Plan(
+        "agency", "Agency", 50.0,
+        clients=-1, audits_per_month=-1, ai_calls_per_month=-1,
+        keeps_history_days=-1,
+        features=(
+            "Everything in Enterprise",
+            "Each client's own logo on their portal and PDF reports",
+            "Priority support: a reply within 24 hours",
+            "Done-for-you setup of your first 5 businesses",
+            "A 30-minute strategy call every month",
+        ),
+        note="Includes the founder's own time: setup, support and a monthly "
+             "call."),
 }
 
-ORDER = ("free", "student", "individual", "enterprise")
+ORDER = ("free", "student", "individual", "enterprise", "agency")
 
 
 def plans() -> dict:
@@ -898,7 +916,7 @@ def checkout(email: str, plan_key: str) -> dict:
                       "Record — it handles sales tax and VAT and pays out via "
                       "Payoneer, which works in Pakistan. ~5% + $0.50. Set "
                       "PADDLE_API_KEY and PADDLE_PRICE_ID_STUDENT / "
-                      "_INDIVIDUAL / _ENTERPRISE.\n"
+                      "_INDIVIDUAL / _ENTERPRISE / _AGENCY.\n"
                       "• Dodo Payments: same model, set DODO_PAYMENTS_API_KEY "
                       "and DODO_PRODUCT_ID_*. Confirm it onboards Pakistan "
                       "sellers before relying on it.\n"
