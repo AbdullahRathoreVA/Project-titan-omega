@@ -11605,6 +11605,14 @@ def test_checkout_tells_paddle_which_account_is_paying(paddle_env,
     assert "customData: out.custom_data" in page
 
 
+def test_pricing_page_shows_the_trial_the_terms_promise(client):
+    # The terms say a trial's length "is shown on the pricing page". It was
+    # not: /join and the homepage showed it and /pricing did not.
+    page = client.get("/pricing").text
+    assert "p.trial_days" in page and "Free for ${p.trial_days} day" in page
+    assert "trialText(plan)" in page, "the sign-up dialog should name it too"
+
+
 def test_pricing_lets_an_existing_account_upgrade(client):
     # The pricing dialog is the only way into checkout. It signed up first and
     # stopped at "already exists", so a free customer had no way to pay.
