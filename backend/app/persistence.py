@@ -18,8 +18,8 @@ import tempfile
 
 from .core import (analytics, billing, clients, db, evidence, learning,
                    reflection, knowledge, routing, sessions, site_access,
-                   site_fix, traffic, voice_sessions)
-from .store import STORE, Store
+                   site_fix, traffic, voice_sessions, workspaces)
+from .store import STORE, Store, founder_store
 
 
 def _default_path() -> str:
@@ -34,6 +34,11 @@ STATE_FILE = os.getenv("TITAN_STATE_FILE", _default_path())
 
 def save(store: Store = STORE) -> None:
     """Atomically write metrics + revenue ledger to disk. Never raises."""
+    # Routes call save(STORE). During a customer request STORE is that
+    # customer's workspace, and saving it here would overwrite the founder's
+    # ledger with theirs. Customer workspaces are saved below, by owner.
+    if store is STORE:
+        store = founder_store()
     try:
         data = {
             "metrics": {k: float(v) for k, v in store.metrics.items()},
@@ -86,6 +91,8 @@ def save(store: Store = STORE) -> None:
             # would leave values with no record of where they came from, which
             # is the state this replaced.
             "evidence": evidence.export_state(),
+            # Each subscriber's own cockpit ledger, keyed by account.
+            "workspaces": workspaces.export_state(),
         }
         # One transaction for all fifteen subsystems. The JSON file could not
         # offer this: a crash mid-write left a truncated file that failed to
@@ -207,5 +214,8 @@ def load(store: Store = STORE) -> None:
         ev = data.get("evidence")
         if isinstance(ev, dict):
             evidence.import_state(ev)
+        spaces = data.get("workspaces")
+        if isinstance(spaces, dict):
+            workspaces.import_state(spaces)
     except Exception:
         pass

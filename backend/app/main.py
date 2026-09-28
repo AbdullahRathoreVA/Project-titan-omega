@@ -601,6 +601,12 @@ async def bill_to(request: Request, call_next):
     """
     from .core import quota
     quota.bind("")
+    # A customer cockpit call was already authenticated by auth_guard, which
+    # runs first and has rewritten /api/me/<x> to /api/<x>. Bill that customer.
+    from .core import cockpit_scope
+    if cockpit_scope.is_customer():
+        quota.bind(cockpit_scope.customer_email())
+        return await call_next(request)
     token = request.headers.get("x-account-token", "").strip()
     if token:
         with contextlib.suppress(Exception):
@@ -609,9 +615,41 @@ async def bill_to(request: Request, call_next):
     return await call_next(request)
 
 
+async def _serve_customer_cockpit(request: Request, call_next, path: str):
+    """A subscriber's cockpit call: /api/me/<x> is served by /api/<x>, from
+    their own workspace, and only for routes on cockpit_scope.ALLOWED.
+
+    Always requires the account token, whether or not founder auth is on:
+    this door exists only for signed-in subscribers.
+    """
+    from .core import billing as _billing, cockpit_scope, workspaces
+    from . import store as _store
+
+    tok = (request.headers.get("x-account-token", "")
+           or request.headers.get("authorization", "").removeprefix("Bearer ")).strip()
+    email = _billing.resolve(tok) if tok else None
+    if not email:
+        return JSONResponse({"detail": "Sign in first"}, status_code=401)
+    inner = "/api" + path[len("/api/me"):]
+    if not cockpit_scope.allowed(request.method, inner):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    request.scope["path"] = inner
+    request.scope["raw_path"] = inner.encode()
+    store_token = _store.bind(workspaces.for_account(email))
+    who_token = cockpit_scope.bind_customer(email)
+    try:
+        workspaces.touch(email)
+        return await call_next(request)
+    finally:
+        cockpit_scope.unbind_customer(who_token)
+        _store.unbind(store_token)
+
+
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
     path = request.url.path
+    if path == "/api/me" or path.startswith("/api/me/"):
+        return await _serve_customer_cockpit(request, call_next, path)
     if (auth.require_auth() and path.startswith("/api")
             and path not in _OPEN_PATHS
             and not path.startswith(_OPEN_PREFIXES)):

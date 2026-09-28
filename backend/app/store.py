@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import itertools
 import random
 import threading
@@ -90,7 +91,55 @@ class Store:
             return list(reversed(self.feed[-limit:]))
 
 
-STORE = Store()
+# --- which Store a request sees ------------------------------------------------
+# The founder's Store is the default. A customer request binds that customer's
+# workspace for its duration (see main.auth_guard and core/workspaces.py), and
+# everything that says STORE follows the binding. Threads started with
+# contextvars.copy_context() carry it; asyncio.to_thread and Starlette's
+# threadpool already do.
+_FOUNDER = Store()
+_bound: "contextvars.ContextVar[Optional[Store]]" = contextvars.ContextVar(
+    "titan_store", default=None)
+
+
+def founder_store() -> Store:
+    return _FOUNDER
+
+
+def current() -> Store:
+    bound = _bound.get()
+    return bound if bound is not None else _FOUNDER
+
+
+def bind(store: Store) -> "contextvars.Token":
+    return _bound.set(store)
+
+
+def unbind(token: "contextvars.Token") -> None:
+    _bound.reset(token)
+
+
+class _StoreProxy:
+    """Stands in for the Store every module imports as STORE.
+
+    About 600 call sites say `from ..store import STORE`. Making that one name
+    follow the bound workspace keeps them all unchanged, and means a customer
+    request cannot reach the founder's Store by forgetting a parameter.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        return getattr(current(), name)
+
+    def __setattr__(self, name, value):
+        setattr(current(), name, value)
+
+    def __repr__(self) -> str:
+        return f"<STORE -> {'workspace' if _bound.get() is not None else 'founder'}>"
+
+
+STORE = _StoreProxy()
 
 
 def seed(store: Store = STORE) -> None:

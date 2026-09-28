@@ -181,6 +181,21 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("portal: a subscriber's business shows its plan", "app/core/billing.py",
      'if client_id and client_id in acct.get("client_ids", []):', "if False:",
      "shows_its_plan_not_a_trial_clock"),
+    # --- customer cockpit: a customer only ever sees their own workspace ---
+    ("cockpit: STORE follows the bound workspace", "app/store.py",
+     "return bound if bound is not None else _FOUNDER", "return _FOUNDER",
+     "store_proxy_follows or never_shows_founder_data"),
+    ("cockpit: a customer request binds their own workspace", "app/main.py",
+     "store_token = _store.bind(workspaces.for_account(email))",
+     "store_token = _store.bind(_store.founder_store())",
+     "never_shows_founder_data or reads_their_own_workspace"),
+    ("cockpit: only allowlisted routes open to customers", "app/main.py",
+     "if not cockpit_scope.allowed(request.method, inner):", "if False:",
+     "not_on_the_allowlist_is_closed or refuses_everything"),
+    ("cockpit: saving pins the founder store", "app/persistence.py",
+     "if store is STORE:\n        store = founder_store()",
+     "if False:\n        store = founder_store()",
+     "saves_the_founder_not_the_customer"),
     # --- mobile information architecture ----------------------------------
     # Frontend files are CRLF in the working tree; the byte-preserving restore
     # above is what makes mutating them safe.
@@ -732,10 +747,14 @@ def run(only: str = "") -> int:
             original.replace(needle, mutant, 1).encode("utf-8"))
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "pytest", "tests/test_core.py", "-q",
+                [sys.executable, "-m", "pytest", "tests/test_core.py",
+                 "tests/test_cockpit.py", "-q",
                  "--no-header", "-p", "no:cacheprovider", "-k", selector],
                 capture_output=True, text=True)
-            caught = result.returncode != 0
+            # Exit 5 is "no tests collected": a selector that matches nothing
+            # used to count as CAUGHT, so a guard whose test had been renamed
+            # looked guarded while nothing ran.
+            caught = result.returncode not in (0, 5)
         finally:
             # Restore, then PROVE the restore. A scratch version of this tool
             # once left a mutation in backup.py that disabled the check a
