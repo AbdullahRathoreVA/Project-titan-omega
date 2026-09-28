@@ -11746,6 +11746,76 @@ def test_the_service_worker_script_is_never_cached(client):
     assert "no-cache" in client.get("/sw.js").headers.get("cache-control", "")
 
 
+_WORKER_HARNESS = """
+import { pathToFileURL } from "node:url";
+
+globalThis.setTimeout = (fn) => { fn(); return 0; };
+const NativeRequest = globalThis.Request;
+globalThis.Request = class extends NativeRequest {
+  constructor(input, init) {
+    super(input, init && init.body ? { ...init, duplex: "half" } : init);
+  }
+};
+const worker = (await import(pathToFileURL(process.argv[2]).href)).default;
+
+let script = [];
+let calls = 0;
+globalThis.fetch = async () => {
+  calls++;
+  const next = script.length > 1 ? script.shift() : script[0];
+  if (next === "throw") throw new Error("connect failed");
+  return new Response("x", { status: next });
+};
+async function run(method, statuses) {
+  script = [...statuses];
+  calls = 0;
+  const req = new Request("https://titanomega-ai.com/x", {
+    method, headers: { "cf-visitor": '{"scheme":"https"}' },
+    body: method === "POST" ? "{}" : undefined,
+  });
+  const res = await worker.fetch(req);
+  return [res.status, calls];
+}
+console.log(JSON.stringify({
+  recovers: await run("GET", [502, 503, 200]),
+  givesUp: await run("GET", [502]),
+  postOnce: await run("POST", [502, 200]),
+  thrown: await run("GET", ["throw", 200]),
+  allThrown: await run("GET", ["throw"]),
+  notFound: await run("GET", [404, 200]),
+}));
+"""
+
+
+def test_the_worker_retries_a_brief_upstream_failure(tmp_path):
+    """Hugging Face's proxy answers 502/503/504 in bursts while the Space is
+    running, and one failed script leaves the app on its boot screen. Reads
+    are retried; a POST (signup, payment) is never sent twice; a real 404
+    passes straight through. Runs the real Worker in Node."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    root = pathlib.Path(__file__).resolve().parents[2]
+    worker = tmp_path / "worker.mjs"
+    worker.write_text((root / "deploy" / "cloudflare-worker.js")
+                      .read_text(encoding="utf-8"), encoding="utf-8")
+    harness = tmp_path / "harness.mjs"
+    harness.write_text(_WORKER_HARNESS, encoding="utf-8")
+    run = subprocess.run([node, str(harness), str(worker)], capture_output=True,
+                         text=True, timeout=60)
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert result["recovers"] == [200, 3]
+    assert result["givesUp"] == [502, 5]
+    assert result["postOnce"] == [502, 1]
+    assert result["thrown"] == [200, 2]
+    assert result["allThrown"] == [503, 5]
+    assert result["notFound"] == [404, 1]
+
+
 def test_the_worker_fetches_the_service_worker_past_cloudflares_cache():
     root = pathlib.Path(__file__).resolve().parents[2]
     worker = (root / "deploy" / "cloudflare-worker.js").read_text(encoding="utf-8")

@@ -154,20 +154,34 @@ export default {
     // to it would otherwise take hours to reach browsers.
     const isServiceWorker = url.pathname === "/sw.js";
 
-    const upstreamRequest = new Request(upstreamUrl.toString(), {
+    const safeToRepeat = request.method === "GET" || request.method === "HEAD";
+    const upstreamRequest = () => new Request(upstreamUrl.toString(), {
       method: request.method,
       headers,
-      body: request.method === "GET" || request.method === "HEAD"
-        ? undefined
-        : request.body,
+      body: safeToRepeat ? undefined : request.body,
       redirect: "manual",
       ...(isServiceWorker ? { cache: "no-store" } : {}),
     });
 
-    let response;
-    try {
-      response = await fetch(upstreamRequest);
-    } catch (err) {
+    // Hugging Face's proxy sometimes answers 502/503/504 in short bursts while
+    // the Space itself is running. A page load makes several requests, and one
+    // failed script leaves the app stuck on its boot screen, so requests that
+    // are safe to repeat are retried a few times before the error is passed on.
+    const retryDelays = safeToRepeat ? [300, 800, 1500, 2500] : [];
+    let response = null;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        response = await fetch(upstreamRequest());
+      } catch (err) {
+        response = null;
+      }
+      const transient = !response || [502, 503, 504].includes(response.status);
+      if (!transient || attempt >= retryDelays.length) break;
+      if (response && response.body) await response.body.cancel();
+      await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+    }
+
+    if (!response) {
       // A free-tier Space sleeps after inactivity and takes ~30s to wake. Say
       // that plainly instead of showing a bare Cloudflare error page.
       return new Response(
