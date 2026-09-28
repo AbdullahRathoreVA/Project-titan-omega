@@ -16,6 +16,14 @@ import { useEffect } from "react";
 export function RegisterSW() {
   useEffect(() => {
     if (typeof window === "undefined") return;
+    // Tell the boot watchdog in app/layout.tsx the app is running, and let a
+    // later failed load in this session recover again.
+    (window as unknown as { __titanBooted?: boolean }).__titanBooted = true;
+    try {
+      sessionStorage.removeItem("titan-boot-recoveries");
+    } catch {
+      /* storage can be blocked; the watchdog copes without it */
+    }
     if (!("serviceWorker" in navigator)) return;
     // Service workers require a secure context. localhost counts as secure, so
     // this still works in development.

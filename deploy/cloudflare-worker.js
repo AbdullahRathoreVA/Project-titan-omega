@@ -112,6 +112,21 @@ const SECURITY_HEADERS = {
   "Content-Security-Policy": CSP,
 };
 
+// Shown when the Space can't be reached even after retrying. The meta refresh
+// tries again on its own, and the page stays out of every cache.
+const RETRY_PAGE = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="8">
+<title>Titan Omega</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;
+background:#05070d;color:#94a3b8;font:15px/1.6 system-ui,sans-serif;
+text-align:center;padding:24px}b{color:#e2e8f0;letter-spacing:.2em}
+i{color:#22d3ee;font-style:normal}</style>
+</head><body><div><p><b>TITAN <i>OMEGA</i></b></p>
+<p>Our hosting provider is having a brief outage.<br>
+This page will try again by itself in a few seconds.</p></div></body></html>`;
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -167,7 +182,7 @@ export default {
     // the Space itself is running. A page load makes several requests, and one
     // failed script leaves the app stuck on its boot screen, so requests that
     // are safe to repeat are retried a few times before the error is passed on.
-    const retryDelays = safeToRepeat ? [300, 800, 1500, 2500] : [];
+    const retryDelays = safeToRepeat ? [300, 800, 1500, 2500, 4000, 6000] : [];
     let response = null;
     for (let attempt = 0; ; attempt++) {
       try {
@@ -179,6 +194,25 @@ export default {
       if (!transient || attempt >= retryDelays.length) break;
       if (response && response.body) await response.body.cancel();
       await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+    }
+
+    // Still failing after the retries: a person loading a page gets a short
+    // notice that reloads itself, rather than a bare gateway error they have
+    // to know to refresh. API calls keep the real status for the app to handle.
+    const stillFailing = !response || [502, 503, 504].includes(response.status);
+    const isPageLoad = safeToRepeat && !url.pathname.startsWith("/api/")
+      && (request.headers.get("accept") || "").includes("text/html");
+    if (stillFailing && isPageLoad) {
+      if (response && response.body) await response.body.cancel();
+      return new Response(RETRY_PAGE, {
+        status: 503,
+        headers: {
+          ...SECURITY_HEADERS,
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Retry-After": "8",
+        },
+      });
     }
 
     if (!response) {

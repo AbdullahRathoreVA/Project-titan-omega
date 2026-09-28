@@ -11766,15 +11766,16 @@ globalThis.fetch = async () => {
   if (next === "throw") throw new Error("connect failed");
   return new Response("x", { status: next });
 };
-async function run(method, statuses) {
+async function run(method, statuses, path = "/api/x", accept = "application/json") {
   script = [...statuses];
   calls = 0;
-  const req = new Request("https://titanomega-ai.com/x", {
-    method, headers: { "cf-visitor": '{"scheme":"https"}' },
+  const req = new Request("https://titanomega-ai.com" + path, {
+    method, headers: { "cf-visitor": '{"scheme":"https"}', "accept": accept },
     body: method === "POST" ? "{}" : undefined,
   });
   const res = await worker.fetch(req);
-  return [res.status, calls];
+  const body = await res.text();
+  return [res.status, calls, body.includes("try again by itself")];
 }
 console.log(JSON.stringify({
   recovers: await run("GET", [502, 503, 200]),
@@ -11783,6 +11784,8 @@ console.log(JSON.stringify({
   thrown: await run("GET", ["throw", 200]),
   allThrown: await run("GET", ["throw"]),
   notFound: await run("GET", [404, 200]),
+  pageDown: await run("GET", [502], "/", "text/html,application/xhtml+xml"),
+  pageRecovers: await run("GET", [504, 200], "/", "text/html"),
 }));
 """
 
@@ -11808,12 +11811,36 @@ def test_the_worker_retries_a_brief_upstream_failure(tmp_path):
                          text=True, timeout=60)
     assert run.returncode == 0, run.stderr
     result = json.loads(run.stdout)
-    assert result["recovers"] == [200, 3]
-    assert result["givesUp"] == [502, 5]
-    assert result["postOnce"] == [502, 1]
-    assert result["thrown"] == [200, 2]
-    assert result["allThrown"] == [503, 5]
-    assert result["notFound"] == [404, 1]
+    # [status, upstream calls, got the self-refreshing notice]
+    assert result["recovers"] == [200, 3, False]
+    assert result["givesUp"] == [502, 7, False]
+    assert result["postOnce"] == [502, 1, False]
+    assert result["thrown"] == [200, 2, False]
+    assert result["allThrown"] == [503, 7, False]
+    assert result["notFound"] == [404, 1, False]
+    # A page load that still fails gets a notice that retries on its own; an
+    # API call above keeps its real status for the app to handle.
+    assert result["pageDown"] == [503, 7, True]
+    assert result["pageRecovers"] == [200, 2, False]
+
+
+def test_a_page_whose_scripts_failed_recovers_by_itself():
+    """If an app script fails to load, React never starts and the page sits
+    on its boot screen. The watchdog in the layout head clears the site's
+    service workers and caches and reloads (twice per session at most), and
+    RegisterSW tells it once the app is running so a slow but working load
+    is left alone."""
+    comp = pathlib.Path(__file__).resolve().parents[2] / "frontend"
+    layout = (comp / "app" / "layout.tsx").read_text(encoding="utf-8")
+    register = (comp / "components" / "RegisterSW.tsx").read_text(encoding="utf-8")
+    assert "<script dangerouslySetInnerHTML={{ __html: BOOT_WATCHDOG }} />" in layout
+    watchdog = layout.split("const BOOT_WATCHDOG = `", 1)[1].split("`;", 1)[0]
+    for step in ('t.tagName === "SCRIPT"', '"/_next/static/"', "r.unregister()",
+                 "caches.delete(k)", "location.reload()", "if (tries >= 2) return;",
+                 "window.__titanBooted", "setTimeout(recover, 20000)"):
+        assert step in watchdog, step
+    assert ("(window as unknown as { __titanBooted?: boolean }).__titanBooted = true;"
+            in register)
 
 
 def test_the_worker_fetches_the_service_worker_past_cloudflares_cache():

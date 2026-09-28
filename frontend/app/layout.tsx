@@ -84,6 +84,52 @@ const PRODUCT_SCHEMA = {
   ],
 };
 
+/**
+ * Recovers a page whose app scripts failed to load.
+ *
+ * If a script from /_next/static/ fails (an upstream outage, or a broken
+ * copy left in an older service worker's cache), React never starts and the
+ * page sits on "Booting the command centre..." for good. This drops every
+ * service worker and cache for the site and reloads, at most twice per
+ * session. The 20-second timer covers a failure that happened before this
+ * listener existed. RegisterSW sets `__titanBooted` once the app is running.
+ *
+ * Plain ES5 on purpose: it has to run before, and without, the app bundle.
+ */
+const BOOT_WATCHDOG = `(function () {
+  var KEY = "titan-boot-recoveries";
+  var started = false;
+  function recover() {
+    if (started || window.__titanBooted) return;
+    started = true;
+    var tries = 0;
+    try { tries = Number(sessionStorage.getItem(KEY)) || 0; } catch (e) {}
+    if (tries >= 2) return;
+    try { sessionStorage.setItem(KEY, String(tries + 1)); } catch (e) {}
+    var jobs = [];
+    try {
+      if (navigator.serviceWorker) {
+        jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
+          return Promise.all(rs.map(function (r) { return r.unregister(); }));
+        }));
+      }
+      if (window.caches) {
+        jobs.push(caches.keys().then(function (ks) {
+          return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+        }));
+      }
+    } catch (e) {}
+    Promise.all(jobs).catch(function () {}).then(function () {
+      setTimeout(function () { location.reload(); }, 1500);
+    });
+  }
+  window.addEventListener("error", function (e) {
+    var t = e.target;
+    if (t && t.tagName === "SCRIPT" && String(t.src).indexOf("/_next/static/") !== -1) recover();
+  }, true);
+  setTimeout(recover, 20000);
+})();`;
+
 export default function RootLayout({
   children,
 }: {
@@ -91,6 +137,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: BOOT_WATCHDOG }} />
+      </head>
       <body className="min-h-screen antialiased">
         {children}
         <RegisterSW />
