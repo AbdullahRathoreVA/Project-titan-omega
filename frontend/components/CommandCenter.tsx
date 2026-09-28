@@ -17,9 +17,9 @@ import {
   Target,
   Zap,
 } from "lucide-react";
-import { adminFetch, api, apiBase, authHeaders } from "@/lib/api";
+import { DEMO_READ_ONLY_EVENT, adminFetch, api, apiBase, authHeaders } from "@/lib/api";
 import { useTitanStream } from "@/lib/useTitanStream";
-import { displayName, isCustomer } from "@/lib/session";
+import { displayName, isCustomer, isDemo } from "@/lib/session";
 import type {
   AgentView,
   ChannelTile,
@@ -112,6 +112,23 @@ export function CommandCenter() {
   // Increments whenever real feed activity arrives → fires comets in the Universe.
   const [pulse, setPulse] = useState(0);
 
+  // The demo refuses every write. Most screens treat a refused write as
+  // "nothing happened", so the visitor is told why, wherever they clicked.
+  const [demoNotice, setDemoNotice] = useState(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const show = () => {
+      setDemoNotice(true);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setDemoNotice(false), 6000);
+    };
+    window.addEventListener(DEMO_READ_ONLY_EVENT, show);
+    return () => {
+      window.removeEventListener(DEMO_READ_ONLY_EVENT, show);
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
   // Cinematic boot: plays on EVERY open/reload (founder's preference) — the
   // dashboard loads underneath it, and SKIP is always available. When the boot
   // lifts, Titan speaks a live status briefing (real numbers, not a script).
@@ -123,7 +140,7 @@ export function CommandCenter() {
     const guest =
       typeof window !== "undefined" &&
       (window as unknown as { __TITAN_GUEST?: boolean }).__TITAN_GUEST === true;
-    const closer = guest
+    const closer = guest || isDemo()
       ? "Explore the command center."
       : isCustomer()
         ? `Let's build, ${displayName()}.`
@@ -307,6 +324,18 @@ export function CommandCenter() {
 
   return (
     <main className="mx-auto max-w-[1600px] px-3 py-4 sm:px-5">
+      {demoNotice && (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-[1000] w-[min(92vw,420px)] -translate-x-1/2 rounded-lg border border-hud-violet/40 bg-panel px-4 py-2.5 text-center text-xs text-hud-violet shadow-lg"
+        >
+          This is the demo, so nothing can be changed here.{" "}
+          <a href="/join" className="font-semibold underline underline-offset-2">
+            Sign up free
+          </a>{" "}
+          to do it in your own workspace.
+        </div>
+      )}
       {boot === "boot" && (
         <div className="fixed inset-0 z-[900] bg-[#020409]">
           <BootSequence onDone={finishBoot} />
@@ -384,7 +413,18 @@ export function CommandCenter() {
               <span className="font-semibold">Log order</span> in the Revenue Ledger — your dashboard shows the truth.
             </div>
           )}
-          {customer && (
+          {customer && isDemo() && (
+            <div className="rounded-lg border border-hud-violet/35 bg-hud-violet/5 px-4 py-3 text-xs text-hud-violet">
+              <span className="font-semibold">This is the Titan demo</span> — the same cockpit a
+              subscriber gets, holding Titan&apos;s own demonstration businesses with real audits.
+              Everything here is read-only.{" "}
+              <a href="/join" className="font-semibold underline underline-offset-2">
+                Sign up free
+              </a>{" "}
+              to run it for your own business.
+            </div>
+          )}
+          {customer && !isDemo() && (
             <div className="rounded-lg border border-hud-cyan/30 bg-hud-cyan/5 px-4 py-3 text-xs text-hud-cyan">
               <span className="font-semibold">{displayName()} — your Titan workspace is live.</span>{" "}
               Every number here is yours and starts at zero. Add your first business to
@@ -686,7 +726,7 @@ export function CommandCenter() {
       <footer className="mt-6 flex items-center justify-between border-t border-edge/60 pt-4 text-[11px] text-slate-600">
         <span>
           Project Titan Omega · Executive Intelligence Core v0.3 ·{" "}
-          {customer ? `${displayName()}'s workspace` : "Abdullah's Empire"}
+          {customer ? (isDemo() ? "Demo workspace" : `${displayName()}'s workspace`) : "Abdullah's Empire"}
         </span>
         <span className="font-mono">
           {liveStatus ? `updated ${new Date(liveStatus.updated_at).toLocaleTimeString()}` : "connecting…"}

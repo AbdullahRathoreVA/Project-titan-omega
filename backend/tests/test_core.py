@@ -9895,18 +9895,19 @@ def test_the_portal_says_out_loud_when_it_is_the_demo(client, demo_business):
 
 
 def test_the_front_door_offers_the_customer_product_first():
-    """The component-level half. The primary demo button must call the
-    customer-product endpoint; the cockpit tour must not be presented as the
-    product."""
+    """The demo must show what a customer actually gets. While subscribers
+    received the client portal, that meant the portal demo. They now get the
+    whole cockpit (tests/test_cockpit.py), so the demo is that cockpit - and,
+    on Abdullah's instruction, neither the operator console with sample
+    figures nor the portal is offered as the demo any more."""
     src = _jsx_without_comments("Login.tsx")
-    assert "/api/demo/portal" in src, (
-        "the front door no longer offers the customer product")
-    assert "client_token" in src, (
-        "the product demo no longer stores a portal session, so /portal will "
-        "show a login box instead of the product")
-    assert "operator console" in src.lower(), (
-        "the cockpit tour is no longer labelled as the operator console, so "
-        "it reads as the product again")
+    assert "enterCockpitDemo" in src, (
+        "the front door no longer opens the subscriber cockpit demo")
+    assert "/api/demo/portal" not in src, (
+        "the portal is offered as the demo again, but it is not what a "
+        "subscriber receives")
+    assert "operator console" not in src.lower(), (
+        "the founder's console with sample figures is offered as a demo again")
 
 
 # ── portal sessions expire ─────────────────────────────────────────────────

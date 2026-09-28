@@ -172,6 +172,10 @@ def accounts_snapshot() -> dict:
         raw = {k: dict(v) for k, v in billing._accounts.items()}   # noqa: SLF001
 
     for email, acct in raw.items():
+        # The public demo's account is nobody: counting it would put a
+        # visitor-less row in the customer list and the funnel.
+        if acct.get("is_demo"):
+            continue
         plan_key = acct.get("plan", "free")
         plan = billing.PLANS.get(plan_key)
         status = acct.get("status", "active")

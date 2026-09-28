@@ -282,7 +282,7 @@ def authenticate(email: str, password: str) -> Optional[str]:
     email = (email or "").strip().lower()
     with _lock:
         acct = _accounts.get(email)
-        if not acct:
+        if not acct or acct.get("is_demo"):
             return None
         if not hmac.compare_digest(_hash(password, acct["_salt"]),
                                    acct["_pwhash"]):
@@ -358,6 +358,8 @@ def public(email: str) -> dict:
             "plan": acct["plan"],
             "plan_name": plan.name,
             "requested_plan": acct.get("requested_plan", acct["plan"]),
+            # The public demo's cockpit says so, and offers a real signup.
+            "demo": bool(acct.get("is_demo")),
             "status": acct["status"],
             "usage": dict(used),
             "limits": plan.as_dict()["limits"],
@@ -422,7 +424,40 @@ def consume(email: str, kind: str, cost: int = 1) -> dict:
     return verdict
 
 
+# The public demo's account. `.invalid` is reserved (RFC 2606): nothing can be
+# mailed to it and nobody can sign up as it. It has no password, so nobody can
+# sign in as it either - only /api/demo/cockpit issues its sessions, and
+# main.auth_guard refuses every write it attempts, on every door.
+DEMO_ACCOUNT = "demo@titan-omega.invalid"
+
+
+def ensure_demo_account() -> str:
+    """Create the demo account if it is missing. It is kept out of every
+    founder figure (analytics.accounts_snapshot skips it) and records no
+    signup, because nobody signed up."""
+    with _lock:
+        if DEMO_ACCOUNT not in _accounts:
+            _accounts[DEMO_ACCOUNT] = {
+                "email": DEMO_ACCOUNT, "email_verified": False, "is_demo": True,
+                "_salt": "", "_pwhash": "",            # matches no password
+                "plan": "free", "requested_plan": "free",
+                "created_at": time.time(), "period_start": _period_start(),
+                "usage": {"audits": 0, "ai_calls": 0}, "subscription_id": "",
+                "status": "active", "client_ids": [],
+            }
+    return DEMO_ACCOUNT
+
+
+def is_demo(email: str) -> bool:
+    return bool(email) and email == DEMO_ACCOUNT
+
+
 def owned_clients(email: str) -> list:
+    if is_demo(email):
+        # Titan's own demonstration businesses - its own pages, audited for
+        # real - and never anyone else's.
+        from ..engines import demo_workspace
+        return demo_workspace.business_ids()
     with _lock:
         acct = _accounts.get(email)
         return list(acct.get("client_ids", [])) if acct else []

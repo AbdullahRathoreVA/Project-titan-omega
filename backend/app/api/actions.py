@@ -401,6 +401,17 @@ def next_post(lang: str = Query(default="en")) -> dict:
     have one. A draft that failed for want of an AI answer is not rebuilt on
     every poll - that would spend their AI calls every five seconds; they
     press Regenerate."""
+    from ..core import billing, cockpit_scope
+    if billing.is_demo(cockpit_scope.customer_email()):
+        # Every visitor shares the demo account; drafting a post for each of
+        # them would spend AI calls on nobody's behalf.
+        return {"id": "demo-draft", "target": "your business", "link": "",
+                "caption": ("In your own workspace, Titan drafts your next post here "
+                            "- about your business, with an image. Sign up free to "
+                            "get one."),
+                "image_prompt": "", "image_url": "", "channels": [],
+                "created_at": now().isoformat(), "unavailable": "demo",
+                "publish": publish_readiness()}
     cached = STORE.next_post
     stale = (bool(cached) and cached.get("unavailable") == "no_business"
              and bool(owner.subscriber_businesses()))

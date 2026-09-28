@@ -345,6 +345,9 @@ _OPEN_PATHS = {
     # see demo_workspace.showcase(), which returns None rather than falling
     # back to a real client.
     "/api/demo/portal",
+    # The subscriber cockpit on the read-only demo account (router.py
+    # enter_cockpit_demo). Public for the same reason: it is the demo.
+    "/api/demo/cockpit",
     "/api/session",
     "/health",
     # /api/voice-report and /api/assistant used to be listed here, on the
@@ -649,9 +652,23 @@ async def _serve_customer_cockpit(request: Request, call_next, path: str):
         _store.unbind(store_token)
 
 
+def _is_demo_request(request: Request) -> bool:
+    from .core import billing as _billing
+    tok = (request.headers.get("x-account-token", "")
+           or request.headers.get("authorization", "").removeprefix("Bearer ")).strip()
+    return bool(tok) and _billing.is_demo(_billing.resolve(tok) or "")
+
+
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
     path = request.url.path
+    # The public demo account reads everything and changes nothing - on
+    # /api/me and on the older /api/account door alike, since its token is an
+    # ordinary account token and would otherwise open both.
+    if request.method not in ("GET", "HEAD", "OPTIONS") and _is_demo_request(request):
+        return JSONResponse({"detail": ("This is the demo. Sign up free to do "
+                                        "this in your own workspace."),
+                             "demo": True}, status_code=403)
     if path == "/api/me" or path.startswith("/api/me/"):
         return await _serve_customer_cockpit(request, call_next, path)
     if (auth.require_auth() and path.startswith("/api")

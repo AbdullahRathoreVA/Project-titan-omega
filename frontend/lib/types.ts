@@ -176,6 +176,8 @@ export interface NextPost {
   created_at: string;
   /** Whether a post can actually reach a platform right now, and why not. */
   publish?: { ready: boolean; route: string | null; reason: string };
+  /** A placeholder rather than a post: "demo", "no_business" or "no_ai". */
+  unavailable?: string;
 }
 
 // Autonomous Growth Engine research (GET /api/growth/intel).

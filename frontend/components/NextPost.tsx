@@ -87,7 +87,13 @@ export function NextPost({
         {/* flex-1 + min-h-0 (NOT aspect-square): the image yields space so the
             caption and buttons always fit INSIDE the fixed-height card. */}
         <div className="relative min-h-[120px] w-full flex-1 overflow-hidden rounded-lg border border-edge bg-panel-2">
-          {post && !imgError ? (
+          {post?.unavailable ? (
+            // A placeholder has no image; saying it is "still rendering"
+            // would promise one that is never coming.
+            <div className="flex h-full w-full items-center justify-center text-slate-600">
+              <ImageOff className="h-7 w-7" />
+            </div>
+          ) : post && !imgError ? (
             // key forces a fresh load attempt; the URL is stable so once the
             // generator finishes, the retry hits its cache and renders.
             // eslint-disable-next-line @next/next/no-img-element
@@ -167,7 +173,7 @@ export function NextPost({
         <div className="grid shrink-0 grid-cols-2 gap-2">
           <button
             onClick={() => run("approve", () => api.approveNextPost())}
-            disabled={!post || busy !== null}
+            disabled={!post || Boolean(post.unavailable) || busy !== null}
             className="flex items-center justify-center gap-1.5 rounded-lg border border-hud-emerald/40 bg-hud-emerald/5 px-3 py-2 text-xs text-hud-emerald transition-colors hover:bg-hud-emerald/10 disabled:opacity-50"
           >
             <CheckCircle2 className={`h-3.5 w-3.5 ${busy === "approve" ? "animate-pulseGlow" : ""}`} />
@@ -175,7 +181,10 @@ export function NextPost({
           </button>
           <button
             onClick={() => run("regen", () => api.regenerateNextPost())}
-            disabled={busy !== null}
+            // Regenerating helps when the AI was down, not in the demo or
+            // before there is a business to write about.
+            disabled={busy !== null || post?.unavailable === "demo"
+              || post?.unavailable === "no_business"}
             className="flex items-center justify-center gap-1.5 rounded-lg border border-edge bg-panel/80 px-3 py-2 text-xs text-slate-300 transition-colors hover:border-hud-cyan/40 hover:text-hud-cyan disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${busy === "regen" ? "animate-spin" : ""}`} />

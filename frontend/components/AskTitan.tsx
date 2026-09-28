@@ -6,8 +6,8 @@ import { Mic, MicOff, Send, Sparkles, Volume2 } from "lucide-react";
 import { langTag, loadVoices, speakText, usedUrduFallback } from "@/lib/voice";
 import { speakPremium } from "@/lib/sound";
 import { isGuest } from "@/lib/guest";
-import { apiBase, authHeaders } from "@/lib/api";
-import { isCustomer } from "@/lib/session";
+import { apiBase, authHeaders, noticeDemoRefusal } from "@/lib/api";
+import { isCustomer, isDemo } from "@/lib/session";
 import VoiceSphere from "./VoiceSphere";
 import { VoiceSession } from "@/lib/voiceSession";
 
@@ -100,10 +100,13 @@ export function AskTitan() {
           headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ question: q, lang }),
         });
+        noticeDemoRefusal(res);
         const data = res.ok ? await res.json() : null;
         const answer =
           data?.answer ??
-          (lang === "ur"
+          (isDemo()
+            ? "This is the demo, so Titan does not answer here. Sign up free to ask about your own business."
+            : lang === "ur"
             ? "معذرت، سرور سے جواب نہیں ملا۔ دوبارہ کوشش کریں۔"
             : "Sorry, no answer from the core. Please try again.");
         // 'spoken' is Hindi/Devanagari for Urdu so the Hindi voice can read it.

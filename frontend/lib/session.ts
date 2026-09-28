@@ -10,7 +10,13 @@ const PROFILE_KEY = "titan_customer_profile";
 // asked for their password twice.
 const JOIN_KEY = "titan_account";
 
-export type CustomerProfile = { email: string; plan_name?: string; plan?: string };
+export type CustomerProfile = {
+  email: string;
+  plan_name?: string;
+  plan?: string;
+  /** The public demo account: read-only, and says so. */
+  demo?: boolean;
+};
 
 function safe<T>(fn: () => T, fallback: T): T {
   try {
@@ -25,12 +31,15 @@ export function getCustomerToken(): string | null {
   return safe(() => window.localStorage.getItem(CUSTOMER_KEY), null);
 }
 
-export function setCustomerToken(token: string | null): void {
+export function setCustomerToken(token: string | null, mirrorToJoin = true): void {
   if (typeof window === "undefined") return;
   safe(() => {
     if (token) {
       window.localStorage.setItem(CUSTOMER_KEY, token);
-      window.sessionStorage.setItem(JOIN_KEY, token);
+      // The demo's token is not mirrored: a visitor who then signs up on
+      // /join must do it as themselves, not inside the demo account.
+      if (mirrorToJoin) window.sessionStorage.setItem(JOIN_KEY, token);
+      else window.sessionStorage.removeItem(JOIN_KEY);
     } else {
       window.localStorage.removeItem(CUSTOMER_KEY);
       window.localStorage.removeItem(PROFILE_KEY);
@@ -54,6 +63,11 @@ export function customerProfile(): CustomerProfile | null {
 export function setCustomerProfile(p: CustomerProfile): void {
   if (typeof window === "undefined") return;
   safe(() => window.localStorage.setItem(PROFILE_KEY, JSON.stringify(p)), undefined);
+}
+
+/** The public demo: every screen, nothing can be changed. */
+export function isDemo(): boolean {
+  return Boolean(customerProfile()?.demo);
 }
 
 /** "sara.khan@shop.pk" -> "Sara". Good enough to greet someone by; the

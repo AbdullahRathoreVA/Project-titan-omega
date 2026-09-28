@@ -105,6 +105,39 @@ def enter_demo(request: Request) -> dict:
     return {"token": auth.make_guest_token(), "guest": True}
 
 
+@router.post("/demo/cockpit", tags=["auth"])
+def enter_cockpit_demo(request: Request) -> dict:
+    """Open the subscriber's cockpit itself - all sixteen tabs, boot, voice,
+    3D universe - on the public demo account, with no signup.
+
+    Abdullah's words: the demo must be what a customer gets, not "the operator
+    console, our internal view, sample figures". So this is not a tour of the
+    founder's cockpit and not a portal: it is exactly the cockpit a subscriber
+    signs into, holding Titan's own demonstration businesses (their pages,
+    audited for real) and nothing of anybody else's.
+
+    The demo account is read-only on every door (main.auth_guard): a visitor
+    can open every screen and cannot change or send anything.
+    """
+    from ..core import billing, ratelimit, sessions
+    from ..engines import demo_workspace
+
+    cockpit_limit = ratelimit.check("demo", ratelimit.identity_for(request))
+    if not cockpit_limit["allowed"]:
+        raise HTTPException(status_code=429, detail=cockpit_limit)
+    if not auth.guest_enabled():
+        raise HTTPException(status_code=404, detail="Demo mode is disabled")
+    if not demo_workspace.business_ids():
+        # No demonstration business, no demo. Never a real one in its place.
+        raise HTTPException(
+            status_code=503,
+            detail=("The demonstration workspace is not available. It is "
+                    "seeded on boot and disabled by TITAN_DEMO_WORKSPACE=0."))
+    email = billing.ensure_demo_account()
+    return {"token": sessions.issue(email, kind="account", ttl=2 * 3600),
+            "demo": True}
+
+
 @router.post("/demo/portal", tags=["auth"])
 def enter_customer_demo(request: Request) -> dict:
     """Open the CUSTOMER product — the thing a paying customer actually gets.

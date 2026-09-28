@@ -12,12 +12,12 @@ import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { isCoarsePointer } from "@/lib/device";
 import { isGuest } from "@/lib/guest";
-import { displayName, isCustomer } from "@/lib/session";
+import { displayName, isCustomer, isDemo } from "@/lib/session";
 
 /** The founder is greeted by name; a subscriber by theirs; a demo visitor
  *  by nobody's. (The demo used to be greeted as ABDULLAH too.) */
 function greeting(): string {
-  if (isGuest()) return "WELCOME";
+  if (isGuest() || isDemo()) return "WELCOME";
   if (isCustomer()) return `HELLO ${displayName().toUpperCase()}`.slice(0, 22);
   return "HELLO ABDULLAH";
 }

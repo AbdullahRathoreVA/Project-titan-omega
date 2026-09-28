@@ -21,7 +21,7 @@
 
 import { useEffect, useState } from "react";
 import { Hexagon, Lock, PlayCircle, ArrowRight, Check } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, enterCockpitDemo } from "@/lib/api";
 
 type Plan = {
   key: string;
@@ -45,7 +45,6 @@ export function Login({
   demo,
   identityMode = "legacy",
   guestAvailable = true,
-  onGuest,
 }: {
   onSuccess: () => void;
   demo: boolean;
@@ -55,14 +54,12 @@ export function Login({
    *  label comes from /api/auth rather than from an assumption here. */
   identityMode?: "identity" | "legacy";
   guestAvailable?: boolean;
-  onGuest?: () => void;
 }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [guestBusy, setGuestBusy] = useState(false);
-  const [productBusy, setProductBusy] = useState(false);
+  const [demoBusy, setDemoBusy] = useState(false);
   const [showSignIn, setShowSignIn] = useState(false);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [processor, setProcessor] = useState<string>("");
@@ -109,48 +106,19 @@ export function Login({
     }
   }
 
-  /** Open the CUSTOMER product — what somebody actually receives when they
-   *  pay. This is the primary demo, and it exists because the other one was
-   *  selling something no customer could be given. The dashboard at / is the
-   *  founder's own console; a prospect who saw it and then subscribed got
-   *  /portal, which is a different product. Reported live, in those words:
-   *  "I made an enterprise account but I cannot open it the way it is shown
-   *  in the demo."
-   *
-   *  The server picks the business and the token is a normal portal session,
-   *  so this shows the real screen against a real audit rather than a mockup
-   *  of one. */
-  async function startProductDemo() {
-    setProductBusy(true);
+  /** The demo is the cockpit a subscriber actually gets - every tab, the
+   *  boot, the voice, the 3D universe - on a read-only demo account holding
+   *  Titan's own demonstration businesses. It replaced two older demos: the
+   *  founder's console with sample figures, and the client portal. Neither is
+   *  what a customer receives, and Abdullah asked for the demo to be exactly
+   *  that. */
+  async function startCockpitDemo() {
+    setDemoBusy(true);
     setError("");
-    try {
-      const res = await fetch("/api/demo/portal", { method: "POST" });
-      if (!res.ok) {
-        setError("The product demo is unavailable right now.");
-        return;
-      }
-      const data = (await res.json()) as { token: string };
-      // The key /portal reads. Same origin, so this survives the navigation.
-      sessionStorage.setItem("client_token", data.token);
-      window.location.href = "/portal";
-    } catch {
-      setError("The product demo is unavailable right now.");
-    } finally {
-      setProductBusy(false);
-    }
-  }
-
-  /** The OPERATOR console tour. Deliberately secondary and deliberately
-   *  labelled: this is Titan's own cockpit with sample figures, not the
-   *  customer product. Kept because it is worth showing, removed from the
-   *  primary position because presenting it as "the demo" was the lie. */
-  async function startDemo() {
-    setGuestBusy(true);
-    setError("");
-    const ok = await api.enterDemo();
-    setGuestBusy(false);
-    if (ok) onGuest?.();
-    else setError("Demo is unavailable right now.");
+    const ok = await enterCockpitDemo();
+    setDemoBusy(false);
+    if (ok) onSuccess();
+    else setError("The demo is unavailable right now.");
   }
 
   const limitLine = (p: Plan) => {
@@ -238,28 +206,16 @@ export function Login({
             Start free — no card needed <ArrowRight className="h-4 w-4" />
           </a>
 
-          {/* The product demo. Primary, because it is the only one that shows
-              what a customer receives. */}
-          <button
-            type="button"
-            onClick={startProductDemo}
-            disabled={productBusy}
-            className="flex w-full max-w-sm items-center justify-center gap-2 rounded-lg border border-hud-cyan/45 bg-hud-cyan/10 py-2.5 text-sm font-medium text-hud-cyan transition-colors hover:bg-hud-cyan/20 disabled:opacity-50"
-          >
-            <PlayCircle className="h-4 w-4" />
-            {productBusy ? "Opening…" : "See the product — a real audit, no signup"}
-          </button>
-
+          {/* The demo: the subscriber cockpit itself, read-only. */}
           {guestAvailable && (
             <button
               type="button"
-              onClick={startDemo}
-              disabled={guestBusy}
-              className="text-[11px] text-slate-500 underline-offset-2 transition-colors hover:text-hud-violet hover:underline disabled:opacity-50"
+              onClick={startCockpitDemo}
+              disabled={demoBusy}
+              className="flex w-full max-w-sm items-center justify-center gap-2 rounded-lg border border-hud-cyan/45 bg-hud-cyan/10 py-2.5 text-sm font-medium text-hud-cyan transition-colors hover:bg-hud-cyan/20 disabled:opacity-50"
             >
-              {guestBusy
-                ? "Starting…"
-                : "Or tour the operator console (our internal view, sample figures)"}
+              <PlayCircle className="h-4 w-4" />
+              {demoBusy ? "Opening…" : "Try the cockpit — no signup"}
             </button>
           )}
 

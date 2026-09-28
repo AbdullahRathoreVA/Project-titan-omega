@@ -144,11 +144,6 @@ export function AuthGate() {
           setGuest(false);
           setState("ready");
         }}
-        onGuest={() => {
-          markGuest(true);
-          setGuest(true);
-          setState("ready");
-        }}
       />
     );
   }

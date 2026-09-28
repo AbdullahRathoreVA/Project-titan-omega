@@ -166,6 +166,19 @@ def _demo_rows() -> list[dict]:
     return [c for c in clients.all_clients() if is_demo_client(c)]
 
 
+def business_ids() -> list:
+    """Every demonstration business, for the public demo cockpit - seeded on
+    demand, like showcase(), and never a real client."""
+    if not enabled():
+        return []
+    if not _demo_rows():
+        try:
+            ensure()
+        except Exception:
+            return []
+    return [r["id"] for r in _demo_rows() if is_demo_client(r)]
+
+
 def showcase() -> dict | None:
     """The demo business a stranger may open, or None.
 

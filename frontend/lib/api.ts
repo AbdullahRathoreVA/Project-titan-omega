@@ -91,6 +91,9 @@ export function adminFetch(path: string, init: RequestInit = {}): Promise<Respon
       ...((init.headers as Record<string, string> | undefined) ?? {}),
     }),
     cache: "no-store",
+  }).then((res) => {
+    noticeDemoRefusal(res);
+    return res;
   });
 }
 
@@ -108,9 +111,26 @@ export async function verifyCustomer(): Promise<boolean> {
       if (res.status === 401) setCustomerToken(null);
       return false;
     }
-    const acct = (await res.json()) as { email: string; plan?: string; plan_name?: string };
-    setCustomerProfile({ email: acct.email, plan: acct.plan, plan_name: acct.plan_name });
+    const acct = (await res.json()) as {
+      email: string; plan?: string; plan_name?: string; demo?: boolean;
+    };
+    setCustomerProfile({ email: acct.email, plan: acct.plan, plan_name: acct.plan_name,
+                         demo: Boolean(acct.demo) });
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Open the public demo: the subscriber cockpit itself, on the read-only demo
+ *  account that holds Titan's own demonstration businesses. */
+export async function enterCockpitDemo(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/demo/cockpit", { method: "POST" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { token: string };
+    setCustomerToken(data.token, false);
+    return await verifyCustomer();
   } catch {
     return false;
   }
@@ -152,6 +172,23 @@ async function get<T>(path: string, fallback: T): Promise<T> {
   }
 }
 
+/** The demo account may look at everything and change nothing; the server
+ *  answers every write with 403 {demo: true}. Most screens treat a failed
+ *  write as "nothing happened", so the cockpit is told once, here, and shows
+ *  the visitor why (CommandCenter listens for this event). */
+export const DEMO_READ_ONLY_EVENT = "titan-demo-read-only";
+
+export function noticeDemoRefusal(res: Response): void {
+  if (res.status !== 403 || typeof window === "undefined") return;
+  void res
+    .clone()
+    .json()
+    .then((d: { demo?: boolean }) => {
+      if (d?.demo) window.dispatchEvent(new Event(DEMO_READ_ONLY_EVENT));
+    })
+    .catch(() => undefined);
+}
+
 async function post<T>(path: string, body?: unknown): Promise<T | null> {
   try {
     const res = await fetch(`${apiBase()}${path}`, {
@@ -159,6 +196,7 @@ async function post<T>(path: string, body?: unknown): Promise<T | null> {
       headers: authHeaders(body ? { "Content-Type": "application/json" } : {}),
       body: body ? JSON.stringify(body) : undefined,
     });
+    noticeDemoRefusal(res);
     if (!res.ok) throw new Error(`${res.status}`);
     return (await res.json()) as T;
   } catch {
@@ -169,6 +207,7 @@ async function post<T>(path: string, body?: unknown): Promise<T | null> {
 async function del<T>(path: string): Promise<T | null> {
   try {
     const res = await fetch(`${apiBase()}${path}`, { method: "DELETE", headers: authHeaders() });
+    noticeDemoRefusal(res);
     if (!res.ok) throw new Error(`${res.status}`);
     return (await res.json()) as T;
   } catch {

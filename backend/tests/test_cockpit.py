@@ -1022,6 +1022,74 @@ def test_job_radar_works_from_the_subscribers_own_profile(customer, monkeypatch)
     assert workspaces.export_state()["cust@example.com"]["jobs"]["profile"] == profile
 
 
+def test_the_demo_is_the_subscriber_cockpit_and_changes_nothing(customer, monkeypatch):
+    """Abdullah: the demo must be the cockpit a customer gets - not the
+    operator console with sample figures, and not a portal. So it is that
+    cockpit, on a demo account that holds Titan's own demonstration businesses
+    and can read everything and change nothing, on either door."""
+    from app.core import analytics, billing, cockpit_scope, llm
+    from app.engines import demo_workspace
+    client, _, _ = customer
+    _plant_founder_canaries()
+    try:
+        opened = client.post("/api/demo/cockpit")
+        assert opened.status_code == 200 and opened.json()["demo"] is True
+        hdr = {"X-Account-Token": opened.json()["token"]}
+        bearer = {"Authorization": f"Bearer {opened.json()['token']}"}
+
+        # It is the whole cockpit, reading only the demo account's own data.
+        for method, pattern in cockpit_scope.ALLOWED:
+            if method != "GET" or "[^/]+" in pattern:
+                continue
+            path = "/api/me" + pattern[len("/api"):]
+            if path.endswith("/live/weather"):
+                continue                        # needs a place; public data anyway
+            r = client.get(path, headers=hdr)
+            assert r.status_code == 200, (path, r.status_code)
+            for word in _FOUNDER_WORDS:
+                assert word not in r.content.decode("latin-1"), (path, word)
+        shown = client.get("/api/me/mine/clients", headers=hdr).json()["clients"]
+        assert shown and {c["id"] for c in shown} == set(demo_workspace.business_ids())
+        assert client.get("/api/account", headers=hdr).json()["demo"] is True
+
+        # Every write is refused, on /api/me and on the /api/account door.
+        writes = [("POST", "/api/me/leads", {"name": "x"}),
+                  ("POST", "/api/me/assistant", {"question": "hi"}),
+                  ("POST", "/api/me/mine/clients", {"business_name": "x"}),
+                  ("POST", "/api/me/finance/expense", {"amount": 1}),
+                  ("DELETE", "/api/me/leads/x", None),
+                  ("POST", "/api/account/onboard", {"business_name": "x"})]
+        for method, path, body in writes:
+            for h in (hdr, bearer):
+                r = client.request(method, path, headers=h, json=body)
+                assert r.status_code == 403 and r.json()["demo"] is True, (path, r.status_code)
+
+        # No AI is spent on a visitor, and nobody can sign in as the demo.
+        monkeypatch.setattr(llm, "complete", lambda **kw: (_ for _ in ()).throw(
+            AssertionError("the demo spent an AI call")))
+        assert client.get("/api/me/next-post", headers=hdr).json()["unavailable"] == "demo"
+        assert billing.authenticate(billing.DEMO_ACCOUNT, "") is None
+        # And it is nobody in the founder's figures.
+        assert all(a["email"] != billing.DEMO_ACCOUNT
+                   for a in analytics.accounts_snapshot()["accounts"])
+    finally:
+        f = st.founder_store()
+        f.agents.clear(); f.opportunities.clear(); f.feed.clear()
+        f.metrics.clear(); f.revenue_entries.clear(); f.expenses.clear()
+        f.leads.clear(); f.decisions.clear()
+        f.intel = None
+        f.telegram_log.clear()
+        f.jobs = None
+
+
+def test_the_demo_is_refused_rather_than_shown_a_real_client(customer, monkeypatch):
+    client, _, _ = customer
+    monkeypatch.setenv("TITAN_DEMO_WORKSPACE", "0")
+    assert client.post("/api/demo/cockpit").status_code == 503
+    monkeypatch.setenv("TITAN_DEMO_ENABLED", "0")
+    assert client.post("/api/demo/cockpit").status_code == 404
+
+
 _FRONTEND = __import__("pathlib").Path(__file__).resolve().parents[2] / "frontend"
 
 # Which /api routes each customer-visible tab reads. A tab may be added to
@@ -1189,6 +1257,19 @@ def test_every_client_call_a_subscriber_can_make_is_open_to_them():
               for name, calls in routes.items() if name not in _FOUNDER_ONLY_CLIENT
               for method, path in calls if not cockpit_scope.allowed(method, path)]
     assert not closed, "closed to subscribers: " + "; ".join(closed)
+
+
+def test_the_demo_on_the_front_door_is_the_cockpit():
+    """The sign-in page offered "tour the operator console (our internal view,
+    sample figures)" and a client portal. The demo is now the cockpit itself."""
+    login = (_FRONTEND / "components" / "Login.tsx").read_text(encoding="utf-8")
+    assert "Try the cockpit — no signup" in login
+    assert "operator console" not in login and "/api/demo/portal" not in login
+    client = (_FRONTEND / "lib" / "api.ts").read_text(encoding="utf-8")
+    # The demo token is kept out of /join, so a visitor signs up as themselves.
+    assert "setCustomerToken(data.token, false)" in client
+    # A refused demo write is announced from every client write path.
+    assert client.count("noticeDemoRefusal(res);") >= 3
 
 
 def test_unbound_code_still_sees_the_founder_store():
