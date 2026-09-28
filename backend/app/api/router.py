@@ -2240,17 +2240,31 @@ def founder_create_account(req: GrantIn) -> dict:
 
 @router.post("/founder/accounts/{email}/plan", tags=["executive"])
 def founder_set_plan(email: str, req: GrantIn) -> dict:
-    """Move an existing subscriber to another plan."""
+    """Move an existing subscriber to another plan.
+
+    Nobody pays for a plan set here, so a paid plan becomes a granted seat,
+    counted apart from paying customers and kept out of MRR. A customer who
+    really pays through the processor keeps their subscription id: renewal and
+    cancellation webhooks find the account by it.
+    """
     from ..core import analytics, billing
     if req.plan not in billing.PLANS:
         raise HTTPException(status_code=400, detail="Unknown plan.")
-    try:
-        account = billing.set_plan(email, req.plan, status="active")
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    analytics.record(email, analytics.CHANGED_PLAN, plan=req.plan, granted=True)
+    current = billing.subscription_of(email)
+    if current is None:
+        raise HTTPException(status_code=404, detail="No such account.")
+    if current and not current.startswith("granted"):
+        subscription = current
+    elif req.plan == "free":
+        subscription = ""
+    else:
+        subscription = f"granted:{req.note[:60]}" if req.note else "granted"
+    account = billing.set_plan(email, req.plan, subscription_id=subscription,
+                               status="active")
+    granted = subscription.startswith("granted")
+    analytics.record(email, analytics.CHANGED_PLAN, plan=req.plan, granted=granted)
     persistence.save(STORE)
-    return {"account": account, "billed": False}
+    return {"account": account, "billed": False, "granted": granted}
 
 
 @router.get("/founder/demo-workspace", tags=["executive"])

@@ -3506,6 +3506,39 @@ def test_founder_can_grant_a_free_enterprise_seat(client, isolated_billing):
     assert login.json()["account"]["plan"] == "enterprise"
 
 
+def test_changing_a_plan_by_hand_is_a_granted_seat_not_revenue(client, isolated_billing):
+    """The Customers tab's "Change plan" dropdown. Nobody pays for a plan set
+    there, so it must count as a granted seat, never as a paying customer; a
+    customer who really pays keeps the subscription id webhooks match on."""
+    from app.core import analytics, billing
+
+    billing.signup("walkin@example.com", "a-real-password-123")
+    r = client.post("/api/founder/accounts/walkin@example.com/plan",
+                    json={"email": "walkin@example.com", "plan": "individual"})
+    assert r.status_code == 200, r.text
+    assert r.json()["granted"] is True and r.json()["billed"] is False
+    row = next(a for a in analytics.accounts_snapshot()["accounts"]
+               if a["email"] == "walkin@example.com")
+    assert row["plan"] == "individual" and row["granted"] is True
+    assert row["paying"] is False
+
+    # Back to Free: no longer a granted paid seat either.
+    client.post("/api/founder/accounts/walkin@example.com/plan",
+                json={"email": "walkin@example.com", "plan": "free"})
+    assert billing.subscription_of("walkin@example.com") == ""
+
+    # A customer paying through Paddle keeps their subscription id.
+    billing.signup("payer@example.com", "a-real-password-123")
+    billing.set_plan("payer@example.com", "individual", subscription_id="sub_paddle_1")
+    client.post("/api/founder/accounts/payer@example.com/plan",
+                json={"email": "payer@example.com", "plan": "enterprise"})
+    assert billing.subscription_of("payer@example.com") == "sub_paddle_1"
+
+    assert client.post("/api/founder/accounts/nobody@example.com/plan",
+                       json={"email": "nobody@example.com", "plan": "free"}
+                       ).status_code == 404
+
+
 def test_granting_twice_changes_the_plan_and_keeps_the_password(
         client, isolated_billing):
     first = client.post("/api/founder/accounts",

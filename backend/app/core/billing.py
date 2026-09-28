@@ -316,6 +316,14 @@ def sign_out(token: str) -> bool:
     return sessions.revoke(token)
 
 
+def subscription_of(email: str) -> Optional[str]:
+    """The account's subscription id ("" for none, "granted..." for a seat
+    the founder gave), or None when there is no such account."""
+    with _lock:
+        acct = _accounts.get(email)
+        return None if acct is None else str(acct.get("subscription_id") or "")
+
+
 def public(email: str) -> dict:
     with _lock:
         acct = _accounts.get(email)
