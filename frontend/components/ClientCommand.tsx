@@ -13,6 +13,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { adminFetch } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
 import {
   AlertTriangle, Building2, Euro, FileText, Loader2, Plus,
   RefreshCw, Search, ShieldAlert, Trash2, TrendingUp,
@@ -55,28 +57,26 @@ const SEV: Record<string, string> = {
   low: "text-slate-400 border-slate-600/40 bg-slate-500/5",
 };
 
-function token(): string {
-  if (typeof window === "undefined") return "";
-  return (
-    localStorage.getItem("titan_token") ||
-    sessionStorage.getItem("titan_token") ||
-    ""
-  );
-}
+// Founder: /api/admin/*. Subscriber: /api/me/mine/*, their own businesses only.
+const api = adminFetch;
 
-async function api(path: string, init: RequestInit = {}) {
-  return fetch(`/api${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token()}`,
-      ...(init.headers || {}),
-    },
-    cache: "no-store",
-  });
+/** The API answers errors as a sentence or as a verdict object (a plan limit,
+ *  a rate limit). Either way the person gets a sentence. */
+function errorText(body: { detail?: unknown } | null, fallback: string): string {
+  const d = body?.detail;
+  if (typeof d === "string" && d) return d;
+  if (d && typeof d === "object") {
+    const v = d as { reason?: string; upgrade_gives?: string };
+    if (v.reason) return `${v.reason} ${v.upgrade_gives ?? ""}`.trim();
+  }
+  return fallback;
 }
 
 export default function ClientCommand() {
+  // A subscriber manages their own businesses: no trials to extend, no portal
+  // logins to hand out, and their plan (not a countdown) decides access.
+  const [customer] = useState(() => isCustomer());
+  const [limit, setLimit] = useState<{ allowed?: boolean; reason?: string } | null>(null);
   const [ov, setOv] = useState<Overview | null>(null);
   const [disc, setDisc] = useState<Discovery | null>(null);
   const [busy, setBusy] = useState<string>("");
@@ -94,7 +94,11 @@ export default function ClientCommand() {
         api("/admin/clients"),
         api("/admin/discovery"),
       ]);
-      if (a.ok) setOv(await a.json());
+      if (a.ok) {
+        const data = await a.json();
+        setOv(data);
+        if (data.limit) setLimit(data.limit);
+      }
       if (b.ok) setDisc(await b.json());
     } catch {
       /* dashboard polls again shortly */
@@ -127,9 +131,28 @@ export default function ClientCommand() {
     }
   };
 
+  const downloadPdf = async (c: Client) => {
+    // A plain link cannot carry the subscriber's token, so fetch and save.
+    setBusy(c.id);
+    try {
+      const r = await api(`/admin/clients/${c.id}/report.pdf`);
+      if (!r.ok) return;
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${c.business_name.toLowerCase().replace(/\s+/g, "-").slice(0, 40)}-report.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setBusy("");
+    }
+  };
+
   const remove = async (c: Client) => {
-    if (!confirm(`Delete ${c.business_name}? Their login and history go permanently.`))
-      return;
+    const question = customer
+      ? `Remove ${c.business_name} from your account? Its audits and history go permanently.`
+      : `Delete ${c.business_name}? Their login and history go permanently.`;
+    if (!confirm(question)) return;
     setBusy(c.id);
     try {
       await api(`/admin/clients/${c.id}`, { method: "DELETE" });
@@ -141,16 +164,26 @@ export default function ClientCommand() {
 
   const create = async () => {
     setErr("");
-    if (!form.business_name || !form.username || !form.password) {
-      setErr("Business name, username and password are required.");
+    if (customer ? !form.business_name : !form.business_name || !form.username || !form.password) {
+      setErr(customer
+        ? "Your business needs a name."
+        : "Business name, username and password are required.");
       return;
     }
-    const r = await api("/admin/clients", {
-      method: "POST",
-      body: JSON.stringify(form),
-    });
+    // A subscriber's business goes through the same onboarding as /join:
+    // added to their account, counted against their plan, audited at once.
+    const body = customer
+      ? {
+          business_name: form.business_name, website: form.website,
+          industry: form.industry, instagram: form.instagram,
+          city: form.city, country: form.country, run_audit: true,
+        }
+      : form;
+    setBusy("new");
+    const r = await api("/admin/clients", { method: "POST", body: JSON.stringify(body) });
+    setBusy("");
     if (!r.ok) {
-      setErr((await r.json()).detail || "Could not create client.");
+      setErr(errorText(await r.json().catch(() => null), "Could not add the business."));
       return;
     }
     setForm({ ...form, business_name: "", username: "", password: "", website: "", instagram: "" });
@@ -174,7 +207,9 @@ export default function ClientCommand() {
             <Building2 className="h-4 w-4 text-hud-amber" /> CLIENT COMMAND
           </div>
           <div className="mt-1 text-[11px] text-slate-500">
-            Every business you manage · SEO, compliance and content
+            {customer
+              ? "Your businesses · SEO, compliance and content"
+              : "Every business you manage · SEO, compliance and content"}
           </div>
         </div>
         <div className="flex gap-2">
@@ -194,10 +229,10 @@ export default function ClientCommand() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
-        {kpi("Clients", ov?.total ?? 0)}
-        {kpi("Active", ov?.active ?? 0, "text-emerald-400")}
-        {kpi("Expired", ov?.expired ?? 0, "text-rose-400")}
+      <div className={`grid grid-cols-2 gap-3 ${customer ? "md:grid-cols-4" : "md:grid-cols-6"}`}>
+        {kpi(customer ? "Businesses" : "Clients", ov?.total ?? 0)}
+        {!customer && kpi("Active", ov?.active ?? 0, "text-emerald-400")}
+        {!customer && kpi("Expired", ov?.expired ?? 0, "text-rose-400")}
         {kpi("Audits", ov?.totals.seo_audits ?? 0, "text-sky-400")}
         {kpi("Issues found", ov?.totals.issues_found ?? 0, "text-violet-400")}
         {kpi(
@@ -207,8 +242,19 @@ export default function ClientCommand() {
         )}
       </div>
 
-      {/* expiring trials */}
-      {ov?.expiring_soon?.length ? (
+      {/* A subscriber at their plan's business limit is told before they try. */}
+      {customer && limit && limit.allowed === false && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-[12px] text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            {limit.reason ?? "Your plan's business limit is reached."}{" "}
+            <a href="/pricing" className="underline underline-offset-2">See plans</a>
+          </div>
+        </div>
+      )}
+
+      {/* expiring trials (businesses the founder onboards by hand) */}
+      {!customer && ov?.expiring_soon?.length ? (
         <div className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-[12px] text-amber-300">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
@@ -241,7 +287,11 @@ export default function ClientCommand() {
               ["logo_url", "Logo URL"],
               ["username", "Login username"],
               ["password", "Login password"],
-            ] as const).map(([k, label]) => (
+            ] as const)
+              // A subscriber signs in as themselves; portal logins and logos
+              // are for businesses the founder manages for someone else.
+              .filter(([k]) => !customer || !["logo_url", "username", "password"].includes(k))
+              .map(([k, label]) => (
               <label key={k} className="block">
                 <span className="mb-1 block text-[9px] uppercase tracking-widest text-slate-500">
                   {label}
@@ -273,9 +323,10 @@ export default function ClientCommand() {
           {err && <div className="mt-2 text-[11px] text-rose-400">{err}</div>}
           <button
             onClick={create}
-            className="mt-3 rounded-lg border border-emerald-500/40 px-4 py-2 text-[11px] text-emerald-300 transition hover:bg-emerald-500/10"
+            disabled={busy === "new"}
+            className="mt-3 rounded-lg border border-emerald-500/40 px-4 py-2 text-[11px] text-emerald-300 transition hover:bg-emerald-500/10 disabled:opacity-50"
           >
-            Create client
+            {busy === "new" ? "Adding and auditing…" : customer ? "Add business" : "Create client"}
           </button>
         </motion.div>
       )}
@@ -287,7 +338,9 @@ export default function ClientCommand() {
         </div>
         {!ov?.clients.length ? (
           <div className="py-8 text-center text-[12px] text-slate-500">
-            No clients yet. Use Onboard to add the first.
+            {customer
+              ? "No businesses yet. Use Onboard to add your first."
+              : "No clients yet. Use Onboard to add the first."}
           </div>
         ) : (
           <div className="space-y-2">
@@ -304,6 +357,7 @@ export default function ClientCommand() {
                     {c.instagram ? ` · @${c.instagram}` : ""}
                   </div>
                 </div>
+                {!customer && (
                 <div className="text-center">
                   <div
                     className={`text-lg leading-none ${
@@ -320,6 +374,7 @@ export default function ClientCommand() {
                     days left
                   </div>
                 </div>
+                )}
                 <div className="text-[10px] text-slate-500">
                   {c.metrics.seo_audits} audits
                   <br />
@@ -338,21 +393,33 @@ export default function ClientCommand() {
                     )}
                     Audit
                   </button>
-                  <a
-                    href={`/api/admin/clients/${c.id}/report.pdf`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 rounded-md border border-white/10 px-2.5 py-1 text-[10px] text-slate-300 transition hover:border-hud-amber/50 hover:text-hud-amber"
-                  >
-                    <FileText className="h-3 w-3" /> PDF
-                  </a>
-                  <button
-                    disabled={busy === c.id}
-                    onClick={() => extend(c.id)}
-                    className="rounded-md border border-white/10 px-2.5 py-1 text-[10px] text-slate-300 transition hover:border-emerald-400/50 hover:text-emerald-300 disabled:opacity-40"
-                  >
-                    +30d
-                  </button>
+                  {customer ? (
+                    <button
+                      disabled={busy === c.id}
+                      onClick={() => downloadPdf(c)}
+                      className="flex items-center gap-1 rounded-md border border-white/10 px-2.5 py-1 text-[10px] text-slate-300 transition hover:border-hud-amber/50 hover:text-hud-amber disabled:opacity-40"
+                    >
+                      <FileText className="h-3 w-3" /> PDF
+                    </button>
+                  ) : (
+                    <a
+                      href={`/api/admin/clients/${c.id}/report.pdf`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 rounded-md border border-white/10 px-2.5 py-1 text-[10px] text-slate-300 transition hover:border-hud-amber/50 hover:text-hud-amber"
+                    >
+                      <FileText className="h-3 w-3" /> PDF
+                    </a>
+                  )}
+                  {!customer && (
+                    <button
+                      disabled={busy === c.id}
+                      onClick={() => extend(c.id)}
+                      className="rounded-md border border-white/10 px-2.5 py-1 text-[10px] text-slate-300 transition hover:border-emerald-400/50 hover:text-emerald-300 disabled:opacity-40"
+                    >
+                      +30d
+                    </button>
+                  )}
                   <button
                     disabled={busy === c.id}
                     onClick={() => remove(c)}

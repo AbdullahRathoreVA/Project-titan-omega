@@ -31,6 +31,7 @@ from .api.actions import router as actions_router
 from .api.comms import router as comms_router
 from .api.finance import router as finance_router
 from .api.growth import router as growth_router
+from .api.mine import router as mine_router
 from .api.router import router
 from .api.tts import router as tts_router
 from .api.voice import router as voice_router
@@ -735,6 +736,7 @@ app.include_router(comms_router)
 app.include_router(finance_router)
 app.include_router(tts_router)
 app.include_router(voice_router)
+app.include_router(mine_router)
 
 
 @app.get("/health", tags=["system"])

@@ -169,13 +169,19 @@ def scan_client_gaps(audit_cache: Optional[dict] = None,
     return out
 
 
-def scan_portfolio_risks() -> list[dict]:
-    """Things quietly losing money that nobody is watching."""
-    rows = clients.all_clients()
+def scan_portfolio_risks(only=None) -> list[dict]:
+    """Things quietly losing money that nobody is watching.
+
+    `only` is a subscriber's own businesses. Their access comes from their
+    plan and they sign in as themselves, so the trial and never-signed-in
+    checks (about businesses the founder onboards by hand) do not apply.
+    """
+    rows = [c for c in clients.all_clients() if only is None or c["id"] in only]
+    subscriber = only is not None
     now = time.time()
     risks = []
 
-    ending = [c for c in rows if 0 < c["trial_days_left"] <= 14]
+    ending = [] if subscriber else [c for c in rows if 0 < c["trial_days_left"] <= 14]
     if ending:
         risks.append({
             "id": "risk:trials",
@@ -187,7 +193,7 @@ def scan_portfolio_risks() -> list[dict]:
                        "A trial that expires silently is a lost client."),
         })
 
-    lapsed = [c for c in rows if c["trial_expired"]]
+    lapsed = [] if subscriber else [c for c in rows if c["trial_expired"]]
     if lapsed:
         risks.append({
             "id": "risk:expired",
@@ -197,7 +203,7 @@ def scan_portfolio_risks() -> list[dict]:
             "action": "Convert, extend, or remove them so the numbers stay honest.",
         })
 
-    never = [c for c in rows if not c.get("last_login")]
+    never = [] if subscriber else [c for c in rows if not c.get("last_login")]
     if never:
         risks.append({
             "id": "risk:never_logged_in",
@@ -237,15 +243,16 @@ def scan_portfolio_risks() -> list[dict]:
     return risks
 
 
-def report(audit_cache: Optional[dict] = None, live: bool = False) -> dict:
+def report(audit_cache: Optional[dict] = None, live: bool = False,
+           only=None) -> dict:
     gaps = scan_client_gaps(audit_cache, live=live)
-    risks = scan_portfolio_risks()
+    risks = scan_portfolio_risks(only)
     return {
         "opportunities": gaps,
         "risks": risks,
         "pipeline_value_eur": sum(g["total_eur"] for g in gaps),
         "urgent_value_eur": sum(g["total_eur"] for g in gaps if g["urgent"]),
-        "clients": len(clients.all_clients()),
+        "clients": (len(only) if only is not None else len(clients.all_clients())),
         "scanned_at": time.time(),
         "note": ("Every opportunity here is derived from findings on real "
                  "client sites, and names which clients. Nothing is projected "

@@ -27,6 +27,21 @@ LEAD_STATUSES = ["new", "contacted", "replied", "won", "lost"]
 LEAD_STAGES = ["new", "contacted", "replied", "won"]
 
 
+def _owner() -> str:
+    """Whose pipeline this request works on: the subscriber served through
+    /api/me, or the founder. Always from the session, never from the body."""
+    from ..core import cockpit_scope, crm
+    return cockpit_scope.customer_email() or crm.FOUNDER
+
+
+def _leads() -> dict:
+    """The one owner-tagged leads table. Customers' leads have always lived
+    here (see /api/account/leads), so a subscriber's cockpit reads it too -
+    filtered to their own - rather than the copy in their workspace."""
+    from ..store import founder_store
+    return founder_store().leads
+
+
 def _stage_reached(lead: dict) -> int:
     """Furthest stage index this lead ever reached.
 
@@ -149,7 +164,7 @@ def list_leads() -> dict:
     direction, and just as much of a breach.
     """
     from ..core import crm
-    items = sorted(crm.visible_to(STORE.leads, crm.FOUNDER),
+    items = sorted(crm.visible_to(_leads(), _owner()),
                    key=lambda l: l.get("updated_at", ""), reverse=True)
     counts = {s: sum(1 for l in items if l.get("status") == s) for s in LEAD_STATUSES}
     return {"items": items, "counts": counts, "statuses": LEAD_STATUSES,
@@ -167,10 +182,10 @@ class LeadCreate(BaseModel):
 def create_lead(req: LeadCreate) -> dict:
     from ..core import crm
     lead = crm.new_lead(
-        lead_id=STORE.new_id("lead"), account=crm.FOUNDER,
+        lead_id=STORE.new_id("lead"), account=_owner(),
         name=req.name, source=req.source, contact=req.contact, note=req.note,
         created_at=now().isoformat(), updated_at=now().isoformat())
-    STORE.leads[lead["id"]] = lead
+    _leads()[lead["id"]] = lead
     STORE.emit("revenue-head", "discovery", f"New lead: {lead['name']} ({lead['source']})", "info")
     persistence.save(STORE)
     return lead
@@ -184,7 +199,7 @@ class LeadStatus(BaseModel):
 def set_lead_status(lead_id: str, req: LeadStatus) -> dict:
     from ..core import crm
     try:
-        lead = crm.require_owned(STORE.leads, lead_id, crm.FOUNDER)
+        lead = crm.require_owned(_leads(), lead_id, _owner())
     except crm.NotYours:
         # The same 404 whether it does not exist or belongs to a customer.
         # Two different answers enumerate other people's records.
@@ -234,15 +249,15 @@ def discover_leads(req: LeadDiscover, request: Request) -> dict:
     # the exposure was a compromised token rather than the open internet — but
     # an unmetered call that spends a third party's quota is unmetered either
     # way. Keyed on the caller.
-    verdict = ratelimit.check("discover", ratelimit.identity_for(request))
+    verdict = ratelimit.check("discover", _owner() or ratelimit.identity_for(request))
     if not verdict["allowed"]:
         raise HTTPException(status_code=429, detail=verdict)
 
-    # Never re-file a business already in the pipeline. Scoped to the founder's
-    # own, because reading every customer's leads to decide what HE has already
-    # seen would let one customer's pipeline suppress a lead from his.
+    # Never re-file a business already in the pipeline. Scoped to the caller's
+    # own, because reading every customer's leads to decide what one has
+    # already seen would let one pipeline suppress a lead from another.
     known = set()
-    for lead in crm.visible_to(STORE.leads, crm.FOUNDER):
+    for lead in crm.visible_to(_leads(), _owner()):
         site = outreach.find_website(lead)
         if site:
             d = prospecting.registrable(site)
@@ -256,11 +271,11 @@ def discover_leads(req: LeadDiscover, request: Request) -> dict:
     created = []
     for c in found["candidates"]:
         lead = crm.new_lead(
-            lead_id=STORE.new_id("lead"), account=crm.FOUNDER,
+            lead_id=STORE.new_id("lead"), account=_owner(),
             name=c["name"], source="discovered", contact=c["website"],
             note=(c["why"] or ""), website=c["website"],
             created_at=now().isoformat(), updated_at=now().isoformat())
-        STORE.leads[lead["id"]] = lead
+        _leads()[lead["id"]] = lead
         created.append(lead)
 
     # Audit the first few and draft from the findings. Bounded deliberately:
@@ -308,7 +323,7 @@ def research_lead(lead_id: str, req: LeadResearch | None = None) -> dict:
     from ..engines import outreach
 
     try:
-        lead = crm.require_owned(STORE.leads, lead_id, crm.FOUNDER)
+        lead = crm.require_owned(_leads(), lead_id, _owner())
     except crm.NotYours:
         raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -333,9 +348,9 @@ def research_lead(lead_id: str, req: LeadResearch | None = None) -> dict:
 def delete_lead(lead_id: str) -> dict:
     from ..core import crm
     try:
-        crm.require_owned(STORE.leads, lead_id, crm.FOUNDER)
+        crm.require_owned(_leads(), lead_id, _owner())
     except crm.NotYours:
         raise HTTPException(status_code=404, detail="Lead not found")
-    del STORE.leads[lead_id]
+    del _leads()[lead_id]
     persistence.save(STORE)
     return {"deleted": lead_id}

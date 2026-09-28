@@ -79,6 +79,21 @@ export function authHeaders(extra: Record<string, string> = {}): Record<string, 
   return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
 }
 
+/** The Clients and SEO tabs call the founder's /api/admin/* routes. In a
+ *  subscriber's cockpit the same paths go to /api/me/mine/*, which serve only
+ *  their own businesses in the same shapes (backend api/mine.py). */
+export function adminFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const url = isCustomer() ? `/api/me/mine${path.replace(/^\/admin/, "")}` : `/api${path}`;
+  return fetch(url, {
+    ...init,
+    headers: authHeaders({
+      "Content-Type": "application/json",
+      ...((init.headers as Record<string, string> | undefined) ?? {}),
+    }),
+    cache: "no-store",
+  });
+}
+
 /** Is the stored subscriber session still good? Saves their profile for the
  *  greeting. A stale token is cleared so the sign-in screen shows. */
 export async function verifyCustomer(): Promise<boolean> {

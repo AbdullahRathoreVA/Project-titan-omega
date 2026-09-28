@@ -179,20 +179,28 @@ def test_no_customer_route_ever_shows_founder_data(customer):
     """The one that matters. Fails OPEN: every route on the allowlist is
     called, including ones added later, and any founder canary in any body
     fails the suite."""
-    from app.core import cockpit_scope
+    from app.core import clients, cockpit_scope
     client, token, _ = customer
     _plant_founder_canaries()
+    founders_business = _make_client(f"{_CANARY} Founder Business")
+    own = _make_client("Own Business", owner="cust@example.com")
     hdr = {"X-Account-Token": token}
     try:
         for method, pattern in cockpit_scope.ALLOWED:
             if method != "GET":
                 continue
-            path = "/api/me" + pattern[len("/api"):].replace(r"(?P<id>[^/]+)", "x")
+            # Path parameters are filled with the customer's OWN ids, so every
+            # route really runs; a leak would have to come from elsewhere.
+            path = "/api/me" + (pattern[len("/api"):]
+                                .replace("[^/]+", own).replace("\\.", "."))
             r = client.get(path, headers=hdr)
             assert r.status_code == 200, (path, r.status_code, r.text[:200])
+            body = r.content.decode("latin-1")
             for word in _FOUNDER_WORDS:
-                assert word not in r.text, f"{path} leaked {word!r}"
+                assert word not in body, f"{path} leaked {word!r}"
     finally:
+        clients.delete_client(founders_business)
+        clients.delete_client(own)
         f = st.founder_store()
         f.agents.clear(); f.opportunities.clear(); f.feed.clear()
         f.metrics.clear(); f.revenue_entries.clear(); f.expenses.clear()
@@ -223,6 +231,141 @@ def test_every_route_not_on_the_allowlist_is_closed_to_customers(customer):
     assert checked > 100    # the walk really walked
 
 
+def test_a_customers_crm_is_theirs_alone(customer):
+    """One owner-tagged leads table for everyone, as /api/account/leads has
+    always used. The owner comes from the session, never the request."""
+    from app.core import crm
+    client, token, _ = customer
+    hdr = {"X-Account-Token": token}
+    founder = st.founder_store()
+    founder.leads["lead-f"] = crm.new_lead(lead_id="lead-f", account=crm.FOUNDER,
+                                           name="Founder Prospect")
+    try:
+        made = client.post("/api/me/leads", headers=hdr,
+                           json={"name": "Customer Prospect", "source": "manual"})
+        assert made.status_code == 200 and made.json()["account"] == "cust@example.com"
+        lid = made.json()["id"]
+        mine = client.get("/api/me/leads", headers=hdr).json()
+        assert [l["name"] for l in mine["items"]] == ["Customer Prospect"]
+        # Same record through the account API, and absent from the founder's.
+        acct = client.get("/api/account/leads", headers=hdr).json()
+        assert [l["id"] for l in acct["items"]] == [lid]
+        assert "Customer Prospect" not in client.get("/api/leads").text
+        # The founder's lead is out of reach, with the same 404 as a missing one.
+        assert client.post("/api/me/leads/lead-f/status", headers=hdr,
+                           json={"status": "won"}).status_code == 404
+        assert client.delete("/api/me/leads/lead-f", headers=hdr).status_code == 404
+        assert founder.leads["lead-f"]["status"] == "new"
+        # Their own lead moves and goes.
+        assert client.post(f"/api/me/leads/{lid}/status", headers=hdr,
+                           json={"status": "contacted"}).json()["status"] == "contacted"
+        assert client.delete(f"/api/me/leads/{lid}", headers=hdr).status_code == 200
+        assert lid not in founder.leads
+    finally:
+        founder.leads.pop("lead-f", None)
+
+
+def _make_client(name, owner=None):
+    from app.core import billing, clients
+    import secrets
+    rec = clients.create_client(business_name=name,
+                                username=f"u-{secrets.token_hex(4)}",
+                                password=secrets.token_urlsafe(12), website="",
+                                industry="retail", city="", country="Pakistan")
+    if owner:
+        billing.attach_client(owner, rec["id"])
+    return rec["id"]
+
+
+def test_a_customers_businesses_are_theirs_alone(customer):
+    """Clients and SEO tabs, in the shapes the founder's screens render, but
+    only ever the subscriber's own businesses."""
+    from app.core import clients
+    client, token, _ = customer
+    hdr = {"X-Account-Token": token}
+    theirs = _make_client("Customer Leather Co", owner="cust@example.com")
+    founders = _make_client("Founder Client GmbH")
+    try:
+        ov = client.get("/api/me/mine/clients", headers=hdr)
+        assert ov.status_code == 200
+        names = [c["business_name"] for c in ov.json()["clients"]]
+        assert names == ["Customer Leather Co"]
+        assert "limit" in ov.json()
+        assert client.get(f"/api/me/mine/clients/{theirs}", headers=hdr).status_code == 200
+        assert client.get(f"/api/me/mine/clients/{theirs}/seo/schema",
+                          headers=hdr).status_code == 200
+        watch = client.get("/api/me/mine/watch", headers=hdr).json()
+        assert "Founder Client GmbH" not in str(watch)
+        disc = client.get("/api/me/mine/discovery", headers=hdr).json()
+        assert "Founder Client GmbH" not in str(disc)
+        # Another business: every route answers as if it did not exist.
+        for method, path in (("GET", f"/api/me/mine/clients/{founders}"),
+                             ("POST", f"/api/me/mine/clients/{founders}/seo"),
+                             ("GET", f"/api/me/mine/clients/{founders}/seo/schema"),
+                             ("POST", f"/api/me/mine/clients/{founders}/watch"),
+                             ("GET", f"/api/me/mine/clients/{founders}/report.pdf"),
+                             ("DELETE", f"/api/me/mine/clients/{founders}")):
+            assert client.request(method, path, headers=hdr).status_code == 404, path
+        assert clients.get(founders)
+        # Not through /api/me, there is no subscriber: nothing is served.
+        assert client.get("/api/mine/clients").status_code == 404
+        # Their own business can be removed, and leaves their account too.
+        assert client.delete(f"/api/me/mine/clients/{theirs}", headers=hdr).status_code == 200
+        assert client.get("/api/me/mine/clients", headers=hdr).json()["clients"] == []
+    finally:
+        for cid in (theirs, founders):
+            clients.delete_client(cid)
+
+
+def test_a_cockpit_re_audit_spends_the_plans_audits(customer):
+    from app.core import billing, clients
+    client, token, _ = customer
+    own = _make_client("Audit Co", owner="cust@example.com")
+    try:
+        allowed = billing.PLANS["free"].audits_per_month
+        for _ in range(allowed):
+            assert client.post(f"/api/me/mine/clients/{own}/seo",
+                               headers={"X-Account-Token": token}).status_code == 200
+        over = client.post(f"/api/me/mine/clients/{own}/seo",
+                           headers={"X-Account-Token": token})
+        assert over.status_code == 402 and over.json()["detail"]["upgrade_to"]
+    finally:
+        clients.delete_client(own)
+
+
+def test_the_pdf_report_downloads_from_join_and_from_the_cockpit(customer):
+    """Both doors share one PDF builder. A helper name clash once replaced it
+    with the portal's route of the same name; nothing covered /join's
+    download, so it would have broken silently."""
+    from app.core import clients
+    client, token, _ = customer
+    own = _make_client("Report Co", owner="cust@example.com")
+    try:
+        for path in (f"/api/account/clients/{own}/report.pdf",
+                     f"/api/me/mine/clients/{own}/report.pdf"):
+            r = client.get(path, headers={"X-Account-Token": token})
+            assert r.status_code == 200, path
+            assert r.headers["content-type"] == "application/pdf"
+            assert r.content.startswith(b"%PDF")
+    finally:
+        clients.delete_client(own)
+
+
+def test_adding_a_business_from_the_cockpit_is_the_same_onboarding(customer):
+    client, token, _ = customer
+    hdr = {"X-Account-Token": token}
+    r = client.post("/api/me/mine/clients", headers=hdr,
+                    json={"business_name": "New Shop", "website": "",
+                          "industry": "retail", "country": "Pakistan"})
+    assert r.status_code == 200 and r.json()["client"]["business_name"] == "New Shop"
+    # Free allows one business; the second is the plan ceiling, not an error.
+    r2 = client.post("/api/me/mine/clients", headers=hdr,
+                     json={"business_name": "Second Shop", "website": ""})
+    assert r2.status_code == 402
+    from app.core import clients
+    clients.delete_client(r.json()["client"]["id"])
+
+
 _FRONTEND = __import__("pathlib").Path(__file__).resolve().parents[2] / "frontend"
 
 # Which /api routes each customer-visible tab reads. A tab may be added to
@@ -235,6 +378,10 @@ TAB_ROUTES = {
                   "/api/opportunities", "/api/feed", "/api/deliverables"],
     "mission": ["/api/status", "/api/agents", "/api/opportunities",
                 "/api/executions", "/api/decisions", "/api/feed"],
+    "clients": ["/api/mine/clients", "/api/mine/discovery"],
+    "seo": ["/api/mine/clients", "/api/mine/watch", "/api/mine/clients/x",
+            "/api/mine/clients/x/seo/schema"],
+    "crm": ["/api/leads"],
 }
 
 

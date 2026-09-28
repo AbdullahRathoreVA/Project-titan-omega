@@ -217,9 +217,10 @@ def cycle(limit: int = 3, interval: int = DEFAULT_INTERVAL) -> dict:
     return {"checked": checked, "alerts": alerts, "ts": time.time()}
 
 
-def summary() -> dict:
-    """Everything the dashboard needs about ongoing monitoring."""
-    rows = clients.all_clients()
+def summary(only=None) -> dict:
+    """Everything the dashboard needs about ongoing monitoring. `only` limits
+    it to those client ids (a subscriber's own businesses)."""
+    rows = [c for c in clients.all_clients() if only is None or c["id"] in only]
     watched = [c for c in rows if c.get("website")]
     alerts = []
     for c in rows:

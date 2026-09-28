@@ -307,10 +307,15 @@ def bump(cid: str, metric: str, n: int = 1) -> None:
 
 
 # ------------------------------------------------------------- overview -----
-def admin_overview() -> dict:
-    """Everything Abdullah needs on one screen."""
+def admin_overview(only=None) -> dict:
+    """Everything Abdullah needs on one screen.
+
+    `only` limits it to those client ids - a subscriber's cockpit asks for its
+    own businesses in exactly this shape (api/mine.py).
+    """
     with _lock:
-        rows = [public(cid) for cid in _clients]
+        ids = [cid for cid in _clients if only is None or cid in only]
+        rows = [public(cid) for cid in ids]
 
     active = [r for r in rows if not r["trial_expired"]]
     expiring = sorted(

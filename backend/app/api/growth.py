@@ -63,10 +63,19 @@ def content_repurpose(req: RepurposeRequest) -> dict:
 
 # --- gamification + performance (REAL events only, no fake progress) --------
 
+def _my_leads() -> list:
+    """The caller's own leads from the shared, owner-tagged table. Counting
+    `s.leads` whole put every customer's leads into the founder's XP."""
+    from ..core import cockpit_scope, crm
+    from ..store import founder_store
+    return crm.visible_to(founder_store().leads,
+                          cockpit_scope.customer_email() or crm.FOUNDER)
+
+
 _MILESTONES = [
     ("First real order logged", lambda s: len(s.revenue_entries) > 0),
     ("First $100 earned", lambda s: float(s.metrics.get("mrr", 0)) >= 100),
-    ("First lead won", lambda s: any(l.get("status") == "won" for l in s.leads.values())),
+    ("First lead won", lambda s: any(l.get("status") == "won" for l in _my_leads())),
     ("10 posts scheduled", lambda s: len(s.posts) >= 10),
     ("First job application", lambda s: any(i.get("applied") for i in (s.jobs or {}).get("items", []))),
     ("Telegram connected", lambda s: len(s.telegram_log) > 0),
@@ -75,14 +84,15 @@ _MILESTONES = [
 
 
 def _counters(s) -> dict:
+    leads = _my_leads()
     return {
         "posts_scheduled": len(s.posts),
         "posts_published": sum(1 for p in s.posts.values() if p.get("status") == "published"),
         "deliverables": len(s.deliverables),
         "jobs_found": len((s.jobs or {}).get("items", [])),
         "jobs_applied": sum(1 for i in (s.jobs or {}).get("items", []) if i.get("applied")),
-        "leads_total": len(s.leads),
-        "leads_won": sum(1 for l in s.leads.values() if l.get("status") == "won"),
+        "leads_total": len(leads),
+        "leads_won": sum(1 for l in leads if l.get("status") == "won"),
         "telegram_commands": len(s.telegram_log),
         "council_decisions": len(s.decisions),
     }
@@ -94,7 +104,7 @@ def progress() -> dict:
     s = STORE
     c = _counters(s)
     leads_contacted = sum(
-        1 for l in s.leads.values() if l.get("status") in ("contacted", "replied", "won")
+        1 for l in _my_leads() if l.get("status") in ("contacted", "replied", "won")
     )
     xp = int(
         float(s.metrics.get("mrr", 0)) * 10

@@ -78,7 +78,9 @@ const POLL_MS = 5000;
 // Tabs a subscriber's cockpit shows: those whose routes are open to customers
 // on the backend (core/cockpit_scope.ALLOWED). Each later phase adds its tab
 // here together with its routes there.
-const CUSTOMER_TABS = new Set<string>(["universe", "dashboard", "mission"]);
+const CUSTOMER_TABS = new Set<string>([
+  "universe", "dashboard", "mission", "clients", "seo", "crm",
+]);
 
 export function CommandCenter() {
   // Fixed for the life of the page: signing out reloads into the sign-in screen.
@@ -365,9 +367,12 @@ export function CommandCenter() {
               <span className="font-semibold">{displayName()} — your Titan workspace is live.</span>{" "}
               Every number here is yours and starts at zero. Add your first business to
               get its audit, fixes and monitoring:{" "}
-              <a href="/join" className="font-semibold underline underline-offset-2">
+              <button
+                onClick={() => setView("clients")}
+                className="font-semibold underline underline-offset-2"
+              >
                 set up a business
-              </a>
+              </button>
               .
             </div>
           )}
@@ -551,12 +556,12 @@ export function CommandCenter() {
                     Titan audits your website for SEO and legal compliance, drafts the
                     fixes and keeps watching it. It all starts with one business.
                   </p>
-                  <a
-                    href="/join"
+                  <button
+                    onClick={() => setView("clients")}
                     className="self-start rounded-lg border border-hud-cyan/50 bg-hud-cyan/10 px-4 py-2 text-sm text-hud-cyan hover:bg-hud-cyan/20"
                   >
                     Add a business
-                  </a>
+                  </button>
                 </section>
               ) : (
                 <NextPost post={nextPost} onChange={refreshNextPost} />

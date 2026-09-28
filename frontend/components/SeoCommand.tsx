@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { adminFetch } from "@/lib/api";
 import {
   Activity, AlertTriangle, Check, Copy, Gavel, Globe2, Loader2,
   MapPin, RefreshCw, Search, Sparkles, TrendingDown, TrendingUp,
@@ -126,26 +127,8 @@ const GRADE_TONE: Record<string, string> = {
   F: "text-hud-rose",
 };
 
-function token(): string {
-  if (typeof window === "undefined") return "";
-  return (
-    localStorage.getItem("titan_token") ||
-    sessionStorage.getItem("titan_token") ||
-    ""
-  );
-}
-
-async function api(path: string, init: RequestInit = {}) {
-  return fetch(`/api${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token()}`,
-      ...(init.headers || {}),
-    },
-    cache: "no-store",
-  });
-}
+// Founder: /api/admin/*. Subscriber: /api/me/mine/*, their own businesses only.
+const api = adminFetch;
 
 function Bar({ dim }: { dim: LocalDim }) {
   const pct = dim.weight > 0 ? Math.round((dim.earned / dim.weight) * 100) : 0;

@@ -35,6 +35,25 @@ ALLOWED: Tuple[Tuple[str, str], ...] = (
     ("GET", r"/api/finance"),
     ("GET", r"/api/leads"),
     ("GET", r"/api/revenue/entries"),
+    # Phase 3 - CRM. The handlers read the shared owner-tagged table through
+    # finance._owner(), which is the session's subscriber here.
+    ("POST", r"/api/leads"),
+    ("POST", r"/api/leads/[^/]+/status"),
+    ("DELETE", r"/api/leads/[^/]+"),
+    ("POST", r"/api/leads/discover"),
+    ("POST", r"/api/leads/[^/]+/research"),
+    # Phase 3 - Clients and SEO. api/mine.py serves only the subscriber's own
+    # businesses and refuses anybody else's with the same 404 as a missing one.
+    ("GET", r"/api/mine/clients"),
+    ("POST", r"/api/mine/clients"),
+    ("GET", r"/api/mine/clients/[^/]+"),
+    ("DELETE", r"/api/mine/clients/[^/]+"),
+    ("POST", r"/api/mine/clients/[^/]+/seo"),
+    ("GET", r"/api/mine/clients/[^/]+/seo/schema"),
+    ("GET", r"/api/mine/clients/[^/]+/report\.pdf"),
+    ("POST", r"/api/mine/clients/[^/]+/watch"),
+    ("GET", r"/api/mine/watch"),
+    ("GET", r"/api/mine/discovery"),
 )
 
 _COMPILED = tuple((m, re.compile(p + r"\Z")) for m, p in ALLOWED)

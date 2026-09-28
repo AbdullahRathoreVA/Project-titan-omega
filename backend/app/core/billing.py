@@ -492,6 +492,15 @@ def attach_client(email: str, client_id: str) -> None:
             acct["client_ids"].append(client_id)
 
 
+def detach_client(email: str, client_id: str) -> None:
+    """The subscriber removed this business, so it stops counting against
+    their plan's business limit."""
+    with _lock:
+        acct = _accounts.get(email)
+        if acct is not None and client_id in acct.get("client_ids", []):
+            acct["client_ids"].remove(client_id)
+
+
 def set_plan(email: str, plan: str, subscription_id: str = "",
              status: str = "active") -> dict:
     if plan not in PLANS:

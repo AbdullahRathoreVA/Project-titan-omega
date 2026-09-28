@@ -1192,12 +1192,19 @@ def account_onboard(req: OnboardIn, request: Request,
     The plan's business limit is enforced here, and a refusal names the limit
     and the tier that lifts it rather than failing blankly.
     """
-    from ..core import analytics, billing, evidence
-    from ..engines import client_seo as _cs
+    from ..core import billing
 
     email = billing.resolve(x_account_token or "")
     if not email:
         raise HTTPException(status_code=401, detail="Sign in first")
+    return onboard_business(email, req)
+
+
+def onboard_business(email: str, req: OnboardIn) -> dict:
+    """Add a business to this subscriber and run its first audit. Shared by
+    /join (above) and the cockpit's Clients tab (api/mine.py)."""
+    from ..core import analytics, billing, evidence
+    from ..engines import client_seo as _cs
 
     # Onboarding fetches a URL the caller supplies. Unmetered, that makes Titan
     # a request amplifier aimed at somebody else's server. Keyed on the
@@ -1563,6 +1570,12 @@ def account_report(cid: str, x_account_token: Optional[str] = Header(None)):
     subscriber must never fetch another subscriber's report.
     """
     email = _owned(cid, x_account_token)
+    return business_report_pdf(cid, email)
+
+
+def business_report_pdf(cid: str, email: str) -> Response:
+    """The PDF report for one business, recorded against the subscriber who
+    downloaded it. Callers check ownership first; shared with api/mine.py."""
     from ..core import analytics
     analytics.record(email, analytics.DOWNLOADED_REPORT, client_id=cid)
     rec = clients.get(cid)
@@ -2634,6 +2647,12 @@ def admin_delete_client(cid: str) -> dict:
 @router.post("/admin/clients/{cid}/seo", tags=["clients"])
 def admin_run_client_seo(cid: str) -> dict:
     """Run the SEO audit for a client and log it against their account."""
+    return run_client_audit(cid)
+
+
+def run_client_audit(cid: str) -> dict:
+    """Audit one business and file the result. Shared by the founder's route
+    and a subscriber's (api/mine.py), which checks ownership and quota first."""
     rec = clients.get(cid)
     if not rec:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -2688,6 +2707,11 @@ def admin_client_schema(cid: str) -> dict:
     behind a client token — so the SEO view in the dashboard, where the work
     actually gets done, could not show the single highest-value fix.
     """
+    return client_schema(cid)
+
+
+def client_schema(cid: str) -> dict:
+    """The JSON-LD block for one business. Shared with api/mine.py."""
     rec = clients.get(cid)
     if not rec:
         raise HTTPException(status_code=404, detail="Client not found")
