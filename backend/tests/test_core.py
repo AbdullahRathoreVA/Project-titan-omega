@@ -1119,9 +1119,49 @@ def test_exceeding_a_quota_explains_itself_instead_of_just_failing(
 
 def test_unlimited_plan_is_actually_unlimited(isolated_billing):
     from app.core import billing
-    billing.signup("e@b.com", "password123", "enterprise")
+    billing.signup("e@b.com", "password123")
+    # A paid plan comes from a confirmed payment (the Paddle webhook), which
+    # is what set_plan stands for here.
+    billing.set_plan("e@b.com", "enterprise", subscription_id="sub_1",
+                     status="active")
     for _ in range(50):
         assert billing.consume("e@b.com", "audits")["allowed"] is True
+
+
+def test_choosing_a_paid_plan_at_signup_grants_nothing_until_paid(
+        isolated_billing):
+    """Signing up with plan=agency used to create the account ON Agency with
+    status pending_payment, and every limit read the plan and ignored the
+    status - so anybody could pick Agency on /join, close the checkout, and
+    keep unlimited everything without paying."""
+    from app.core import billing
+    acct = billing.signup("paid@example.com", "password123", "agency")
+    assert acct["plan"] == "free" and acct["status"] == "active"
+    assert acct["requested_plan"] == "agency"
+    free_audits = billing.PLANS["free"].audits_per_month
+    for _ in range(free_audits):
+        assert billing.consume("paid@example.com", "audits")["allowed"]
+    assert billing.consume("paid@example.com", "audits")["allowed"] is False
+    # Only the payment raises it.
+    billing.set_plan("paid@example.com", "agency", subscription_id="sub_2",
+                     status="active")
+    assert billing.public("paid@example.com")["plan"] == "agency"
+
+
+def test_an_unpaid_paid_plan_saved_before_the_fix_drops_to_free(
+        isolated_billing):
+    from app.core import billing
+    billing.import_state({"accounts": {"old@example.com": {
+        "email": "old@example.com", "_salt": "s", "_pwhash": "h",
+        "plan": "enterprise", "status": "pending_payment"}}})
+    acct = billing.public("old@example.com")
+    assert acct["plan"] == "free" and acct["status"] == "active"
+    assert acct["requested_plan"] == "enterprise"
+    # A real paid state survives a restart untouched.
+    billing.import_state({"accounts": {"paid@example.com": {
+        "email": "paid@example.com", "_salt": "s", "_pwhash": "h",
+        "plan": "individual", "status": "trialing"}}})
+    assert billing.public("paid@example.com")["plan"] == "individual"
 
 
 def test_signup_rejects_bad_input_and_duplicates(isolated_billing):
@@ -11603,6 +11643,62 @@ def test_checkout_tells_paddle_which_account_is_paying(paddle_env,
     page = (pathlib.Path(billing.__file__).resolve().parents[1] / "static"
             / "pricing.html").read_text(encoding="utf-8")
     assert "customData: out.custom_data" in page
+
+
+def test_a_subscribers_business_shows_its_plan_not_a_trial_clock(
+        isolated_billing):
+    """Reported by testing the live journey on 2026-09-28: a self-signed-up
+    customer's portal said "59 days left in trial", a countdown that ends
+    nothing on an account whose access comes from its plan."""
+    from app.core import billing, clients
+    billing.signup("owner@example.com", "password123")
+    c = clients.create_client(business_name="Owned Co", username="owned-co",
+                              password="password123", website="", industry="",
+                              city="", country="Pakistan")
+    billing.attach_client("owner@example.com", c["id"])
+    assert billing.plan_for_client(c["id"]) == "Free"
+    billing.set_plan("owner@example.com", "agency", subscription_id="s",
+                     status="active")
+    assert billing.plan_for_client(c["id"]) == "Agency"
+    assert billing.plan_for_client("cl_nobody") == ""
+    page = (pathlib.Path(billing.__file__).resolve().parents[1] / "static"
+            / "client.html").read_text(encoding="utf-8")
+    assert "me.plan_name + ' plan'" in page
+
+
+def test_signup_pages_never_print_an_error_object(client):
+    """A rate-limit verdict (object) or FastAPI's validation list, handed to
+    `new Error()` or textContent, showed customers "[object Object]" in red.
+    Reported live on 2026-09-28."""
+    for path in ("/join", "/pricing"):
+        page = client.get(path).text
+        assert "function errText(" in page, path
+        assert "retry_after_seconds" in page and "Array.isArray(d)" in page, path
+        assert "new Error(e.detail ||" not in page, path
+        assert "new Error(body.detail ||" not in page, path
+        assert "msg.textContent = body.detail ||" not in page, path
+
+
+def test_join_turns_a_returning_signup_into_a_sign_in_and_a_paid_pick_into_a_checkout(client):
+    page = client.get("/join").text
+    assert "existing = true" in page and "setMode(\"login\")" in page
+    # Choosing a paid plan used to create a Free account silently; now the
+    # checkout opens, and a paid plan still comes only from Paddle.
+    assert "startCheckout(plan)" in page and "Paddle.Checkout.open" in page
+
+
+def test_the_signup_limit_answers_with_a_verdict_the_pages_can_read(
+        client, monkeypatch):
+    from app.core import ratelimit
+    monkeypatch.setattr(ratelimit, "ENABLED", True)
+    monkeypatch.setattr(ratelimit, "_hits", {})
+    body = {}
+    for i in range(ratelimit.LIMITS["signup"][0] + 1):
+        r = client.post("/api/signup", json={"email": f"rl{i}@example.com",
+                                              "password": "password123"})
+        body = r.json()
+    assert r.status_code == 429
+    assert body["detail"]["retry_after_seconds"] > 0
 
 
 def test_pricing_page_shows_the_trial_the_terms_promise(client):

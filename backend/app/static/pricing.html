@@ -117,6 +117,25 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g,
 let chosen = 'free';
 
 const lim = n => n === -1 ? 'unlimited' : n;
+// Errors come back as a sentence, a rate-limit verdict object or FastAPI's
+// validation list; the last two used to print "[object Object]".
+function errText(body, status, fallback) {
+  const d = body && body.detail;
+  if (typeof d === 'string' && d) return d;
+  if (d && typeof d === 'object' && !Array.isArray(d) && d.retry_after_seconds) {
+    const mins = Math.ceil(d.retry_after_seconds / 60);
+    return `Too many attempts from this network. Please try again in ${mins} minute${mins === 1 ? '' : 's'}.`;
+  }
+  if (d && typeof d === 'object' && !Array.isArray(d) && d.reason) return d.reason;
+  if (Array.isArray(d) && d.length) {
+    const field = ((d[0] || {}).loc || []).slice(-1)[0];
+    if (field === 'email') return 'Enter a valid email address.';
+    if (field === 'password') return 'Password must be at least 8 characters.';
+    return 'Please check the form and try again.';
+  }
+  if (status === 429) return 'Too many attempts. Please wait a few minutes and try again.';
+  return fallback;
+}
 // The terms say the trial length is shown on this page, and the Paddle price
 // carries it. Read from the server like the prices, never typed in here.
 const trialText = p => (p.trial_days || 0) > 0
@@ -192,33 +211,43 @@ $('#go').onclick = async () => {
       msg.className = 'msg err';
       // The server's message is specific ("already exists", "at least 8
       // characters"); showing a generic failure would hide the fix.
-      msg.textContent = body.detail || 'Could not create the account.';
+      const why = errText(body, r.status, 'Could not create the account.');
+      msg.textContent = /already exists/i.test(why)
+        ? 'This email already has an account. Sign in from the home page, or choose a paid plan here to upgrade it.'
+        : why;
       return;
     }
     msg.className = 'msg ok';
-    if (chosen === 'free') {
-      msg.textContent = 'Account created. Sign in at the command centre to start.';
-      return;
-    }
-    // Paid: sign in, then ask the server where to send the customer.
+    // Sign in either way: a Free account goes straight to setting up its
+    // first business, a paid one on to the checkout.
     const lr = await fetch('/api/account/login', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ email, password }),
     });
-    const login = await lr.json();
+    const login = await lr.json().catch(() => ({}));
     if (!lr.ok) {
       // Without this a wrong password fell through to a 401 from checkout and
       // was reported as "paid plans are not accepting payment yet".
       msg.className = 'msg err';
-      msg.textContent = existing
-        ? 'That email already has an account, and the password is not right.'
-        : (login.detail || 'Could not sign in.');
+      msg.textContent = lr.status === 429
+        ? errText(login, 429, '')
+        : existing
+          ? 'That email already has an account, and the password is not right.'
+          : errText(login, lr.status, 'Could not sign in.');
+      return;
+    }
+    // Same key /join reads, so it picks the session up instead of asking again.
+    try { sessionStorage.setItem('titan_account', login.token); } catch (e) {}
+    if (chosen === 'free') {
+      msg.textContent = 'Account created. Taking you to set up your first business…';
+      window.location.href = '/join';
       return;
     }
     const done = existing ? 'Signed in.' : 'Account created.';
-    const out = await (await fetch('/api/checkout/' + chosen, {
+    const cr = await fetch('/api/checkout/' + chosen, {
       method: 'POST', headers: {'X-Account-Token': login.token},
-    })).json();
+    });
+    const out = await cr.json().catch(() => ({}));
     if (out.ready) {
       msg.textContent = done + ' Opening secure checkout…';
       await openCheckout(out, email, msg);
@@ -226,8 +255,9 @@ $('#go').onclick = async () => {
       // Honest degradation: the account is real and free works. Say that
       // rather than leaving them staring at a dead button.
       msg.className = 'msg';
-      msg.innerHTML = done + ' Paid plans are not accepting payment yet. ' +
-        'You are on the free plan and it works in full.';
+      msg.textContent = done + ' The paid plan could not be started: ' +
+        errText(out, cr.status, out.needs || 'payments are not available yet.') +
+        ' You are on the free plan and it works in full.';
     }
   } catch (e) {
     msg.className = 'msg err';
@@ -267,7 +297,18 @@ async function openCheckout(out, email, msg) {
       // Sandbox unless the server says production. The server defaults to
       // sandbox so a mistake cannot charge a real card.
       if (out.environment !== 'production') Paddle.Environment.set('sandbox');
-      Paddle.Initialize({ token: out.client_token });
+      Paddle.Initialize({
+        token: out.client_token,
+        // After paying, the customer was left on the pricing page with
+        // nowhere to go. The plan itself is set by the webhook, not here.
+        eventCallback: (e) => {
+          if (e && e.name === 'checkout.completed') {
+            msg.className = 'msg ok';
+            msg.textContent = 'Payment confirmed. Taking you to set up your business…';
+            setTimeout(() => { window.location.href = '/join'; }, 3000);
+          }
+        },
+      });
       Paddle.Checkout.open({
         items: [{ priceId: out.price_id, quantity: 1 }],
         customer: { email: email },

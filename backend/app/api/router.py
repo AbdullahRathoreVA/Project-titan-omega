@@ -2710,7 +2710,11 @@ def client_login(payload: ClientLoginIn) -> dict:
 
 @router.get("/client/me", tags=["clients"])
 def client_me(x_client_token: Optional[str] = Header(None)) -> dict:
-    return clients.public(_client_from_header(x_client_token))
+    from ..core import billing
+    cid = _client_from_header(x_client_token)
+    # The plan name only - never the owning subscriber's email, which a
+    # business an agency manages has no business seeing.
+    return {**clients.public(cid), "plan_name": billing.plan_for_client(cid)}
 
 
 @router.get("/client/seo", tags=["clients"])

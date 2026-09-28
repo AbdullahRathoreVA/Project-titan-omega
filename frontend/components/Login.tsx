@@ -83,9 +83,18 @@ export function Login({
     e.preventDefault();
     setBusy(true);
     setError("");
-    const who = await api.login(username.trim(), password);
+    let who: Awaited<ReturnType<typeof api.login>> = null;
+    try {
+      who = await api.login(username.trim(), password);
+    } catch {
+      setBusy(false);
+      setError("Could not reach Titan. Check your connection and try again.");
+      return;
+    }
     setBusy(false);
-    if (who === "founder") {
+    if (who === "limited") {
+      setError("Too many sign-in attempts. Please wait a few minutes and try again.");
+    } else if (who === "founder") {
       onSuccess();
     } else if (who === "account") {
       // A real customer, at the owner's door. Their session is already stored

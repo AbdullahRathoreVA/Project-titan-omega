@@ -171,6 +171,16 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("billing: trial not billable without processor", "app/core/billing.py",
      '"trial_billable": bool(days) and processor_configured(),',
      '"trial_billable": bool(days),', "not_advertised_as_billable"),
+    ("billing: signup never grants a paid plan", "app/core/billing.py",
+     '"plan": "free",\n            "requested_plan": plan,',
+     '"plan": plan,\n            "requested_plan": plan,',
+     "choosing_a_paid_plan_at_signup"),
+    ("billing: an unpaid plan drops to free on restore", "app/core/billing.py",
+     'if acct.get("status") == "pending_payment":', "if False:",
+     "unpaid_paid_plan_saved_before_the_fix"),
+    ("portal: a subscriber's business shows its plan", "app/core/billing.py",
+     'if client_id and client_id in acct.get("client_ids", []):', "if False:",
+     "shows_its_plan_not_a_trial_clock"),
     # --- mobile information architecture ----------------------------------
     # Frontend files are CRLF in the working tree; the byte-preserving restore
     # above is what makes mutating them safe.

@@ -378,6 +378,10 @@ async function boot() {
     /* A demo business has a trial clock nobody is on. Showing "0 days left"
        to a prospect is a number about nothing. */
     $('#trial').style.display = 'none';
+  } else if (me.plan_name) {
+    /* A subscriber's own business: access comes from their plan, and the
+       60-day clock below belongs to businesses onboarded by hand. */
+    $('#trial').textContent = me.plan_name + ' plan';
   } else {
     $('#tdays').textContent = me.trial_days_left;
     if (me.trial_days_left <= 14) $('#trial').classList.add('warn');

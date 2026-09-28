@@ -221,6 +221,90 @@
   }
   function clear(el) { el.className = "msg"; el.textContent = ""; }
 
+  // The API answers errors in three shapes: a sentence, a rate-limit verdict
+  // object, and FastAPI's list of validation errors. Passing the last two
+  // straight to `new Error()` printed "[object Object]" to customers.
+  function errText(body, status, fallback) {
+    var d = body && body.detail;
+    if (typeof d === "string" && d) return d;
+    if (d && typeof d === "object" && !Array.isArray(d) && d.retry_after_seconds) {
+      var mins = Math.ceil(d.retry_after_seconds / 60);
+      return "Too many attempts from this network. Please try again in " +
+             mins + " minute" + (mins === 1 ? "" : "s") + ".";
+    }
+    if (d && typeof d === "object" && !Array.isArray(d) && d.reason) return d.reason;
+    if (Array.isArray(d) && d.length) {
+      var field = ((d[0] || {}).loc || []).slice(-1)[0];
+      if (field === "email") return "Enter a valid email address.";
+      if (field === "password") return "Password must be at least 8 characters.";
+      return "Please check the form and try again.";
+    }
+    if (status === 429) return "Too many attempts. Please wait a few minutes and try again.";
+    return fallback;
+  }
+
+  // --- paid plan: the processor's own checkout ------------------------------
+  // Same flow as openCheckout() in pricing.html. The server names the
+  // processor and hands back the client-side token; Titan never sees a card.
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      if (document.querySelector('script[src="' + src + '"]')) { resolve(); return; }
+      var s = document.createElement("script");
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = function () { reject(new Error("blocked or unreachable: " + src)); };
+      document.head.appendChild(s);
+    });
+  }
+
+  async function startCheckout(key) {
+    var m = $("m2");
+    try {
+      var r = await fetch("/api/checkout/" + encodeURIComponent(key), {
+        method: "POST", headers: { "X-Account-Token": TOKEN }
+      });
+      var out = await r.json().catch(function () { return {}; });
+      if (!r.ok || !out.ready) {
+        say(m, "Your account is on Free for now: the paid plan could not be " +
+          "started. " + errText(out, r.status, "Payments are not available yet.") +
+          " Everything below works on Free.", "warn");
+        return;
+      }
+      if (out.processor === "paddle") {
+        await loadScript("https://cdn.paddle.com/paddle/v2/paddle.js");
+        if (!window.Paddle) throw new Error("Paddle.js did not initialise");
+        if (out.environment !== "production") Paddle.Environment.set("sandbox");
+        Paddle.Initialize({
+          token: out.client_token,
+          eventCallback: function (e) {
+            if (e && e.name === "checkout.completed") {
+              say(m, "Payment confirmed. Your plan switches in a moment; carry " +
+                "on setting up your business.", "ok");
+            }
+          }
+        });
+        Paddle.Checkout.open({
+          items: [{ priceId: out.price_id, quantity: 1 }],
+          customer: { email: out.customer_email },
+          customData: out.custom_data
+        });
+        say(m, "Complete the purchase in the Paddle window. Your plan changes " +
+          "as soon as Paddle confirms it; until then you are on Free.", "ok");
+        return;
+      }
+      if (out.checkout_url || out.url) {
+        window.location.href = out.checkout_url || out.url;
+        return;
+      }
+      say(m, "This page cannot open the " + (out.processor || "payment") +
+        " checkout. You are on Free; upgrade any time from the pricing page.", "warn");
+    } catch (e) {
+      say(m, "The checkout could not be opened (" + (e.message || e) + "). " +
+        "You are on Free and everything below works. Upgrade any time from " +
+        "the pricing page.", "warn");
+    }
+  }
+
   function step(n) {
     [1, 2, 3].forEach(function (i) {
       var s = $("s" + i);
@@ -332,6 +416,11 @@
           say($("m1"), "Heads up — no payment processor is connected yet, so a paid " +
             "plan cannot be completed. Your account will be created on Free and " +
             "everything below still works.", "warn");
+        } else if (p.key !== "free") {
+          say($("m1"), "After you create your account, Paddle's secure checkout " +
+            "opens to confirm " + p.name + ((p.trial_days || 0) > 0
+              ? " (free for " + p.trial_days + " day" + (p.trial_days === 1 ? "" : "s") +
+                ", nothing charged today)." : "."), "ok");
         } else { clear($("m1")); }
       });
       box.appendChild(b);
@@ -384,6 +473,7 @@
 
     btn.disabled = true;
     btn.textContent = MODE === "login" ? "Signing in…" : "Creating…";
+    var existing = false;
     try {
       if (MODE === "signup") {
         var r = await fetch("/api/signup", {
@@ -392,20 +482,40 @@
         });
         if (!r.ok) {
           var e = await r.json().catch(function () { return {}; });
-          throw new Error(e.detail || "Could not create the account.");
+          var why = errText(e, r.status, "Could not create the account.");
+          // Somebody coming back through "Create account" is not an error:
+          // try their password, exactly as /pricing does.
+          if (!/already exists/i.test(why)) throw new Error(why);
+          existing = true;
         }
       }
       var lr = await fetch("/api/account/login", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email, password: pw })
       });
-      if (!lr.ok) throw new Error("Wrong email or password.");
+      if (!lr.ok) {
+        var lb = await lr.json().catch(function () { return {}; });
+        if (lr.status === 429) throw new Error(errText(lb, 429, ""));
+        if (existing) {
+          setMode("login");
+          throw new Error("This email already has an account, and that is " +
+                          "not its password. Sign in with the right one.");
+        }
+        throw new Error("Wrong email or password.");
+      }
       var data = await lr.json();
       TOKEN = data.token;
       // sessionStorage, not localStorage — this page gets opened on shared
       // machines and the token should die with the tab.
       try { sessionStorage.setItem("titan_account", TOKEN); } catch (e) {}
       step(2);
+      // A paid plan chosen here is only a wish until it is paid for: the
+      // account is Free until Paddle confirms. Open the checkout now rather
+      // than leaving them on Free without saying why.
+      var current = ((data.account || {}).plan) || "free";
+      if ((MODE === "signup" || existing) && plan !== "free" && current !== plan) {
+        await startCheckout(plan);
+      }
     } catch (err) {
       say($("m1"), String(err.message || err));
     } finally {
@@ -445,7 +555,7 @@
         say($("m2"), (d.reason || "Plan limit reached.") + " " + (d.upgrade_gives || ""), "warn");
         return;
       }
-      if (!r.ok) throw new Error(body.detail || "Could not add the business.");
+      if (!r.ok) throw new Error(errText(body, r.status, "Could not add the business."));
       CID = (body.client && body.client.id) || "";
       render(body);
       step(3);

@@ -207,6 +207,15 @@ def _period_start() -> float:
 
 
 def signup(email: str, password: str, plan: str = "free") -> dict:
+    """Create an account. ALWAYS on Free.
+
+    `plan` is only what the person chose on the way in, kept as
+    `requested_plan` so the pricing funnel can be measured. It used to become
+    the account's plan, with status "pending_payment" - and every limit read
+    the plan and ignored the status, so picking Agency on /join and closing
+    the checkout kept unlimited Agency for nothing. A paid plan is set only by
+    a confirmed payment (apply_paddle_event -> set_plan) or a founder grant.
+    """
     # The check here used to be `"@" not in email or len(email) < 5`, which
     # accepted `xx@xx` and `@@@@@` as customers. That is not a cosmetic
     # problem: the signup funnel is the only instrument that answers "is
@@ -245,12 +254,13 @@ def signup(email: str, password: str, plan: str = "free") -> dict:
             "email_verified": False,
             "_salt": salt,
             "_pwhash": _hash(password, salt),
-            "plan": plan,
+            "plan": "free",
+            "requested_plan": plan,
             "created_at": time.time(),
             "period_start": _period_start(),
             "usage": {"audits": 0, "ai_calls": 0},
             "subscription_id": "",
-            "status": "active" if plan == "free" else "pending_payment",
+            "status": "active",
             # Businesses this subscriber has onboarded. The plan's `clients`
             # limit is enforced against the length of this list, so a Free
             # account cannot quietly manage ten businesses.
@@ -259,9 +269,10 @@ def signup(email: str, password: str, plan: str = "free") -> dict:
     # from_plan is NULL for the first row of an account's life. That is what
     # makes a signup distinguishable from an upgrade later, and without it
     # trial-to-paid conversion could not be reconstructed from history at all.
-    record_change(email, None, plan, status=_accounts[email]["status"],
-                  reason="signup")
-    events.emit("SubscriptionChanged", {"email": email, "plan": plan,
+    record_change(email, None, "free", status=_accounts[email]["status"],
+                  reason="signup" if plan == "free" else f"signup:wants={plan}")
+    events.emit("SubscriptionChanged", {"email": email, "plan": "free",
+                                        "requested_plan": plan,
                                         "status": _accounts[email]["status"]},
                 actor="billing")
     return public(email)
@@ -346,6 +357,7 @@ def public(email: str) -> dict:
             "email_verified": bool(acct.get("email_verified", False)),
             "plan": acct["plan"],
             "plan_name": plan.name,
+            "requested_plan": acct.get("requested_plan", acct["plan"]),
             "status": acct["status"],
             "usage": dict(used),
             "limits": plan.as_dict()["limits"],
@@ -414,6 +426,21 @@ def owned_clients(email: str) -> list:
     with _lock:
         acct = _accounts.get(email)
         return list(acct.get("client_ids", [])) if acct else []
+
+
+def plan_for_client(client_id: str) -> str:
+    """The plan name of the subscriber who owns this business, or "".
+
+    The client portal showed every business a 60-day countdown meant for
+    businesses the founder onboards by hand, so a subscriber's own business
+    read "59 days left in trial" - a clock that ends nothing, on an account
+    whose access actually comes from its plan.
+    """
+    with _lock:
+        for acct in _accounts.values():
+            if client_id and client_id in acct.get("client_ids", []):
+                return PLANS[acct["plan"]].name
+    return ""
 
 
 def all_emails() -> list:
@@ -969,6 +996,12 @@ def import_state(data: dict) -> None:
                 acct.setdefault("plan", "free")
                 if acct["plan"] not in PLANS:
                     acct["plan"] = "free"
+                # Accounts created before signup stopped granting paid plans:
+                # a paid plan that was never paid for drops to Free. A payment
+                # always arrives as set_plan with a real status, never this.
+                if acct.get("status") == "pending_payment":
+                    acct.setdefault("requested_plan", acct["plan"])
+                    acct["plan"], acct["status"] = "free", "active"
                 _accounts[email] = acct
 
 

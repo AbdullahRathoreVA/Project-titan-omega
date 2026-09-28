@@ -189,7 +189,10 @@ export const api = {
    *
    *  Founder first, because that is the common case on this screen and a
    *  subscriber's email can never match the environment gate anyway. */
-  async login(username: string, password: string): Promise<"founder" | "account" | null> {
+  async login(
+    username: string,
+    password: string,
+  ): Promise<"founder" | "account" | "limited" | null> {
     const res = await fetch("/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -207,6 +210,9 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: username, password }),
     });
+    // Rate-limited is not "wrong password"; saying so sends people round in
+    // circles retyping a password that was right.
+    if (acct.status === 429 || res.status === 429) return "limited";
     if (!acct.ok) return null;
     const data = (await acct.json()) as { token: string };
     // Same key and same storage /join uses, so the handoff is a redirect
