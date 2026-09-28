@@ -60,6 +60,7 @@ import { FinanceCenter } from "./FinanceCenter";
 import { CrmLite } from "./CrmLite";
 import ApiCommand from "./ApiCommand";
 import Customers from "./Customers";
+import { MyCustomers } from "./MyCustomers";
 import { AICity } from "./AICity";
 import { BootSequence } from "./BootSequence";
 import { KnowledgeGraph } from "./KnowledgeGraph";
@@ -80,6 +81,7 @@ const POLL_MS = 5000;
 // here together with its routes there.
 const CUSTOMER_TABS = new Set<string>([
   "universe", "dashboard", "mission", "clients", "seo", "crm", "voice",
+  "finance", "customers", "executive",
 ]);
 
 export function CommandCenter() {
@@ -515,7 +517,10 @@ export function CommandCenter() {
 
           {view === "executive" && <ExecutiveCommand />}
 
-          {view === "customers" && <Customers />}
+          {/* A subscriber's customers are the leads they have won - the
+              founder's list is his own subscribers and never theirs. */}
+          {view === "customers" &&
+            (customer ? <MyCustomers onOpenCrm={() => setView("crm")} /> : <Customers />)}
 
           {view === "voice" && <VoiceAgents />}
 
@@ -611,15 +616,16 @@ export function CommandCenter() {
             )}
           </AnimatePresence>
 
-          {/* Revenue ledger + Ask Titan. Founder-only until their customer
-              routes exist (core/cockpit_scope.ALLOWED). */}
+          {/* Revenue ledger + Ask Titan. A subscriber's are their own:
+              /api/me/revenue/* writes their workspace ledger, and Ask Titan
+              answers from their businesses (router._subscriber_brief). */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <RevenueTracker total={mrr} onLogged={refresh} />
+            <AskTitan />
+          </div>
+
           {!customer && (
             <>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <RevenueTracker total={mrr} onLogged={refresh} />
-                <AskTitan />
-              </div>
-
               <GrowthStudio />
 
               <ConnectedAssets connectors={connectors} />

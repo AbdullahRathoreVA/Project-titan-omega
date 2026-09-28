@@ -66,6 +66,16 @@ ALLOWED: Tuple[Tuple[str, str], ...] = (
     # Ask Titan answers from the subscriber's own workspace and businesses
     # (router.assistant), and the call is metered against their plan.
     ("POST", r"/api/assistant"),
+    # Phase 4 - Finance. Expenses and sales are written to the subscriber's
+    # own workspace ledger, which STORE is bound to for the request.
+    ("POST", r"/api/finance/expense"),
+    ("DELETE", r"/api/finance/expense/[^/]+"),
+    ("POST", r"/api/revenue/log"),
+    ("DELETE", r"/api/revenue/entry/[^/]+"),
+    # Executive: the period report reads their ledger, and engines/bi.py
+    # limits its client list and lead funnel to theirs.
+    ("GET", r"/api/bi/[^/]+"),
+    ("GET", r"/api/mine/seo-overview"),
 )
 
 _COMPILED = tuple((m, re.compile(p + r"\Z")) for m, p in ALLOWED)

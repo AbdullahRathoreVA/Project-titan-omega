@@ -144,7 +144,15 @@ def forecast(series: dict, horizon_days: int = 30) -> dict:
 
 
 def _insights(rev_rows: list, exp_rows: list, days: int) -> tuple:
-    """(insights, actions) — each tied to a number that is actually present."""
+    """(insights, actions) — each tied to a number that is actually present.
+
+    Served to a subscriber's Executive tab too (/api/me/bi), so the client
+    list and the lead funnel are the caller's own. Both used to read the whole
+    platform: every business on file named in "Never audited", and every
+    account's leads counted in the founder's funnel.
+    """
+    from ..core import cockpit_scope
+    subscriber = cockpit_scope.customer_email()
     insights: list[str] = []
     actions: list[str] = []
 
@@ -156,6 +164,9 @@ def _insights(rev_rows: list, exp_rows: list, days: int) -> tuple:
             f"No revenue recorded in the last {days} days. Every other number "
             f"in this report is activity, not income.")
         actions.append(
+            "Log each sale in Finance as it happens — this report only counts "
+            "what is recorded."
+            if subscriber else
             "The bottleneck is checkout, not capability: nothing here converts "
             "until a payment link exists.")
     else:
@@ -170,14 +181,25 @@ def _insights(rev_rows: list, exp_rows: list, days: int) -> tuple:
     try:
         from ..core import clients as client_registry
         rows = client_registry.all_clients()
+        if subscriber:
+            from ..core import billing
+            own = set(billing.owned_clients(subscriber))
+            rows = [c for c in rows if c["id"] in own]
         if rows:
             unaudited = [c["business_name"] for c in rows
                          if not (c.get("metrics") or {}).get("seo_audits")]
-            insights.append(f"{len(rows)} client(s) on file.")
+            insights.append(f"{len(rows)} business(es) on Titan." if subscriber
+                            else f"{len(rows)} client(s) on file.")
             if unaudited:
                 actions.append(
                     "Never audited: " + ", ".join(unaudited[:5]) +
-                    ". An unaudited client has been sold nothing yet.")
+                    (". Run the first audit from the SEO tab." if subscriber
+                     else ". An unaudited client has been sold nothing yet."))
+        elif subscriber:
+            insights.append("No business added yet.")
+            actions.append(
+                "Add your business in the Clients tab — its first audit takes "
+                "about 90 seconds.")
         else:
             insights.append("No clients onboarded.")
             actions.append(
@@ -188,8 +210,9 @@ def _insights(rev_rows: list, exp_rows: list, days: int) -> tuple:
 
     # Lead funnel — reuse the real funnel, never recompute it differently here.
     try:
-        from ..api.finance import _funnel
-        f = _funnel(list(STORE.leads.values()))
+        from ..api.finance import _funnel, _leads, _owner
+        from ..core import crm
+        f = _funnel(crm.visible_to(_leads(), _owner()))
         if f["funnel"][0]["reached"]:
             insights.append(
                 f"Lead funnel: {f['funnel'][0]['reached']} in, "

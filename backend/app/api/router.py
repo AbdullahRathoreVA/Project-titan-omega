@@ -602,10 +602,12 @@ def log_revenue(entry: RevenueLog) -> dict:
     STORE.revenue_entries.append(record)
 
     label = entry.note or f"{source} order"
+    cheer = ("Your business is earning!" if cockpit_scope.is_customer()
+             else "Abdullah, the empire is EARNING!")
     STORE.emit(
         "revenue-tracker", "revenue",
         f"💰 REAL ORDER: +${entry.amount:.2f} from {source} — {label}. "
-        f"Total earned now ${m['mrr']:.2f}. Abdullah, the empire is EARNING!",
+        f"Total earned now ${m['mrr']:.2f}. {cheer}",
         "success",
     )
     persistence.save(STORE)
@@ -2427,33 +2429,7 @@ def founder_seo_overview() -> dict:
     from ..engines import self_seo
 
     own = self_seo.report()
-    from .. engines import demo_workspace as _demo
-
-    rows = []
-    for rec in clients.all_clients():
-        cid = rec.get("id", "")
-        audit = rec.get("last_audit") or {}
-        is_demo = _demo.is_demo_client(rec)
-        rows.append({
-            "id": cid,
-            "business_name": rec.get("business_name", ""),
-            "website": rec.get("website", ""),
-            "country": rec.get("country", ""),
-            "industry": rec.get("industry", ""),
-            # None, never 0 — a site that has not been audited has no score,
-            # and a 0 next to a real 58 reads as "audited, and terrible".
-            "score": audit.get("score"),
-            "grade": audit.get("grade"),
-            "findings": len(audit.get("findings", []) or []),
-            "audited": bool(audit),
-            "is_demo": is_demo,
-        })
-
-    # The client average is a claim about Abdullah's book of business. Demo
-    # sites are Titan's own pages and would flatter it.
-    scored = [r["score"] for r in rows
-              if isinstance(r.get("score"), (int, float)) and not r["is_demo"]]
-    rows.sort(key=lambda r: (r["score"] is None, r["score"] or 0))
+    rows, scored = seo_rows()
     import time as _t
     checked_at = own.get("checked_at")
     interval_h = own.get("interval_hours", 6.0)
@@ -2483,11 +2459,50 @@ def founder_seo_overview() -> dict:
         "clients": rows,
         "client_average": round(sum(scored) / len(scored), 1) if scored else None,
         "unaudited": sum(1 for r in rows if not r["audited"]),
-        "note": ("Client scores come from the last stored audit, not a fresh "
-                 "crawl — opening this screen must not fire a request at every "
-                 "client's website. Sites never audited show no score rather "
-                 "than a zero."),
+        "note": SEO_OVERVIEW_NOTE,
     }
+
+
+SEO_OVERVIEW_NOTE = (
+    "Client scores come from the last stored audit, not a fresh crawl — "
+    "opening this screen must not fire a request at every client's website. "
+    "Sites never audited show no score rather than a zero.")
+
+
+def seo_rows(only=None) -> tuple:
+    """One row per business from its last stored audit, worst score first,
+    plus the scores that count towards the average. `only` limits it to those
+    client ids - a subscriber's Executive tab (api/mine.py) passes theirs."""
+    from ..engines import demo_workspace as _demo
+
+    rows = []
+    for rec in clients.all_clients():
+        if only is not None and rec.get("id") not in only:
+            continue
+        cid = rec.get("id", "")
+        audit = rec.get("last_audit") or {}
+        is_demo = _demo.is_demo_client(rec)
+        rows.append({
+            "id": cid,
+            "business_name": rec.get("business_name", ""),
+            "website": rec.get("website", ""),
+            "country": rec.get("country", ""),
+            "industry": rec.get("industry", ""),
+            # None, never 0 — a site that has not been audited has no score,
+            # and a 0 next to a real 58 reads as "audited, and terrible".
+            "score": audit.get("score"),
+            "grade": audit.get("grade"),
+            "findings": len(audit.get("findings", []) or []),
+            "audited": bool(audit),
+            "is_demo": is_demo,
+        })
+
+    # The client average is a claim about Abdullah's book of business. Demo
+    # sites are Titan's own pages and would flatter it.
+    scored = [r["score"] for r in rows
+              if isinstance(r.get("score"), (int, float)) and not r["is_demo"]]
+    rows.sort(key=lambda r: (r["score"] is None, r["score"] or 0))
+    return rows, scored
 
 
 @router.get("/reflection", tags=["executive"])

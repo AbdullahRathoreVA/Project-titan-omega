@@ -15,6 +15,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import ExecutiveOperations from "./ExecutiveOperations";
+import { apiBase, authHeaders } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
 import {
   Activity, AlertTriangle, BarChart3, Brain, Eye, Gauge, RefreshCw, TrendingUp,
   Users,
@@ -137,6 +139,7 @@ type Traffic = {
 };
 
 type SeoOverview = {
+  /** Null in a subscriber's cockpit: Titan's own score is the founder's. */
   titan: {
     checked: boolean;
     url: string;
@@ -151,7 +154,7 @@ type SeoOverview = {
     interval_hours: number;
     error: string | null;
     note: string;
-  };
+  } | null;
   clients: {
     id: string;
     business_name: string;
@@ -177,19 +180,12 @@ function scoreTone(score: number | null): string {
 
 const PERIODS = ["daily", "weekly", "monthly", "quarterly"] as const;
 
-function token(): string {
-  if (typeof window === "undefined") return "";
-  return (
-    localStorage.getItem("titan_token") ||
-    sessionStorage.getItem("titan_token") ||
-    ""
-  );
-}
-
+// A subscriber's Executive tab reads /api/me: their own ledger for the
+// period report, and their own businesses for the SEO panel.
 async function api<T>(path: string): Promise<T | null> {
   try {
-    const r = await fetch(`/api${path}`, {
-      headers: { Authorization: `Bearer ${token()}` },
+    const r = await fetch(`${apiBase()}${path}`, {
+      headers: authHeaders(),
       cache: "no-store",
     });
     if (!r.ok) return null;
@@ -224,6 +220,7 @@ function Spark({ series }: { series: Record<string, number> }) {
 }
 
 export default function ExecutiveCommand() {
+  const [customer] = useState(() => isCustomer());
   const [period, setPeriod] = useState<(typeof PERIODS)[number]>("monthly");
   const [bi, setBi] = useState<BiReport | null>(null);
   const [refl, setRefl] = useState<ReflectionReport | null>(null);
@@ -236,13 +233,17 @@ export default function ExecutiveCommand() {
   const load = useCallback(async () => {
     setBusy(true);
     try {
+      // A subscriber gets the period report and their own SEO panel. The
+      // rest - visitors, signups, what Titan learned, model routing - is the
+      // founder's operation and is never requested from their cockpit.
+      const none = <T,>() => Promise.resolve<T | null>(null);
       const [b, r, m, u, t, s] = await Promise.all([
         api<BiReport>(`/bi/${period}`),
-        api<ReflectionReport>("/reflection"),
-        api<RoutingReport>("/routing"),
-        api<Analytics>("/founder/analytics"),
-        api<Traffic>("/founder/traffic"),
-        api<SeoOverview>("/founder/seo-overview"),
+        customer ? none<ReflectionReport>() : api<ReflectionReport>("/reflection"),
+        customer ? none<RoutingReport>() : api<RoutingReport>("/routing"),
+        customer ? none<Analytics>() : api<Analytics>("/founder/analytics"),
+        customer ? none<Traffic>() : api<Traffic>("/founder/traffic"),
+        api<SeoOverview>(customer ? "/mine/seo-overview" : "/founder/seo-overview"),
       ]);
       setBi(b);
       setRefl(r);
@@ -253,7 +254,7 @@ export default function ExecutiveCommand() {
     } finally {
       setBusy(false);
     }
-  }, [period]);
+  }, [period, customer]);
 
   useEffect(() => {
     void load();
@@ -272,7 +273,9 @@ export default function ExecutiveCommand() {
             <BarChart3 className="h-4 w-4 text-hud-emerald" /> EXECUTIVE
           </div>
           <div className="mt-1 text-[11px] text-slate-500">
-            Operations · business intelligence · forecasting · what Titan learned
+            {customer
+              ? "Your revenue, forecast and the SEO of your businesses"
+              : "Operations · business intelligence · forecasting · what Titan learned"}
           </div>
         </div>
         <div className="flex gap-2">
@@ -302,124 +305,129 @@ export default function ExecutiveCommand() {
           "what needs attention right now" outranks "what happened over the
           last 30 days". Everything in it distinguishes a measured zero from a
           null, and a failed request from an empty one. */}
-      <ExecutiveOperations />
+      {!customer && <ExecutiveOperations />}
 
 
       {/* who opened the site ---------------------------------------------- */}
-      <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
-          <Eye className="h-3.5 w-3.5 text-hud-cyan" /> Visitors
-          <span className="ml-auto font-normal normal-case tracking-normal text-slate-600">
-            no cookie · no vendor · no IP stored
-          </span>
-        </div>
-        {!traffic ? (
-          <div className="mt-3 text-[11px] text-slate-500">Not loaded.</div>
-        ) : (
-          <>
-            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-5">
-              {[
-                ["Page views", String(traffic.views), "text-white"],
-                ["Visitors today", String(traffic.visitors_today), "text-hud-cyan"],
-                ["Best day", String(traffic.busiest_day_visitors), "text-hud-emerald"],
-                ["Crawler hits", String(traffic.bot_views), "text-slate-500"],
-                ["Signups", String(traffic.signups_total),
-                  traffic.signups_total > 0 ? "text-hud-emerald" : "text-slate-500"],
-              ].map(([label, value, tone]) => (
-                <div key={label as string}>
-                  <div className={`font-mono text-xl font-semibold leading-none ${tone}`}>
-                    {value}
+      {!customer && (
+        <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
+            <Eye className="h-3.5 w-3.5 text-hud-cyan" /> Visitors
+            <span className="ml-auto font-normal normal-case tracking-normal text-slate-600">
+              no cookie · no vendor · no IP stored
+            </span>
+          </div>
+          {!traffic ? (
+            <div className="mt-3 text-[11px] text-slate-500">Not loaded.</div>
+          ) : (
+            <>
+              <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-5">
+                {[
+                  ["Page views", String(traffic.views), "text-white"],
+                  ["Visitors today", String(traffic.visitors_today), "text-hud-cyan"],
+                  ["Best day", String(traffic.busiest_day_visitors), "text-hud-emerald"],
+                  ["Crawler hits", String(traffic.bot_views), "text-slate-500"],
+                  ["Signups", String(traffic.signups_total),
+                    traffic.signups_total > 0 ? "text-hud-emerald" : "text-slate-500"],
+                ].map(([label, value, tone]) => (
+                  <div key={label as string}>
+                    <div className={`font-mono text-xl font-semibold leading-none ${tone}`}>
+                      {value}
+                    </div>
+                    <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
+                      {label}
+                    </div>
                   </div>
-                  <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
-                    {label}
+                ))}
+              </div>
+
+              {traffic.series.length > 1 && (
+                <div className="mt-3">
+                  <Spark
+                    series={Object.fromEntries(
+                      traffic.series.map((d) => [d.day, d.visitors]),
+                    )}
+                  />
+                  <div className="text-[10px] text-slate-600">
+                    daily visitors · {traffic.days_measured} day
+                    {traffic.days_measured === 1 ? "" : "s"} measured
                   </div>
                 </div>
-              ))}
-            </div>
+              )}
 
-            {traffic.series.length > 1 && (
-              <div className="mt-3">
-                <Spark
-                  series={Object.fromEntries(
-                    traffic.series.map((d) => [d.day, d.visitors]),
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-slate-600">
+                    Top pages
+                  </div>
+                  {Object.keys(traffic.top_paths).length === 0 ? (
+                    <div className="mt-1 text-[11px] text-slate-600">No page loads yet.</div>
+                  ) : (
+                    Object.entries(traffic.top_paths).slice(0, 6).map(([p, n]) => (
+                      <div key={p} className="mt-1 flex justify-between text-[11px]">
+                        <span className="truncate text-slate-300">{p}</span>
+                        <span className="font-mono text-slate-500">{n}</span>
+                      </div>
+                    ))
                   )}
-                />
-                <div className="text-[10px] text-slate-600">
-                  daily visitors · {traffic.days_measured} day
-                  {traffic.days_measured === 1 ? "" : "s"} measured
                 </div>
-              </div>
-            )}
-
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <div>
-                <div className="text-[10px] uppercase tracking-widest text-slate-600">
-                  Top pages
-                </div>
-                {Object.keys(traffic.top_paths).length === 0 ? (
-                  <div className="mt-1 text-[11px] text-slate-600">No page loads yet.</div>
-                ) : (
-                  Object.entries(traffic.top_paths).slice(0, 6).map(([p, n]) => (
-                    <div key={p} className="mt-1 flex justify-between text-[11px]">
-                      <span className="truncate text-slate-300">{p}</span>
-                      <span className="font-mono text-slate-500">{n}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-              <div>
-                <div className="text-[10px] uppercase tracking-widest text-slate-600">
-                  Where they came from
-                </div>
-                {Object.keys(traffic.top_referrers).length === 0 ? (
-                  <div className="mt-1 text-[11px] text-slate-600">
-                    No external referrers yet — every visit was direct.
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-slate-600">
+                    Where they came from
                   </div>
-                ) : (
-                  Object.entries(traffic.top_referrers).slice(0, 6).map(([r, n]) => (
-                    <div key={r} className="mt-1 flex justify-between text-[11px]">
-                      <span className="truncate text-slate-300">{r}</span>
-                      <span className="font-mono text-slate-500">{n}</span>
+                  {Object.keys(traffic.top_referrers).length === 0 ? (
+                    <div className="mt-1 text-[11px] text-slate-600">
+                      No external referrers yet — every visit was direct.
                     </div>
-                  ))
-                )}
+                  ) : (
+                    Object.entries(traffic.top_referrers).slice(0, 6).map(([r, n]) => (
+                      <div key={r} className="mt-1 flex justify-between text-[11px]">
+                        <span className="truncate text-slate-300">{r}</span>
+                        <span className="font-mono text-slate-500">{n}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
-            </div>
 
-            <div className="mt-3 text-[10px] leading-relaxed text-slate-600">
-              {traffic.conversion_note}
-            </div>
-          </>
-        )}
-      </div>
+              <div className="mt-3 text-[10px] leading-relaxed text-slate-600">
+                {traffic.conversion_note}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Titan's own SEO beside every client's ----------------------------- */}
       <div className="rounded-xl border border-white/10 bg-black/30 p-4">
         <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
-          <TrendingUp className="h-3.5 w-3.5 text-hud-emerald" /> SEO — Titan and clients
+          <TrendingUp className="h-3.5 w-3.5 text-hud-emerald" />{" "}
+          {customer ? "SEO — your businesses" : "SEO — Titan and clients"}
         </div>
         {!seo ? (
           <div className="mt-3 text-[11px] text-slate-500">Not loaded.</div>
         ) : (
           <>
             <div className="mt-3 flex flex-wrap items-end gap-6">
-              <div>
-                <div className={`font-mono text-3xl font-semibold leading-none ${scoreTone(seo.titan.score)}`}>
-                  {seo.titan.score ?? "—"}
-                  {seo.titan.grade && (
-                    <span className="ml-2 text-base text-slate-500">{seo.titan.grade}</span>
-                  )}
+              {seo.titan && (
+                <div>
+                  <div className={`font-mono text-3xl font-semibold leading-none ${scoreTone(seo.titan.score)}`}>
+                    {seo.titan.score ?? "—"}
+                    {seo.titan.grade && (
+                      <span className="ml-2 text-base text-slate-500">{seo.titan.grade}</span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
+                    Titan itself
+                  </div>
                 </div>
-                <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
-                  Titan itself
-                </div>
-              </div>
+              )}
               <div>
                 <div className={`font-mono text-xl font-semibold leading-none ${scoreTone(seo.client_average)}`}>
                   {seo.client_average ?? "—"}
                 </div>
                 <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
-                  Client average
+                  {customer ? "Average score" : "Client average"}
                 </div>
               </div>
               {seo.unaudited > 0 && (
@@ -434,7 +442,14 @@ export default function ExecutiveCommand() {
               )}
             </div>
 
-            {!seo.titan.checked && (
+            {customer && seo.clients.length === 0 && (
+              <div className="mt-2 text-[11px] text-slate-500">
+                No business added yet. Add one in the Clients tab and its audit
+                score appears here.
+              </div>
+            )}
+
+            {seo.titan && !seo.titan.checked && (
               <div className="mt-2 text-[11px] text-slate-500">
                 Titan has not audited itself yet — the first check runs on the
                 heartbeat shortly after boot.
@@ -442,14 +457,14 @@ export default function ExecutiveCommand() {
             )}
 
             {/* An audit that failed to run is not a passing audit. */}
-            {seo.titan.error && (
+            {seo.titan?.error && (
               <div className="mt-2 flex items-start gap-2 rounded-lg border border-hud-rose/30 bg-hud-rose/5 px-3 py-2 text-[10px] text-hud-rose">
                 <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
                 <span>Last self-audit errored: {seo.titan.error}</span>
               </div>
             )}
 
-            {seo.titan.checked && (
+            {seo.titan?.checked && (
               <>
                 <div className="mt-2 font-mono text-[10px] text-slate-500">
                   {seo.titan.url} · checked{" "}
@@ -546,8 +561,8 @@ export default function ExecutiveCommand() {
 
             {/* A client outscoring the platform selling them SEO is something
                 he needs to find out here, not from the client. */}
-            {seo.titan.score !== null &&
-              seo.clients.some((c) => c.score !== null && c.score > (seo.titan.score ?? 0)) && (
+            {seo.titan && seo.titan.score !== null &&
+              seo.clients.some((c) => c.score !== null && c.score > (seo.titan?.score ?? 0)) && (
                 <div className="mt-3 flex items-start gap-2 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-3 py-2 text-[10px] leading-relaxed text-hud-amber">
                   <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
                   <span>
@@ -564,162 +579,164 @@ export default function ExecutiveCommand() {
       </div>
 
       {/* who signed up, and what they actually did ------------------------ */}
-      <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
-          <Users className="h-3.5 w-3.5 text-hud-emerald" /> Subscribers
-          <span className="ml-auto font-normal normal-case tracking-normal text-slate-600">
-            founder only
-          </span>
-        </div>
-
-        {!users ? (
-          <div className="mt-3 text-[11px] text-slate-500">
-            Not loaded. This endpoint is founder-only — a demo session is refused.
+      {!customer && (
+        <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
+            <Users className="h-3.5 w-3.5 text-hud-emerald" /> Subscribers
+            <span className="ml-auto font-normal normal-case tracking-normal text-slate-600">
+              founder only
+            </span>
           </div>
-        ) : users.totals.accounts === 0 ? (
-          <div className="mt-3 text-[11px] text-slate-400">
-            No one has signed up yet. This is a real measurement, not a loading
-            state — the funnel below will fill in as people arrive.
-          </div>
-        ) : (
-          <>
-            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-5">
-              {[
-                ["Accounts", String(users.totals.accounts), "text-white"],
-                ["Paying", String(users.totals.paying),
-                  users.totals.paying > 0 ? "text-hud-emerald" : "text-slate-500"],
-                ["Active 7d", String(users.totals.active_7d), "text-hud-emerald"],
-                ["Dormant 30d", String(users.totals.dormant_30d),
-                  users.totals.dormant_30d > 0 ? "text-hud-amber" : "text-slate-500"],
-                ["Committed MRR",
-                  users.revenue.committed_mrr_usd === null
-                    ? "n/a"
-                    : `$${money(users.revenue.committed_mrr_usd)}`,
-                  users.revenue.collectable ? "text-hud-emerald" : "text-slate-500"],
-              ].map(([label, value, tone]) => (
-                <div key={label as string}>
-                  <div className={`font-mono text-xl font-semibold leading-none ${tone}`}>
-                    {value}
-                  </div>
-                  <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
-                    {label}
-                  </div>
-                </div>
-              ))}
+
+          {!users ? (
+            <div className="mt-3 text-[11px] text-slate-500">
+              Not loaded. This endpoint is founder-only — a demo session is refused.
             </div>
-
-            {/* A currency figure that cannot be collected must say so, or a
-                dash reads as "zero earned" rather than "nothing can be paid". */}
-            {!users.revenue.collectable && (
-              <div className="mt-3 flex items-start gap-2 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-3 py-2 text-[10px] leading-relaxed text-hud-amber">
-                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                <span>{users.revenue.note}</span>
-              </div>
-            )}
-
-            {/* funnel */}
-            <div className="mt-4 space-y-1.5">
-              {users.funnel.map((s) => (
-                <div key={s.step} className="flex items-center gap-3">
-                  <div className="w-44 shrink-0 text-[11px] text-slate-400">
-                    {s.step}
-                    {!s.reliable && (
-                      <span
-                        title={`Counted from the activity log, which began when analytics shipped. A zero here means not observed, not never happened.`}
-                        className="ml-1 cursor-help text-slate-600"
-                      >
-                        *
-                      </span>
-                    )}
-                  </div>
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/5">
-                    <div
-                      className={`h-full rounded-full ${
-                        s.reliable ? "bg-hud-emerald/70" : "bg-slate-500/50"
-                      }`}
-                      style={{ width: `${Math.max(s.pct_of_signups, s.count > 0 ? 2 : 0)}%` }}
-                    />
-                  </div>
-                  <div className="w-24 shrink-0 text-right font-mono text-[11px] text-slate-300">
-                    {s.count}
-                    <span className="ml-1 text-slate-600">{s.pct_of_signups}%</span>
-                  </div>
-                </div>
-              ))}
-              <div className="pt-1 text-[10px] text-slate-600">
-                * counted from the activity log only — a zero means not observed
-                since analytics shipped, not never happened.
-              </div>
+          ) : users.totals.accounts === 0 ? (
+            <div className="mt-3 text-[11px] text-slate-400">
+              No one has signed up yet. This is a real measurement, not a loading
+              state — the funnel below will fill in as people arrive.
             </div>
+          ) : (
+            <>
+              <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-5">
+                {[
+                  ["Accounts", String(users.totals.accounts), "text-white"],
+                  ["Paying", String(users.totals.paying),
+                    users.totals.paying > 0 ? "text-hud-emerald" : "text-slate-500"],
+                  ["Active 7d", String(users.totals.active_7d), "text-hud-emerald"],
+                  ["Dormant 30d", String(users.totals.dormant_30d),
+                    users.totals.dormant_30d > 0 ? "text-hud-amber" : "text-slate-500"],
+                  ["Committed MRR",
+                    users.revenue.committed_mrr_usd === null
+                      ? "n/a"
+                      : `$${money(users.revenue.committed_mrr_usd)}`,
+                    users.revenue.collectable ? "text-hud-emerald" : "text-slate-500"],
+                ].map(([label, value, tone]) => (
+                  <div key={label as string}>
+                    <div className={`font-mono text-xl font-semibold leading-none ${tone}`}>
+                      {value}
+                    </div>
+                    <div className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
+                      {label}
+                    </div>
+                  </div>
+                ))}
+              </div>
 
-            {/* per-account detail */}
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[640px] text-left text-[11px]">
-                <thead className="text-[10px] uppercase tracking-widest text-slate-600">
-                  <tr>
-                    <th className="pb-2 font-normal">Email</th>
-                    <th className="pb-2 font-normal">Plan</th>
-                    <th className="pb-2 font-normal">Signed up</th>
-                    <th className="pb-2 font-normal">Businesses</th>
-                    <th className="pb-2 font-normal">Audits</th>
-                    <th className="pb-2 font-normal">Last seen</th>
-                  </tr>
-                </thead>
-                <tbody className="text-slate-300">
-                  {users.accounts.map((a) => (
-                    <tr key={a.email} className="border-t border-white/5">
-                      <td className="py-2 pr-3 font-mono text-slate-200">{a.email}</td>
-                      <td className="py-2 pr-3">
+              {/* A currency figure that cannot be collected must say so, or a
+                  dash reads as "zero earned" rather than "nothing can be paid". */}
+              {!users.revenue.collectable && (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-3 py-2 text-[10px] leading-relaxed text-hud-amber">
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span>{users.revenue.note}</span>
+                </div>
+              )}
+
+              {/* funnel */}
+              <div className="mt-4 space-y-1.5">
+                {users.funnel.map((s) => (
+                  <div key={s.step} className="flex items-center gap-3">
+                    <div className="w-44 shrink-0 text-[11px] text-slate-400">
+                      {s.step}
+                      {!s.reliable && (
                         <span
-                          className={
-                            a.paying ? "text-hud-emerald" : "text-slate-400"
-                          }
+                          title={`Counted from the activity log, which began when analytics shipped. A zero here means not observed, not never happened.`}
+                          className="ml-1 cursor-help text-slate-600"
                         >
-                          {a.plan_name}
+                          *
                         </span>
-                        {a.status !== "active" && (
-                          <span className="ml-1 text-hud-amber">({a.status})</span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-3 text-slate-500">
-                        {a.days_since_signup}d ago
-                      </td>
-                      <td className="py-2 pr-3">
-                        {a.business_count === 0 ? (
-                          <span className="text-hud-rose">none</span>
-                        ) : (
-                          <span title={a.businesses.map((b) => b.business_name).join(", ")}>
-                            {a.business_count}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-3 text-slate-400">
-                        {a.usage.audits ?? 0}
-                      </td>
-                      <td className="py-2 pr-3">
-                        {a.days_since_seen === null ? (
-                          <span className="text-hud-rose" title="Signed up and never came back">
-                            never returned
-                          </span>
-                        ) : (
-                          <span className="text-slate-500">{a.days_since_seen}d ago</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {users.storage_warning && (
-              <div className="mt-3 flex items-start gap-2 text-[10px] leading-relaxed text-slate-500">
-                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-hud-amber" />
-                <span>{users.storage_warning}</span>
+                      )}
+                    </div>
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/5">
+                      <div
+                        className={`h-full rounded-full ${
+                          s.reliable ? "bg-hud-emerald/70" : "bg-slate-500/50"
+                        }`}
+                        style={{ width: `${Math.max(s.pct_of_signups, s.count > 0 ? 2 : 0)}%` }}
+                      />
+                    </div>
+                    <div className="w-24 shrink-0 text-right font-mono text-[11px] text-slate-300">
+                      {s.count}
+                      <span className="ml-1 text-slate-600">{s.pct_of_signups}%</span>
+                    </div>
+                  </div>
+                ))}
+                <div className="pt-1 text-[10px] text-slate-600">
+                  * counted from the activity log only — a zero means not observed
+                  since analytics shipped, not never happened.
+                </div>
               </div>
-            )}
-          </>
-        )}
-      </div>
+
+              {/* per-account detail */}
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[640px] text-left text-[11px]">
+                  <thead className="text-[10px] uppercase tracking-widest text-slate-600">
+                    <tr>
+                      <th className="pb-2 font-normal">Email</th>
+                      <th className="pb-2 font-normal">Plan</th>
+                      <th className="pb-2 font-normal">Signed up</th>
+                      <th className="pb-2 font-normal">Businesses</th>
+                      <th className="pb-2 font-normal">Audits</th>
+                      <th className="pb-2 font-normal">Last seen</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-slate-300">
+                    {users.accounts.map((a) => (
+                      <tr key={a.email} className="border-t border-white/5">
+                        <td className="py-2 pr-3 font-mono text-slate-200">{a.email}</td>
+                        <td className="py-2 pr-3">
+                          <span
+                            className={
+                              a.paying ? "text-hud-emerald" : "text-slate-400"
+                            }
+                          >
+                            {a.plan_name}
+                          </span>
+                          {a.status !== "active" && (
+                            <span className="ml-1 text-hud-amber">({a.status})</span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-slate-500">
+                          {a.days_since_signup}d ago
+                        </td>
+                        <td className="py-2 pr-3">
+                          {a.business_count === 0 ? (
+                            <span className="text-hud-rose">none</span>
+                          ) : (
+                            <span title={a.businesses.map((b) => b.business_name).join(", ")}>
+                              {a.business_count}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-slate-400">
+                          {a.usage.audits ?? 0}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {a.days_since_seen === null ? (
+                            <span className="text-hud-rose" title="Signed up and never came back">
+                              never returned
+                            </span>
+                          ) : (
+                            <span className="text-slate-500">{a.days_since_seen}d ago</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {users.storage_warning && (
+                <div className="mt-3 flex items-start gap-2 text-[10px] leading-relaxed text-slate-500">
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-hud-amber" />
+                  <span>{users.storage_warning}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* money */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
@@ -838,131 +855,133 @@ export default function ExecutiveCommand() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {/* reflection */}
-        <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-          <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-500">
-            <Brain className="h-3.5 w-3.5 text-hud-violet" /> What Titan learned
-          </div>
-          {!refl ? (
-            <div className="py-6 text-center text-[11px] text-slate-500">Loading…</div>
-          ) : (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <div className="font-mono text-xl text-hud-violet">
-                    {refl.tasks_reflected}
-                  </div>
-                  <div className="text-[9px] uppercase tracking-wider text-slate-600">
-                    tasks
-                  </div>
-                </div>
-                <div>
-                  <div className="font-mono text-xl text-hud-emerald">
-                    {refl.success_rate}%
-                  </div>
-                  <div className="text-[9px] uppercase tracking-wider text-slate-600">
-                    achieved
-                  </div>
-                </div>
-                <div>
-                  <div className="font-mono text-xl text-hud-cyan">
-                    {refl.calibration_factor}×
-                  </div>
-                  <div className="text-[9px] uppercase tracking-wider text-slate-600">
-                    calibration
-                  </div>
-                </div>
-              </div>
-              <div className="text-[11px] text-slate-400">
-                {refl.calibration_verdict}
-              </div>
-              {refl.confidence_brier !== null && (
-                <div className="text-[10px] text-slate-500">
-                  Confidence score {refl.confidence_brier} — {refl.confidence_note}
-                </div>
-              )}
-              {Object.keys(refl.tools_that_failed).length > 0 && (
-                <div className="text-[10px] text-hud-rose">
-                  Tools that failed:{" "}
-                  {Object.entries(refl.tools_that_failed)
-                    .map(([t, n]) => `${t} (${n})`)
-                    .join(", ")}
-                </div>
-              )}
-              {refl.recent.slice(0, 3).map((r, i) => (
-                <div key={i} className="rounded border border-white/5 bg-black/20 px-2.5 py-2">
-                  <div className="text-[11px] text-slate-300">
-                    <span className={r.achieved ? "text-hud-emerald" : "text-hud-rose"}>
-                      {r.achieved ? "✓" : "✗"}
-                    </span>{" "}
-                    {r.goal}
-                  </div>
-                  {r.lessons.slice(0, 1).map((l) => (
-                    <div key={l} className="mt-0.5 text-[10px] italic text-slate-500">{l}</div>
-                  ))}
-                </div>
-              ))}
+      {!customer && (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {/* reflection */}
+          <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+            <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-500">
+              <Brain className="h-3.5 w-3.5 text-hud-violet" /> What Titan learned
             </div>
-          )}
-        </div>
+            {!refl ? (
+              <div className="py-6 text-center text-[11px] text-slate-500">Loading…</div>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <div className="font-mono text-xl text-hud-violet">
+                      {refl.tasks_reflected}
+                    </div>
+                    <div className="text-[9px] uppercase tracking-wider text-slate-600">
+                      tasks
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-mono text-xl text-hud-emerald">
+                      {refl.success_rate}%
+                    </div>
+                    <div className="text-[9px] uppercase tracking-wider text-slate-600">
+                      achieved
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-mono text-xl text-hud-cyan">
+                      {refl.calibration_factor}×
+                    </div>
+                    <div className="text-[9px] uppercase tracking-wider text-slate-600">
+                      calibration
+                    </div>
+                  </div>
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {refl.calibration_verdict}
+                </div>
+                {refl.confidence_brier !== null && (
+                  <div className="text-[10px] text-slate-500">
+                    Confidence score {refl.confidence_brier} — {refl.confidence_note}
+                  </div>
+                )}
+                {Object.keys(refl.tools_that_failed).length > 0 && (
+                  <div className="text-[10px] text-hud-rose">
+                    Tools that failed:{" "}
+                    {Object.entries(refl.tools_that_failed)
+                      .map(([t, n]) => `${t} (${n})`)
+                      .join(", ")}
+                  </div>
+                )}
+                {refl.recent.slice(0, 3).map((r, i) => (
+                  <div key={i} className="rounded border border-white/5 bg-black/20 px-2.5 py-2">
+                    <div className="text-[11px] text-slate-300">
+                      <span className={r.achieved ? "text-hud-emerald" : "text-hud-rose"}>
+                        {r.achieved ? "✓" : "✗"}
+                      </span>{" "}
+                      {r.goal}
+                    </div>
+                    {r.lessons.slice(0, 1).map((l) => (
+                      <div key={l} className="mt-0.5 text-[10px] italic text-slate-500">{l}</div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-        {/* model routing */}
-        <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-          <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-500">
-            <Gauge className="h-3.5 w-3.5 text-hud-amber" /> Model routing
-          </div>
-          {!route ? (
-            <div className="py-6 text-center text-[11px] text-slate-500">Loading…</div>
-          ) : route.providers.length === 0 ? (
-            <div className="py-6 text-center text-[11px] text-slate-500">
-              No LLM provider configured — Titan is running on its deterministic
-              paths.
+          {/* model routing */}
+          <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+            <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-500">
+              <Gauge className="h-3.5 w-3.5 text-hud-amber" /> Model routing
             </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="text-[10px] text-slate-500">
-                Order in use:{" "}
-                <span className="font-mono text-slate-300">
-                  {route.effective_order.join(" → ")}
-                </span>
+            {!route ? (
+              <div className="py-6 text-center text-[11px] text-slate-500">Loading…</div>
+            ) : route.providers.length === 0 ? (
+              <div className="py-6 text-center text-[11px] text-slate-500">
+                No LLM provider configured — Titan is running on its deterministic
+                paths.
               </div>
-              {route.providers.map((p) => (
-                <div
-                  key={p.provider}
-                  className="flex items-center justify-between gap-2 rounded border border-white/5 bg-black/20 px-2.5 py-2"
-                >
-                  <div className="min-w-0">
-                    <div className="text-[12px] text-white">
-                      {p.provider}
-                      {p.tripped && (
-                        <span className="ml-2 rounded-full bg-rose-500/15 px-2 py-0.5 text-[9px] uppercase tracking-wider text-rose-400">
-                          cooling down
-                        </span>
-                      )}
-                      {!p.routable && !p.tripped && (
-                        <span className="ml-2 text-[9px] text-slate-600">
-                          too few samples to rank
-                        </span>
-                      )}
-                    </div>
-                    {p.last_error && (
-                      <div className="truncate text-[10px] text-hud-rose">{p.last_error}</div>
-                    )}
-                  </div>
-                  <div className="shrink-0 text-right font-mono text-[10px] text-slate-400">
-                    <div>{p.success_rate}% ok</div>
-                    <div className="text-slate-600">
-                      {p.p50_latency_ms || "—"}ms · {p.calls} calls
-                    </div>
-                  </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-[10px] text-slate-500">
+                  Order in use:{" "}
+                  <span className="font-mono text-slate-300">
+                    {route.effective_order.join(" → ")}
+                  </span>
                 </div>
-              ))}
-              <div className="pt-1 text-[9px] italic text-slate-600">{route.note}</div>
-            </div>
-          )}
+                {route.providers.map((p) => (
+                  <div
+                    key={p.provider}
+                    className="flex items-center justify-between gap-2 rounded border border-white/5 bg-black/20 px-2.5 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-[12px] text-white">
+                        {p.provider}
+                        {p.tripped && (
+                          <span className="ml-2 rounded-full bg-rose-500/15 px-2 py-0.5 text-[9px] uppercase tracking-wider text-rose-400">
+                            cooling down
+                          </span>
+                        )}
+                        {!p.routable && !p.tripped && (
+                          <span className="ml-2 text-[9px] text-slate-600">
+                            too few samples to rank
+                          </span>
+                        )}
+                      </div>
+                      {p.last_error && (
+                        <div className="truncate text-[10px] text-hud-rose">{p.last_error}</div>
+                      )}
+                    </div>
+                    <div className="shrink-0 text-right font-mono text-[10px] text-slate-400">
+                      <div>{p.success_rate}% ok</div>
+                      <div className="text-slate-600">
+                        {p.p50_latency_ms || "—"}ms · {p.calls} calls
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="pt-1 text-[9px] italic text-slate-600">{route.note}</div>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {bi?.note && (
         <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-[10px] italic text-slate-500">

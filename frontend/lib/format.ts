@@ -1,4 +1,7 @@
 export function money(n: number): string {
+  // The sign goes before the currency ("-$12", not "$-12"), and a loss is
+  // abbreviated the same way a gain is. Anything that rounds to zero is $0.
+  if (n < 0) return -n >= 0.5 ? `-${money(-n)}` : "$0";
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
   return `$${n.toFixed(0)}`;

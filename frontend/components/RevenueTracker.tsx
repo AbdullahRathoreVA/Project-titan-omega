@@ -5,12 +5,21 @@ import { DollarSign, Plus, TrendingUp, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { RevenueEntry } from "@/lib/types";
 
-type Source = "fiverr" | "career_mind" | "kindle" | "other";
+type Source = string;
 
+// The founder's income streams. A subscriber's business is not his, so
+// their ledger offers general sources instead.
 const SOURCES: { id: Source; label: string }[] = [
   { id: "fiverr", label: "Fiverr" },
   { id: "career_mind", label: "Career Mind" },
   { id: "kindle", label: "Kindle" },
+  { id: "other", label: "Other" },
+];
+
+const CUSTOMER_SOURCES: { id: Source; label: string }[] = [
+  { id: "sales", label: "Sales" },
+  { id: "services", label: "Services" },
+  { id: "subscriptions", label: "Subscriptions" },
   { id: "other", label: "Other" },
 ];
 
@@ -19,6 +28,9 @@ const SOURCE_LABEL: Record<string, string> = {
   career_mind: "Career Mind",
   careermind: "Career Mind",
   kindle: "Kindle",
+  sales: "Sales",
+  services: "Services",
+  subscriptions: "Subscriptions",
   other: "Other",
 };
 
@@ -37,11 +49,14 @@ function whenLabel(iso: string): string {
 }
 
 import { isGuest } from "@/lib/guest";
+import { isCustomer } from "@/lib/session";
 
 export function RevenueTracker({ total, onLogged }: { total: number; onLogged: () => void }) {
+  const [customer] = useState(() => isCustomer());
+  const sources = customer ? CUSTOMER_SOURCES : SOURCES;
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
-  const [source, setSource] = useState<Source>("fiverr");
+  const [source, setSource] = useState<Source>(() => (isCustomer() ? "sales" : "fiverr"));
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +79,9 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
     try {
       const res = await api.logRevenue(value, source, note);
       if (!res) {
-        setError("Could not save — are you logged in? (Core may need auth.)");
+        setError(customer
+          ? "Could not save — please try again in a moment."
+          : "Could not save — are you logged in? (Core may need auth.)");
         return;
       }
       setAmount("");
@@ -75,7 +92,7 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
     } finally {
       setBusy(false);
     }
-  }, [amount, source, note, busy, onLogged, loadEntries]);
+  }, [amount, source, note, busy, onLogged, loadEntries, customer]);
 
   const cancel = useCallback(
     async (id: string) => {
@@ -108,9 +125,13 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
             <TrendingUp className="h-3 w-3 text-hud-emerald" />
             {isGuest()
               ? "Sample earnings history — this is a read-only demo."
-              : total === 0
-                ? "Log your first order — it's coming, Abdullah!"
-                : "Every dollar counts toward the billion."}
+              : customer
+                ? total === 0
+                  ? "Log your first sale — Titan reports only what you record."
+                  : "Every sale you log feeds your Finance and Executive reports."
+                : total === 0
+                  ? "Log your first order — it's coming, Abdullah!"
+                  : "Every dollar counts toward the billion."}
           </p>
         </div>
         {!isGuest() && (
@@ -119,7 +140,7 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
             className="flex items-center gap-1.5 rounded-lg border border-hud-emerald/40 bg-hud-emerald/10 px-3 py-2 text-xs font-medium text-hud-emerald transition-colors hover:bg-hud-emerald/20"
           >
             <Plus className="h-3.5 w-3.5" />
-            Log order
+            {customer ? "Log sale" : "Log order"}
           </button>
         )}
       </div>
@@ -137,12 +158,14 @@ export function RevenueTracker({ total, onLogged }: { total: number; onLogged: (
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Description (e.g. AI resume gig — first order)"
+              placeholder={customer
+                ? "Description (e.g. website for a local client)"
+                : "Description (e.g. AI resume gig — first order)"}
               className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:border-hud-emerald/40 focus:outline-none"
             />
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            {SOURCES.map((s) => (
+            {sources.map((s) => (
               <button
                 key={s.id}
                 onClick={() => setSource(s.id)}

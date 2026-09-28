@@ -138,8 +138,7 @@ def test_api_me_refuses_everything_it_should(customer, monkeypatch):
     # Not on the allowlist: a founder route stays unreachable.
     assert client.get("/api/me/telegram/status", headers=hdr).status_code == 404
     assert client.get("/api/me/admin/clients", headers=hdr).status_code == 404
-    assert client.post("/api/me/revenue/log", headers=hdr,
-                       json={"amount": 1, "source": "x"}).status_code == 404
+    assert client.post("/api/me/connectors/refresh", headers=hdr).status_code == 404
     # With founder auth on, the customer's token opens no founder route.
     import secrets
     monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
@@ -195,7 +194,8 @@ def test_no_customer_route_ever_shows_founder_data(customer):
                 continue
             # Path parameters are filled with the customer's OWN ids, so every
             # route really runs; a leak would have to come from elsewhere.
-            own_id = own_call if "/voice/" in pattern else own
+            own_id = (own_call if "/voice/" in pattern
+                      else "monthly" if "/bi/" in pattern else own)
             path = "/api/me" + (pattern[len("/api"):]
                                 .replace("[^/]+", own_id).replace("\\.", "."))
             r = client.get(path, headers=hdr)
@@ -498,6 +498,76 @@ def test_ask_titan_answers_a_subscriber_from_their_own_data(customer, monkeypatc
         f.leads.clear(); f.decisions.clear()
 
 
+def test_a_subscribers_money_is_their_own(customer):
+    """Expenses and sales logged in the cockpit land in their workspace
+    ledger. The founder's ledger never moves, and neither side can delete
+    the other's entries."""
+    client, token, workspaces = customer
+    hdr = {"X-Account-Token": token}
+    founder = st.founder_store()
+    founder.expenses.append({"id": "exp-founder", "amount": 3.0, "category": "tools",
+                             "note": "founder", "created_at": "2026-09-28T00:00:00+00:00"})
+    before_mrr = float(founder.metrics.get("mrr", 0.0))
+    try:
+        exp = client.post("/api/me/finance/expense", headers=hdr,
+                          json={"amount": 12.0, "category": "ads", "note": "flyers"}).json()
+        sale = client.post("/api/me/revenue/log", headers=hdr,
+                           json={"amount": 40.0, "source": "sales", "note": "first cake"}).json()
+        ws = workspaces.for_account("cust@example.com")
+        assert [e["id"] for e in ws.expenses] == [exp["id"]]
+        assert ws.metrics["mrr"] == 40.0 and sale["total"] == 40.0
+        assert float(founder.metrics.get("mrr", 0.0)) == before_mrr
+        assert [e["id"] for e in founder.expenses] == ["exp-founder"]
+        fin = client.get("/api/me/finance", headers=hdr).json()
+        assert fin["revenue_total"] == 40.0 and fin["expenses_total"] == 12.0
+        # The cheer in their feed is theirs, not the founder's.
+        assert any("Your business is earning" in e["message"] for e in ws.feed)
+        assert not any("Abdullah" in e["message"] for e in ws.feed)
+        # The founder's expense id does not exist in their ledger.
+        assert client.delete("/api/me/finance/expense/exp-founder",
+                             headers=hdr).status_code == 404
+        assert client.delete(f"/api/me/revenue/entry/{sale['entry']['id']}",
+                             headers=hdr).status_code == 200
+        assert client.delete(f"/api/me/finance/expense/{exp['id']}",
+                             headers=hdr).status_code == 200
+        assert ws.metrics["mrr"] == 0.0 and not ws.expenses
+    finally:
+        founder.expenses[:] = [e for e in founder.expenses if e["id"] != "exp-founder"]
+
+
+def test_the_executive_report_names_only_the_callers_businesses(customer):
+    """engines/bi.py listed every client on the platform ("Never audited: ...")
+    and counted every account's leads. A subscriber's report is theirs."""
+    from app.core import clients, crm
+    client, token, _ = customer
+    hdr = {"X-Account-Token": token}
+    founders_business = _make_client(f"{_CANARY} Founder Business")
+    own = _make_client("Own Bakery", owner="cust@example.com")
+    leads = st.founder_store().leads
+    leads["lead-f"] = {"id": "lead-f", "name": _CANARY, "status": "won",
+                       "stage_reached": 3, "account": crm.FOUNDER}
+    leads["lead-c2"] = {"id": "lead-c2", "name": "Cust lead", "status": "new",
+                       "account": "cust@example.com"}
+    try:
+        mine = client.get("/api/me/bi/monthly", headers=hdr)
+        assert mine.status_code == 200
+        body = mine.text
+        assert "Own Bakery" in body and _CANARY not in body
+        assert "Abdullah" not in body
+        assert "1 in, 0 won" in body
+        founders = client.get("/api/bi/monthly").text
+        assert "1 in, 1 won" in founders          # the founder's own lead only
+        seo = client.get("/api/me/mine/seo-overview", headers=hdr).json()
+        assert [c["business_name"] for c in seo["clients"]] == ["Own Bakery"]
+        assert seo["titan"] is None and seo["unaudited"] == 1
+        assert _CANARY in client.get("/api/founder/seo-overview").text
+    finally:
+        leads.pop("lead-f", None)
+        leads.pop("lead-c2", None)
+        clients.delete_client(founders_business)
+        clients.delete_client(own)
+
+
 _FRONTEND = __import__("pathlib").Path(__file__).resolve().parents[2] / "frontend"
 
 # Which /api routes each customer-visible tab reads. A tab may be added to
@@ -507,7 +577,8 @@ TAB_ROUTES = {
     "universe": ["/api/status", "/api/divisions", "/api/agents", "/api/posts",
                  "/api/progress"],
     "dashboard": ["/api/status", "/api/divisions", "/api/agents",
-                  "/api/opportunities", "/api/feed", "/api/deliverables"],
+                  "/api/opportunities", "/api/feed", "/api/deliverables",
+                  "/api/revenue/entries"],
     "mission": ["/api/status", "/api/agents", "/api/opportunities",
                 "/api/executions", "/api/decisions", "/api/feed"],
     "clients": ["/api/mine/clients", "/api/mine/discovery"],
@@ -516,6 +587,9 @@ TAB_ROUTES = {
     "crm": ["/api/leads"],
     "voice": ["/api/voice/live", "/api/voice/capabilities",
               "/api/voice/sessions", "/api/voice/sessions/x"],
+    "finance": ["/api/finance", "/api/performance"],
+    "customers": ["/api/leads"],
+    "executive": ["/api/bi/monthly", "/api/mine/seo-overview"],
 }
 
 
@@ -577,6 +651,23 @@ def test_the_voice_screens_use_the_subscribers_own_door():
     rec = (_FRONTEND / "lib" / "voiceSession.ts").read_text(encoding="utf-8")
     # The first `thinking` waits for the session to open instead of vanishing.
     assert rec.count("if (!(await this.opened())) return;") == 3
+
+
+def test_the_money_screens_show_a_subscriber_only_their_own():
+    """Customers, Executive and the revenue ledger each have a founder version
+    built on his business. A subscriber's cockpit must render theirs."""
+    comp = _FRONTEND / "components"
+    cc = (comp / "CommandCenter.tsx").read_text(encoding="utf-8")
+    assert '(customer ? <MyCustomers onOpenCrm={() => setView("crm")} /> : <Customers />)' in cc
+    ex = (comp / "ExecutiveCommand.tsx").read_text(encoding="utf-8")
+    assert "{!customer && <ExecutiveOperations />}" in ex
+    for founder_only in ('customer ? none<Analytics>() : api<Analytics>("/founder/analytics")',
+                         'customer ? none<Traffic>() : api<Traffic>("/founder/traffic")',
+                         'customer ? none<RoutingReport>() : api<RoutingReport>("/routing")'):
+        assert founder_only in ex, founder_only
+    assert 'customer ? "/mine/seo-overview" : "/founder/seo-overview"' in ex
+    rev = (comp / "RevenueTracker.tsx").read_text(encoding="utf-8")
+    assert "const sources = customer ? CUSTOMER_SOURCES : SOURCES;" in rev
 
 
 def test_unbound_code_still_sees_the_founder_store():

@@ -109,6 +109,23 @@ def watch_my_client_now(cid: str) -> dict:
     return r
 
 
+@router.get("/seo-overview", tags=["cockpit"])
+def my_seo_overview() -> dict:
+    """The Executive tab's SEO panel for the caller's own businesses.
+
+    `titan` is None: the founder's panel sets Titan's own score beside his
+    clients', which is his business and not theirs."""
+    from .router import SEO_OVERVIEW_NOTE, seo_rows
+    rows, scored = seo_rows(only=_mine())
+    return {
+        "titan": None,
+        "clients": rows,
+        "client_average": round(sum(scored) / len(scored), 1) if scored else None,
+        "unaudited": sum(1 for r in rows if not r["audited"]),
+        "note": SEO_OVERVIEW_NOTE,
+    }
+
+
 @router.get("/discovery", tags=["cockpit"])
 def my_discovery(live: bool = Query(False)) -> dict:
     """Sellable work across the caller's own businesses, from their stored
