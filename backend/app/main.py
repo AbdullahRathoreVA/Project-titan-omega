@@ -347,8 +347,11 @@ _OPEN_PATHS = {
     "/api/demo/portal",
     "/api/session",
     "/health",
-    "/api/voice-report",
-    "/api/assistant",
+    # /api/voice-report and /api/assistant used to be listed here, on the
+    # reasoning that "the Space URL is private". It stopped being private when
+    # the product went public: anyone could read the founder's live figures
+    # from the first and spend his AI quota through the second. The founder's
+    # screens send his token; a subscriber asks through /api/me.
     "/api/intelligence",
     "/api/llm/health",
     "/api/tts/health",

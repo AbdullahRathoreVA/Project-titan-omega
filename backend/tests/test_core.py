@@ -1001,7 +1001,7 @@ def test_every_founder_endpoint_is_hidden_from_guests(monkeypatch):
     public_by_design = {
         "/api/auth", "/api/session", "/api/demo/enter", "/api/login",
         "/api/intelligence", "/api/llm/health", "/api/tts/health",
-        "/api/doctor", "/api/voice-report", "/api/assistant",
+        "/api/doctor",
         "/api/content/daily", "/api/intel/news", "/api/inbox/auto-reply",
         "/api/plans",            # pricing must be readable to sell anything
         "/api/signup", "/api/account/login", "/api/account",

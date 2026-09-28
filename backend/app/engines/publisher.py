@@ -66,12 +66,18 @@ def schedule(
 def publish(post_id: str, store: Store = STORE) -> dict:
     """Send a post to its channels now, via the configured automation webhook."""
     post = store.posts[post_id]  # KeyError handled by caller
-    url = _webhook_url()
+    from ..core import cockpit_scope
+    # The webhook posts to the founder's own accounts. A subscriber's post
+    # never goes through it; it stays ready for them to post themselves.
+    customer = cockpit_scope.is_customer()
+    url = None if customer else _webhook_url()
 
     if not url:
         post["status"] = "queued"
         post["results"] = [
-            {"channel": c, "status": "ready", "detail": "Set TITAN_PUBLISH_WEBHOOK to auto-post."}
+            {"channel": c, "status": "ready",
+             "detail": ("Copy it and post it yourself - Titan does not post to your accounts."
+                        if customer else "Set TITAN_PUBLISH_WEBHOOK to auto-post.")}
             for c in post["channels"]
         ]
         store.emit(

@@ -15,7 +15,7 @@ from ..store import STORE
 router = APIRouter(prefix="/api")
 
 
-def _limit_subscriber() -> None:
+def limit_subscriber() -> None:
     """A subscriber's War Room click runs web searches on the platform's key
     and several AI calls, so it is limited per hour like lead discovery. The
     founder's own War Room is not limited."""
@@ -36,7 +36,7 @@ def growth_intel() -> dict:
 @router.post("/growth/scan", tags=["growth"])
 def growth_scan() -> dict:
     """Run a full research cycle right now (also runs automatically 24/7)."""
-    _limit_subscriber()
+    limit_subscriber()
     return autonomous.growth_cycle(STORE)
 
 
@@ -47,7 +47,7 @@ class DebateRequest(BaseModel):
 @router.post("/warroom/debate", tags=["growth"])
 def warroom_debate(req: DebateRequest) -> dict:
     """The marketing team argues, the head decides, and returns an action plan."""
-    _limit_subscriber()
+    limit_subscriber()
     return autonomous.marketing_debate(req.topic, STORE)
 
 
@@ -58,7 +58,7 @@ class SeoRequest(BaseModel):
 @router.post("/seo/report", tags=["growth"])
 def seo_report(req: SeoRequest) -> dict:
     """Live ranking landscape + a prioritised, zero-cost action list to climb."""
-    _limit_subscriber()
+    limit_subscriber()
     return autonomous.seo_report(req.keyword, STORE)
 
 
@@ -72,7 +72,7 @@ def content_repurpose(req: RepurposeRequest) -> dict:
     """One idea → blog + LinkedIn + X thread + IG caption + email + Shorts
     script. The pack is also saved to Deliverables."""
     from ..engines import repurpose
-    _limit_subscriber()
+    limit_subscriber()
 
     return repurpose.repurpose(req.idea, req.lang, STORE)
 

@@ -15,12 +15,12 @@ import os
 import random
 from urllib.parse import quote
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..core import auth, demo_data, executive, llm, model_router
-from ..engines import deliverables, news, opportunity, publisher, research
+from ..core import auth, demo_data, executive, llm, model_router, quota
+from ..engines import deliverables, news, opportunity, owner, publisher, research
 from ..store import STORE, Store, now
 
 router = APIRouter(prefix="/api")
@@ -39,22 +39,35 @@ class NewsRequest(BaseModel):
 
 @router.post("/intel/news", tags=["system"])
 def intel_news(req: NewsRequest) -> dict:
-    """Live headlines + AI market analysis tuned to Abdullah's businesses."""
-    query = req.topic or (
-        "AI career tools OR freelancing OR Upwork gig economy OR ed-tech students jobs"
-    )
+    """Live headlines + AI market analysis tuned to Abdullah's businesses -
+    or, from a subscriber's cockpit, to theirs."""
+    businesses = owner.subscriber_businesses()
+    if businesses is not None:
+        main = businesses[0] if businesses else {}
+        query = req.topic or " ".join(
+            x for x in (main.get("industry"), main.get("city"), main.get("country")) if x
+        ) or "small business marketing"
+        analyst = (
+            f"You are a market analyst for {owner.describe(businesses) or 'a small business'}. "
+            "From today's real headlines, extract what matters for this business's "
+            "marketing and sales, then give 3 concrete, zero-cost moves to capitalize "
+            "THIS WEEK.")
+    else:
+        query = req.topic or (
+            "AI career tools OR freelancing OR Upwork gig economy OR ed-tech students jobs"
+        )
+        analyst = (
+            "You are a market analyst for Abdullah's Career Mind AI (a student "
+            "career-guidance platform) and his Upwork AI service gigs. From today's "
+            "real headlines, extract what matters for HIS marketing and earning, then "
+            "give 3 concrete, zero-cost moves to capitalize THIS WEEK.")
     heads = news.fetch_headlines(query, 8)
     lang_name = "Urdu (اردو)" if req.lang == "ur" else "English"
 
     if heads:
         head_text = "\n".join(f"- {h['title']}" for h in heads)
         analysis = llm.complete(
-            system=(
-                "You are a market analyst for Abdullah's Career Mind AI (a student "
-                "career-guidance platform) and his Upwork AI service gigs. From today's "
-                "real headlines, extract what matters for HIS marketing and earning, then "
-                f"give 3 concrete, zero-cost moves to capitalize THIS WEEK. Write in {lang_name}."
-            ),
+            system=f"{analyst} Write in {lang_name}.",
             prompt="Today's headlines:\n" + head_text,
             max_tokens=700,
         )
@@ -62,7 +75,8 @@ def intel_news(req: NewsRequest) -> dict:
             "📰 LATEST HEADLINES (live)\n"
             + head_text
             + "\n\n📈 ANALYSIS & MOVES\n"
-            + (analysis or "(Set GROQ_API_KEY or Hermes to unlock AI analysis — free.)")
+            + (analysis or quota.no_answer_note(
+                "(Set GROQ_API_KEY or Hermes to unlock AI analysis — free.)"))
         )
     else:
         content = (
@@ -86,11 +100,46 @@ class LeadRequest(BaseModel):
 
 @router.post("/leads/find", tags=["system"])
 def find_leads(req: LeadRequest) -> dict:
-    """Search the live web for real leads, then format them into an action list."""
-    query = req.query or (
-        "universities and colleges career services departments contact, "
-        "and small businesses that need AI chatbots or automation"
-    )
+    """Search the live web for real leads, then format them into an action list.
+
+    From a subscriber's cockpit the leads are customers for their own business,
+    and each search counts against the War Room's hourly limit - it runs on
+    the platform's search key."""
+    businesses = owner.subscriber_businesses()
+    if businesses is not None:
+        from .growth import limit_subscriber
+        main = businesses[0] if businesses else {}
+        trade = main.get("industry") or main.get("business_name") or ""
+        place = " ".join(x for x in (main.get("city"), main.get("country")) if x)
+        if not (req.query or trade):
+            return {"kind": "leads", "live": False, "content": (
+                "Add your business in the Clients tab, or type who you are "
+                "looking for, and Titan searches for them.")}
+        limit_subscriber()
+        where = f" in {place}" if place else ""
+        query = req.query or f"businesses and organisations{where} that buy from a {trade}"
+        desc = owner.describe(businesses) or "a small business"
+        analyst = (f"You are the lead-generation analyst for {desc}. From these LIVE web "
+                   "results, extract concrete leads (organisations / people / places) the "
+                   "owner can reach to win as customers.")
+        offline = (f"You are the lead-generation analyst for {desc}. Give a concrete, "
+                   "practical list of WHERE to find customers for this business — specific "
+                   "communities, directories, search queries, and outreach angles.")
+        offline_prompt = req.query or f"Find customers for {desc}."
+    else:
+        query = req.query or (
+            "universities and colleges career services departments contact, "
+            "and small businesses that need AI chatbots or automation"
+        )
+        analyst = (
+            "You are Abdullah's lead-generation analyst. From these LIVE web results, "
+            "extract concrete leads (organisations / people / places) he can reach to "
+            "sell Career Mind AI (student career platform) or his Upwork AI gigs.")
+        offline = (
+            "You are Abdullah's lead-generation analyst. Give a concrete, practical list "
+            "of WHERE to find buyers for Career Mind AI and his Upwork AI gigs — specific "
+            "communities, directories, search queries, and outreach angles.")
+        offline_prompt = req.query or "Find buyers for an AI career platform + Upwork AI services."
     lang_name = "Urdu (اردو)" if req.lang == "ur" else "English"
     results = research.search(query, 8)
 
@@ -99,30 +148,23 @@ def find_leads(req: LeadRequest) -> dict:
         content = llm.complete(
             task=model_router.SCORE_LEADS,
             system=(
-                "You are Abdullah's lead-generation analyst. From these LIVE web results, "
-                "extract concrete leads (organisations / people / places) he can reach to "
-                "sell Career Mind AI (student career platform) or his Upwork AI gigs. For "
+                f"{analyst} For "
                 "each lead give: name, why they're a fit, where/how to contact, and a 1-line "
                 f"opening message. Be specific and practical. Write in {lang_name}."
             ),
             prompt="Live web results:\n" + src,
             max_tokens=900,
         )
-        content = (content or "") + "\n\n— Sources —\n" + "\n".join(
+        content = (content or quota.no_answer_note("")) + "\n\n— Sources —\n" + "\n".join(
             f"• {r['url']}" for r in results
         )
         live = True
     else:
         content = llm.complete(
-            system=(
-                "You are Abdullah's lead-generation analyst. Give a concrete, practical list "
-                "of WHERE to find buyers for Career Mind AI and his Upwork AI gigs — specific "
-                "communities, directories, search queries, and outreach angles. "
-                f"Write in {lang_name}."
-            ),
-            prompt=req.query or "Find buyers for an AI career platform + Upwork AI services.",
+            system=f"{offline} Write in {lang_name}.",
+            prompt=offline_prompt,
             max_tokens=700,
-        ) or (
+        ) or quota.no_answer_note(
             "Add a free TAVILY_API_KEY (tavily.com) in your Space to unlock LIVE lead search. "
             "For now: target university career-services pages, student Facebook groups, and "
             "r/jobs / r/resumes on Reddit."
@@ -168,6 +210,9 @@ def _build_next_post(
 
     Shared by the daily auto-content endpoint and the HUD "Next Post" card.
     """
+    businesses = owner.subscriber_businesses()
+    if businesses is not None:
+        return _subscriber_next_post(businesses, topic, lang, store)
     cm = os.getenv("CAREERMIND_URL", "https://careermind2026-career-mind.hf.space")
     upwork = os.getenv("UPWORK_PROFILE_URL", UPWORK_PROFILE_URL).strip()
     # Set TITAN_PRODUCT_URL (landing/waitlist/demo link) and Titan starts
@@ -259,6 +304,46 @@ def _build_next_post(
     }
 
 
+def _subscriber_next_post(businesses: list, topic: str, lang: str, store: Store) -> dict:
+    """The next-post draft for a subscriber: about their own business, linked
+    to their own site. Without a business there is nothing to promote, and
+    without an AI answer there is no caption - it says so rather than falling
+    back to a canned caption about somebody else's product."""
+    draft = {"id": store.new_id("draft"), "image_prompt": "", "image_url": "",
+             "channels": [], "created_at": now().isoformat()}
+    if not businesses:
+        return {**draft, "target": "your business", "link": "", "unavailable": "no_business",
+                "caption": "Add your business in the Clients tab and Titan drafts "
+                           "posts about it here."}
+    main = businesses[0]
+    lang_name = "Urdu (اردو)" if lang == "ur" else "English"
+    link = main.get("website") or ""
+    caption = llm.complete(
+        task=model_router.CAPTION,
+        system=(
+            "Write ONE scroll-stopping social media caption (max 200 characters). Sound "
+            "like a REAL PERSON sharing a genuine win or tip — not an ad and not corporate. "
+            "Open with a hook, give one concrete benefit or mini-story, end with a casual "
+            "call to action. Add 3-5 relevant hashtags. Do NOT include any URL (appended "
+            f"separately). Write in {lang_name}. Output ONLY the caption."
+        ),
+        prompt=(topic + ". " if topic else "") + "Promote: " + owner.describe(businesses)
+        + ". Write for people nearby who could become its customers.",
+        max_tokens=160,
+    )
+    if not caption:
+        return {**draft, "target": main.get("business_name") or "your business",
+                "link": link, "unavailable": "no_ai", "caption": quota.no_answer_note("")}
+    style = _IMG_STYLES[len(store.feed) % len(_IMG_STYLES)]
+    img_prompt = ((topic + ", ") if topic else "") + (
+        f"{main.get('industry') or 'small'} business, real people, welcoming, "
+        f"natural light, {style}")
+    return {**draft, "target": main.get("business_name") or "your business",
+            "caption": f"{caption}\n\n👉 {link}" if link else caption,
+            "image_prompt": img_prompt, "image_url": _pollinations(img_prompt),
+            "link": link, "channels": ["linkedin", "instagram", "facebook"]}
+
+
 @router.get("/content/daily", tags=["system"])
 def content_daily(
     topic: str = Query(default=""),
@@ -284,7 +369,16 @@ def publish_readiness() -> dict:
     not any of them were reachable. Nothing was connected, so approving a post
     did exactly nothing and the interface said otherwise — which is the one
     thing this codebase is not allowed to do.
+
+    A subscriber is never routed through the founder's webhook: that would
+    post to HIS accounts.
     """
+    from ..core import cockpit_scope
+    if cockpit_scope.is_customer():
+        return {"ready": False, "route": None, "reason": (
+            "Titan does not post to your accounts. Approving saves the post "
+            "to your queue with its caption and image - copy them to your "
+            "channels yourself.")}
     hook = os.getenv("TITAN_PUBLISH_WEBHOOK", "").strip()
     return {
         "ready": bool(hook),
@@ -301,8 +395,16 @@ def publish_readiness() -> dict:
 
 @router.get("/next-post", tags=["system"])
 def next_post(lang: str = Query(default="en")) -> dict:
-    """The current next post the founder can approve. Generated lazily, cached."""
-    if not STORE.next_post:
+    """The current next post the founder can approve. Generated lazily, cached.
+
+    A subscriber's "add your business first" placeholder is rebuilt once they
+    have one. A draft that failed for want of an AI answer is not rebuilt on
+    every poll - that would spend their AI calls every five seconds; they
+    press Regenerate."""
+    cached = STORE.next_post
+    stale = (bool(cached) and cached.get("unavailable") == "no_business"
+             and bool(owner.subscriber_businesses()))
+    if not cached or stale:
         STORE.next_post = _build_next_post("", lang, "auto", STORE)
     return {**STORE.next_post, "publish": publish_readiness()}
 
@@ -316,6 +418,9 @@ class RegenRequest(BaseModel):
 @router.post("/next-post/regenerate", tags=["system"])
 def next_post_regenerate(req: RegenRequest) -> dict:
     """Throw away the current draft and make a fresh caption + image."""
+    if owner.subscriber_businesses() is not None:
+        from .growth import limit_subscriber
+        limit_subscriber()
     STORE.next_post = _build_next_post(req.topic, req.lang, req.target, STORE)
     STORE.emit("content-studio", "activity", "Regenerated the next post (new caption + image).", "info")
     return STORE.next_post
@@ -325,6 +430,10 @@ def next_post_regenerate(req: RegenRequest) -> dict:
 def next_post_approve() -> dict:
     """Schedule the current next post to its channels, then queue up a fresh one."""
     post = STORE.next_post or _build_next_post("", "en", "auto", STORE)
+    if post.get("unavailable"):
+        # A placeholder is not a post. Scheduling it would put "add your
+        # business first" in their queue as if it were content.
+        raise HTTPException(status_code=409, detail=post["caption"])
     scheduled = publisher.schedule(
         post["caption"], post.get("channels", ["linkedin"]), post.get("image_url"), None, store=STORE
     )

@@ -283,30 +283,46 @@ class AgentChatRequest(BaseModel):
 @router.post("/agents/{agent_id}/chat", tags=["agents"])
 def agent_chat(agent_id: str, req: AgentChatRequest) -> dict:
     """Talk directly to one agent — it replies in character, using its own role,
-    mission, and current task as context."""
+    mission, and current task as context.
+
+    In a subscriber's cockpit the agent works for their workspace and their
+    businesses, and talks to them as "you" rather than as Abdullah."""
+    from ..core import quota
+    from ..engines import owner
     rt = STORE.agents.get(agent_id)
     if rt is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     s = rt.spec
     lang_name = "Urdu (اردو)" if req.lang == "ur" else "English"
 
+    businesses = owner.subscriber_businesses()
+    if businesses is not None:
+        company = (f"the Titan Omega workspace that runs {owner.describe(businesses)}"
+                   if businesses else "this owner's new Titan Omega workspace")
+        address = ("Speak to the owner as 'you', and never mention any other "
+                   "person, company or customer.")
+    else:
+        company = "Abdullah's autonomous company, Titan Omega"
+        address = "Address the founder as 'Abdullah'."
+
     reply = llm.complete(
         system=(
             f"You are {s.name}, the {s.title} in the {s.division.value} division of "
-            "Abdullah's autonomous company, Titan Omega. Speak in character as this "
+            f"{company}. Speak in character as this "
             f"agent. Your mission: {s.mission}. Right now you are working on: "
-            f"{rt.current_task or 'advancing your division objectives'}. Address the "
-            "founder as 'Abdullah'. Be concrete and specific about what YOU (this role) "
+            f"{rt.current_task or 'advancing your division objectives'}. {address} "
+            "Be concrete and specific about what YOU (this role) "
             f"are doing or will do. Keep it 2-4 sentences. Reply in {lang_name}."
         ),
         prompt=req.message,
         max_tokens=400,
-    ) or (
+    ) or quota.no_answer_note(
         f"Abdullah, {s.name} here. I'm on it — {rt.current_task or 'advancing my objectives'}. "
         "Set an LLM key (Groq/Hermes, free) to unlock my full conversational replies."
     )
 
-    STORE.emit(s.id, "command", f'Abdullah talked to {s.name}: "{req.message[:60]}"', "info")
+    who = "You" if businesses is not None else "Abdullah"
+    STORE.emit(s.id, "command", f'{who} talked to {s.name}: "{req.message[:60]}"', "info")
     return {"agent_id": s.id, "name": s.name, "reply": reply}
 
 
@@ -735,6 +751,33 @@ _INTEL_PROMPTS = {
 }
 
 
+# The same studio for a subscriber, written about their own business. The
+# founder-only kinds (school and job-seeker outreach for Career Mind) are not
+# offered to them; an unknown kind falls back to market analysis. {desc} is
+# replaced with the business description, never str.format()ed - a business
+# name may contain braces.
+_SUBSCRIBER_INTEL = {
+    "market_analysis": (
+        "You are a sharp market analyst for {desc}. Produce a concise, actionable "
+        "market analysis: current demand, the best target customers, a competitor "
+        "angle, simple pricing ideas, and 3 ZERO-COST growth moves to execute THIS "
+        "WEEK. Use clear headings and short bullets."
+    ),
+    "business_outreach": (
+        "Write a short, warm cold email / DM from {desc} to a potential customer. "
+        "Give a subject line, a 4-6 sentence body focused on concrete value, and a "
+        "clear CTA. No hype, no fake promises."
+    ),
+    "customer_reply": _INTEL_PROMPTS["customer_reply"],
+    "youtube_ideas": (
+        "Suggest 8 specific short-video ideas (YouTube Shorts, Reels, TikTok) the "
+        "owner of {desc} can make for FREE to win customers — each with a punchy "
+        "title and a one-line hook. Then give 5 search queries to study what is "
+        "trending in this niche."
+    ),
+}
+
+
 class IntelRequest(BaseModel):
     kind: str = Field(default="market_analysis")
     topic: str = Field(default="")
@@ -744,27 +787,40 @@ class IntelRequest(BaseModel):
 @router.post("/intel/generate", tags=["system"])
 def intel_generate(req: IntelRequest) -> dict:
     """Generate market analysis or outreach copy on demand via the free LLM."""
-    base = _INTEL_PROMPTS.get(req.kind, _INTEL_PROMPTS["market_analysis"])
+    from ..core import quota
+    from ..engines import owner
+    businesses = owner.subscriber_businesses()
+    if businesses is not None:
+        desc = owner.describe(businesses) or "a small local business"
+        kind = req.kind if req.kind in _SUBSCRIBER_INTEL else "market_analysis"
+        base = _SUBSCRIBER_INTEL[kind].replace("{desc}", desc)
+        default_topic = f"The business: {desc}."
+        for_whom = "you"
+    else:
+        kind = req.kind
+        base = _INTEL_PROMPTS.get(req.kind, _INTEL_PROMPTS["market_analysis"])
+        default_topic = ("Use Abdullah's businesses: Career Mind AI (student career "
+                         "platform) and Upwork AI gigs.")
+        for_whom = "Abdullah"
     lang_name = "Urdu (اردو)" if req.lang == "ur" else "English"
 
     content = llm.complete(
         system=base + f" Write the entire output in {lang_name}.",
-        prompt=req.topic
-        or "Use Abdullah's businesses: Career Mind AI (student career platform) and Upwork AI gigs.",
+        prompt=req.topic or default_topic,
         max_tokens=900,
     )
 
     if not content:
-        content = (
+        content = quota.no_answer_note(
             "AI generation is in free fallback mode. Set GROQ_API_KEY in your Space secrets "
             "(free, no card) and click again to get a full, tailored result here."
         )
 
     STORE.emit(
         "intelligence-studio", "discovery",
-        f"Generated {req.kind.replace('_', ' ')} for Abdullah.", "success",
+        f"Generated {kind.replace('_', ' ')} for {for_whom}.", "success",
     )
-    return {"kind": req.kind, "content": content}
+    return {"kind": kind, "content": content}
 
 
 # --- helpers for voice + assistant ----------------------------------------
@@ -799,7 +855,12 @@ def _empire_context() -> dict:
 def voice_report() -> dict:
     """Returns the briefing in Urdu (for display) and Hindi/Devanagari (for the
     browser TTS engine, since Urdu voices are rarely installed but Hindi ones
-    pronounce the same words correctly)."""
+    pronounce the same words correctly).
+
+    A subscriber gets their own briefing from /api/me/voice-report."""
+    subscriber = cockpit_scope.customer_email()
+    if subscriber:
+        return _subscriber_voice_report(subscriber)
     c = _empire_context()
 
     if c["mrr"] == 0:
@@ -829,6 +890,45 @@ def voice_report() -> dict:
         f"{c['open_opportunities']} नए कारोबारी मौके मौजूद हैं। अब्दुल्लाह, आगे बढ़ते रहिए!"
     )
     return {"urdu": urdu_text, "hindi": hindi_text, **c}
+
+
+def _subscriber_voice_report(email: str) -> dict:
+    """The same spoken briefing about a subscriber's own workspace: their
+    businesses, their leads, the sales they logged and their agents. No name -
+    the account holds an email, not a name, and a guessed one is worse than
+    none."""
+    from ..core import billing, crm
+    from ..store import founder_store
+
+    n = len([cid for cid in billing.owned_clients(email) if clients.get(cid)])
+    k = len(crm.visible_to(founder_store().leads, email))
+    s = executive.empire_status(STORE)
+    mrr = float(s.get("mrr", 0) or 0)
+    active, total = s.get("active_agents", 0), s.get("total_agents", 0)
+
+    if mrr == 0:
+        earn_ur = "ابھی تک آپ نے کوئی فروخت درج نہیں کی۔ "
+        earn_hi = "अभी तक आपने कोई फ़रोख़्त दर्ज नहीं की। "
+    else:
+        earn_ur = f"اب تک آپ نے کل {mrr:.0f} ڈالر کی فروخت درج کی ہے۔ "
+        earn_hi = f"अब तक आपने कुल {mrr:.0f} डॉलर की फ़रोख़्त दर्ज की है। "
+
+    urdu_text = (
+        "اسلام و علیکم! یہ رہی آپ کے کاروبار کی تازہ ترین رپورٹ۔ "
+        f"Titan پر آپ کے {n} کاروبار ہیں اور آپ کے CRM میں {k} لیڈز ہیں۔ "
+        f"{earn_ur}"
+        f"اس وقت {active} ڈیجیٹل ملازمین کام کر رہے ہیں، کل {total} میں سے۔ "
+        "آگے بڑھتے رہیں!"
+    )
+    hindi_text = (
+        "अस्सलाम वालेकुम! ये रही आपके कारोबार की ताज़ा तरीन रिपोर्ट। "
+        f"टाइटन पर आपके {n} कारोबार हैं और आपके सी आर एम में {k} लीड्स हैं। "
+        f"{earn_hi}"
+        f"इस वक्त {active} डिजिटल मुलाज़िमीन काम कर रहे हैं, कुल {total} में से। "
+        "आगे बढ़ते रहिए!"
+    )
+    return {"urdu": urdu_text, "hindi": hindi_text, "businesses": n, "leads": k,
+            "mrr": mrr, "active_agents": active, "total_agents": total}
 
 
 # --- Ask Titan assistant (voice/text, ~12 languages) -----------------------

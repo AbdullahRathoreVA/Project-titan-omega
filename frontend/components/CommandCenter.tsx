@@ -17,7 +17,7 @@ import {
   Target,
   Zap,
 } from "lucide-react";
-import { api, apiBase, authHeaders } from "@/lib/api";
+import { adminFetch, api, apiBase, authHeaders } from "@/lib/api";
 import { useTitanStream } from "@/lib/useTitanStream";
 import { displayName, isCustomer } from "@/lib/session";
 import type {
@@ -104,6 +104,10 @@ export function CommandCenter() {
   >("universe");
   const [executions, setExecutions] = useState<ExecutionItem[]>([]);
   const [decisions, setDecisions] = useState<DecisionEntry[]>([]);
+  // A subscriber's next post is about their business, so until they have one
+  // the card asks them to add it instead. Read once, and again after a refresh.
+  const [hasBusiness, setHasBusiness] = useState(false);
+  const hasBusinessRef = useRef(false);
   // Increments whenever real feed activity arrives → fires comets in the Universe.
   const [pulse, setPulse] = useState(0);
 
@@ -165,10 +169,20 @@ export function CommandCenter() {
     }
     setOnline(isOnline);
 
-    // Four feeds are the founder's alone: his connected assets, his AI
-    // provider, his social profile links, and a post the AI drafts on every
-    // request. A subscriber's cockpit does not ask for them at all - they are
-    // closed at /api/me, and the next-post draft would spend their AI calls.
+    // Three feeds are the founder's alone: his connected assets, his AI
+    // provider and his social profile links. A subscriber's cockpit does not
+    // ask for them at all. Their next post is asked for only once they have a
+    // business to promote - drafting one spends their AI calls.
+    if (customer) {
+      try {
+        const r = await adminFetch("/admin/clients");
+        const d = r.ok ? ((await r.json()) as { total?: number }) : null;
+        hasBusinessRef.current = (d?.total ?? 0) > 0;
+        setHasBusiness(hasBusinessRef.current);
+      } catch {
+        // Keep what we knew; the next poll tries again.
+      }
+    }
     const none = <T,>(v: T) => Promise.resolve(v);
     const [s, d, a, o, f, dv, cn, ps, ig, ch, np, ex, dc] = await Promise.all([
       api.status(),
@@ -181,7 +195,7 @@ export function CommandCenter() {
       api.posts(),
       customer ? none<IntelligenceStatus | null>(null) : api.intelligence(),
       customer ? none({ channels: [] as ChannelTile[] }) : api.channels(),
-      customer ? none<NextPostType | null>(null) : api.nextPost(),
+      customer && !hasBusinessRef.current ? none<NextPostType | null>(null) : api.nextPost(),
       api.executions(),
       api.decisions(),
     ]);
@@ -559,7 +573,7 @@ export function CommandCenter() {
             </section>
 
             <div className="h-[380px]">
-              {customer ? (
+              {customer && !hasBusiness ? (
                 <section className="panel flex h-full flex-col justify-center gap-3 p-5">
                   <div className="hud-label">Your first business</div>
                   <p className="text-sm text-slate-300">
@@ -579,11 +593,13 @@ export function CommandCenter() {
             </div>
           </div>
 
-          {!customer && <CommandBar onDispatched={refresh} />}
+          <CommandBar onDispatched={refresh} />
 
-          {!customer && (
+          {/* The scan / refresh / weekly-report actions run the founder's own
+              engines and connectors. A subscriber's row holds the Urdu
+              briefing only, which speaks their own numbers. */}
           <div className="flex flex-wrap gap-2">
-            {[
+            {!customer && [
               { key: "scan", label: "Scan opportunities", icon: RadarIcon, fn: () => api.scanOpportunities() },
               { key: "refresh", label: "Refresh assets", icon: RefreshCw, fn: () => api.refreshConnectors() },
               { key: "report", label: "Generate weekly report", icon: FileBarChart, fn: () => api.weeklyReport() },
@@ -601,7 +617,6 @@ export function CommandCenter() {
             ))}
             <UrduVoiceAssistant status={liveStatus} />
           </div>
-          )}
 
           {/* AI thinking visualization — shown while a command runs */}
           <AnimatePresence>
@@ -624,15 +639,13 @@ export function CommandCenter() {
             <AskTitan />
           </div>
 
-          {!customer && (
-            <>
-              <GrowthStudio />
+          <GrowthStudio />
 
-              <ConnectedAssets connectors={connectors} />
+          {/* Connected assets are the founder's live products. A subscriber
+              has none connected yet, and an empty frame says nothing. */}
+          {!customer && <ConnectedAssets connectors={connectors} />}
 
-              <Publishing posts={posts} onSchedule={schedulePost} onPublish={publishPost} />
-            </>
-          )}
+          <Publishing posts={posts} onSchedule={schedulePost} onPublish={publishPost} />
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
             <div className="space-y-4 xl:col-span-8">

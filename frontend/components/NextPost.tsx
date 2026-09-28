@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, ImageOff, RefreshCw, Send } from "lucide-react";
 import type { NextPost as NextPostType } from "@/lib/types";
 import { api } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
 
 type ApproveResult = { sent?: boolean; channels?: string[] };
+type Outcome = { sent: boolean; channels: string[]; refused?: boolean };
 
 // The HUD "Next Post" card: shows the next AI-generated image + caption and lets
 // the founder approve (schedule it) or regenerate, in one click. Fresh AI images
@@ -19,7 +21,7 @@ export function NextPost({
   onChange: () => Promise<void> | void;
 }) {
   const [busy, setBusy] = useState<"approve" | "regen" | null>(null);
-  const [result, setResult] = useState<{ sent: boolean; channels: string[] } | null>(null);
+  const [result, setResult] = useState<Outcome | null>(null);
   const [imgError, setImgError] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -57,8 +59,9 @@ export function NextPost({
       // seeing nothing change is why this looked broken.
       if (key === "approve") {
         const r = out as ApproveResult | null;
+        // No answer means nothing was scheduled - not "saved to the queue".
         setResult(r ? { sent: Boolean(r.sent), channels: r.channels ?? [] }
-                    : { sent: false, channels: [] });
+                    : { sent: false, channels: [], refused: true });
       }
       setImgError(false);
       setAttempt(0);
@@ -151,9 +154,13 @@ export function NextPost({
                 : "border-hud-amber/30 bg-hud-amber/5 text-hud-amber"
             }`}
           >
-            {result.sent
+            {result.refused
+              ? "Nothing was scheduled. Try again, or press Regenerate for a fresh draft."
+              : result.sent
               ? `Sent to ${result.channels.join(", ")}.`
-              : "Saved to the queue with its caption and image. It was not sent — connect a publishing route first."}
+              : isCustomer()
+                ? "Saved to your queue with its caption and image. Titan does not post for you — copy it to your channels."
+                : "Saved to the queue with its caption and image. It was not sent — connect a publishing route first."}
           </div>
         )}
 

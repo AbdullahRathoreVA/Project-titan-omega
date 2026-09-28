@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { CornerDownLeft, Mic, Terminal } from "lucide-react";
 import { api } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
 import type { CommandResponse } from "@/lib/types";
 
 const SUGGESTIONS = [
@@ -13,7 +14,17 @@ const SUGGESTIONS = [
   "Generate this week's report",
 ];
 
+// The founder's suggestions sell his products. A subscriber's are about
+// running their own business.
+const CUSTOMER_SUGGESTIONS = [
+  "Draft a post about this week's offer",
+  "Plan how to get 10 new customers",
+  "Write a reply to a customer complaint",
+  "List what to fix on my website first",
+];
+
 export function CommandBar({ onDispatched }: { onDispatched?: () => void }) {
+  const [customer] = useState(() => isCustomer());
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [reply, setReply] = useState<CommandResponse | null>(null);
@@ -43,7 +54,9 @@ export function CommandBar({ onDispatched }: { onDispatched?: () => void }) {
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Tell the agents to DO something…  e.g. “post about Career Mind” or “scan opportunities”"
+          placeholder={customer
+            ? "Tell the agents to DO something…  e.g. “draft a post about our weekend offer”"
+            : "Tell the agents to DO something…  e.g. “post about Career Mind” or “scan opportunities”"}
           className="flex-1 bg-transparent font-mono text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none"
           aria-label="Natural language command"
         />
@@ -65,7 +78,7 @@ export function CommandBar({ onDispatched }: { onDispatched?: () => void }) {
       </form>
 
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {SUGGESTIONS.map((s) => (
+        {(customer ? CUSTOMER_SUGGESTIONS : SUGGESTIONS).map((s) => (
           <button
             key={s}
             onClick={() => void send(s)}

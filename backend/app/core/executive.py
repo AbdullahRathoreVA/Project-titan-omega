@@ -249,16 +249,21 @@ def route_command(text: str, store: Store = STORE) -> dict:
 
 
 def _command_reply(text: str, division: str, head_name: str) -> str:
-    """Craft the operator-facing reply — with Claude when available, else canned."""
+    """Craft the operator-facing reply — with Claude when available, else canned.
+
+    From a subscriber's cockpit the division reports to them, the owner of
+    their own workspace, not to the founder."""
+    from . import cockpit_scope
+    boss = "the owner" if cockpit_scope.is_customer() else "the founder"
     smart = llm.complete(
         task=model_router.EXECUTIVE,
         system=(
             f"You are the {head_name}, head of the {division} division inside Titan "
-            "Omega, an autonomous company OS reporting to the founder. Reply in 2–3 "
+            f"Omega, an autonomous company OS reporting to {boss}. Reply in 2–3 "
             "sentences: confirm the task, name the first concrete step your team will "
             "take, and what you'll report back. Be confident and specific, no preamble."
         ),
-        prompt=f'The founder said: "{text}"',
+        prompt=f'{boss[0].upper() + boss[1:]} said: "{text}"',
         max_tokens=400,
     )
     if smart:

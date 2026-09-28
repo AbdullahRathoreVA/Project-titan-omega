@@ -91,6 +91,21 @@ ALLOWED: Tuple[Tuple[str, str], ...] = (
     ("GET", r"/api/apis/integrated"),
     ("GET", r"/api/apis/live/rates"),
     ("GET", r"/api/apis/live/weather"),
+    # Phase 6 - the rest of the dashboard. Agent chat, the command bar, the
+    # Urdu briefing and Growth Studio speak for the subscriber's own business
+    # (engines/owner.py); lead finding shares the War Room's hourly limit.
+    ("POST", r"/api/agents/[^/]+/chat"),
+    ("POST", r"/api/command"),
+    ("GET", r"/api/voice-report"),
+    ("POST", r"/api/intel/generate"),
+    ("POST", r"/api/intel/news"),
+    ("POST", r"/api/leads/find"),
+    # Posts are drafted and queued in their own workspace. publisher.publish
+    # never uses the founder's webhook for them - it posts to HIS accounts.
+    ("GET", r"/api/next-post"),
+    ("POST", r"/api/next-post/(regenerate|approve)"),
+    ("POST", r"/api/posts"),
+    ("POST", r"/api/posts/[^/]+/publish"),
 )
 
 _COMPILED = tuple((m, re.compile(p + r"\Z")) for m, p in ALLOWED)

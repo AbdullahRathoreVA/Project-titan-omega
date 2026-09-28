@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ChevronRight, Filter, Plus, Search, Trash2, Users } from "lucide-react";
 import { api } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
 import type { LeadsState } from "@/lib/types";
 
 type DiscoverResult = {
@@ -34,6 +35,18 @@ const STATUS_COLOR: Record<string, string> = {
   lost: "text-slate-500 border-edge",
 };
 
+// Where a lead came from. The founder's list names his own channels (Fiverr,
+// schools for Career Mind); a subscriber's covers how any business meets people.
+const FOUNDER_SOURCES: [string, string][] = [
+  ["manual", "Manual"], ["fiverr", "Fiverr"], ["linkedin", "LinkedIn"],
+  ["school", "School/Uni"], ["jobradar", "Job Radar"], ["instagram", "Instagram"],
+];
+const CUSTOMER_SOURCES: [string, string][] = [
+  ["manual", "Manual"], ["website", "Website"], ["phone", "Phone / walk-in"],
+  ["google", "Google"], ["instagram", "Instagram"], ["facebook", "Facebook"],
+  ["linkedin", "LinkedIn"],
+];
+
 const NEXT_STATUS: Record<string, string> = {
   new: "contacted",
   contacted: "replied",
@@ -42,6 +55,7 @@ const NEXT_STATUS: Record<string, string> = {
 
 // CRM-lite: the leads pipeline — new → contacted → replied → won/lost.
 export function CrmLite() {
+  const [customer] = useState(() => isCustomer());
   const [state, setState] = useState<LeadsState | null>(null);
   const [name, setName] = useState("");
   const [source, setSource] = useState("manual");
@@ -255,12 +269,9 @@ export function CrmLite() {
               onChange={(e) => setSource(e.target.value)}
               className="rounded-lg border border-edge bg-panel-2/60 px-2 py-1.5 text-xs text-slate-300 focus:outline-none"
             >
-              <option value="manual">Manual</option>
-              <option value="fiverr">Fiverr</option>
-              <option value="linkedin">LinkedIn</option>
-              <option value="school">School/Uni</option>
-              <option value="jobradar">Job Radar</option>
-              <option value="instagram">Instagram</option>
+              {(customer ? CUSTOMER_SOURCES : FOUNDER_SOURCES).map(([v, label]) => (
+                <option key={v} value={v}>{label}</option>
+              ))}
             </select>
             <input
               value={contact}

@@ -3,6 +3,11 @@
 import { useCallback, useState } from "react";
 import { Rocket, Copy, Check, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
+
+// School and job-seeker outreach sell the founder's Career Mind. A
+// subscriber's studio offers only the kinds that fit any business.
+const FOUNDER_ONLY = new Set(["school_outreach", "jobseeker_outreach"]);
 
 const KINDS: { id: string; label: string }[] = [
   { id: "find_leads", label: "🎯 Find leads (live)" },
@@ -16,6 +21,7 @@ const KINDS: { id: string; label: string }[] = [
 ];
 
 export function GrowthStudio() {
+  const [customer] = useState(() => isCustomer());
   const [kind, setKind] = useState("find_leads");
   const [topic, setTopic] = useState("");
   const [out, setOut] = useState("");
@@ -63,7 +69,7 @@ export function GrowthStudio() {
 
       <div className="space-y-3 p-3">
         <div className="flex flex-wrap gap-1.5">
-          {KINDS.map((k) => (
+          {KINDS.filter((k) => !(customer && FOUNDER_ONLY.has(k.id))).map((k) => (
             <button
               key={k.id}
               onClick={() => setKind(k.id)}
@@ -83,7 +89,9 @@ export function GrowthStudio() {
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && run()}
-            placeholder="Optional focus (e.g. 'universities in Pakistan' or 'businesses needing chatbots')"
+            placeholder={customer
+              ? "Optional focus (e.g. 'offices near me that order catering')"
+              : "Optional focus (e.g. 'universities in Pakistan' or 'businesses needing chatbots')"}
             className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:border-hud-amber/40 focus:outline-none"
           />
           <button

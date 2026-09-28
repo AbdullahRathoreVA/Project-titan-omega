@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Send, Share2 } from "lucide-react";
 import type { ScheduledPost } from "@/lib/types";
 import { timeAgo } from "@/lib/format";
+import { isCustomer } from "@/lib/session";
 
 const CHANNELS = ["linkedin", "facebook", "pinterest", "instagram", "twitter"];
 
@@ -86,11 +87,18 @@ export function Publishing({
             <Send className="h-3.5 w-3.5" />
             {busy ? "Scheduling…" : "Schedule post"}
           </button>
-          <p className="text-[10px] leading-relaxed text-slate-600">
-            Set <span className="text-slate-400">TITAN_PUBLISH_WEBHOOK</span> (a free
-            Zapier/Make/Buffer hook) and scheduled posts publish automatically — no
-            passwords, no ban risk. Until then they wait here as a ready queue.
-          </p>
+          {isCustomer() ? (
+            <p className="text-[10px] leading-relaxed text-slate-600">
+              Titan does not post to your accounts. Scheduled posts wait here as a
+              ready queue — copy each one to your channels when it is due.
+            </p>
+          ) : (
+            <p className="text-[10px] leading-relaxed text-slate-600">
+              Set <span className="text-slate-400">TITAN_PUBLISH_WEBHOOK</span> (a free
+              Zapier/Make/Buffer hook) and scheduled posts publish automatically — no
+              passwords, no ban risk. Until then they wait here as a ready queue.
+            </p>
+          )}
         </div>
 
         {/* queue */}

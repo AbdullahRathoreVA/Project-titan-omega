@@ -669,6 +669,9 @@ def test_a_subscribers_war_room_is_rate_limited(customer, monkeypatch):
     codes = [client.post("/api/me/growth/scan", headers=hdr).status_code
              for _ in range(ratelimit.LIMITS["warroom"][0] + 1)]
     assert codes[:-1] == [200] * (len(codes) - 1) and codes[-1] == 429
+    # Lead finding runs on the same search key and shares the same hour.
+    assert client.post("/api/me/leads/find", headers=hdr,
+                       json={"query": "cafes"}).status_code == 429
     assert client.post("/api/growth/scan").status_code == 200   # founder: unlimited
 
 
@@ -696,6 +699,117 @@ def test_a_subscriber_is_never_told_to_set_an_api_key(customer, monkeypatch):
     # The founder is still told which key to set.
     founder = client.post("/api/seo/report", json={"keyword": "x"}).json()["report"]
     assert "GROQ_API_KEY" in founder
+
+def test_the_dashboard_speaks_for_the_subscriber(customer, monkeypatch):
+    """Agent chat, the command bar, the Urdu briefing, Growth Studio and the
+    next post were all written about the founder's businesses. From a
+    subscriber's cockpit every one of them is about theirs."""
+    from app.core import clients, llm
+    from app.engines import news, research
+    client, token, workspaces = customer
+    hdr = {"X-Account-Token": token}
+    systems, prompts, searches = [], [], []
+
+    def fake(system="", prompt="", **kw):
+        systems.append(system)
+        prompts.append(prompt)
+        return "Fresh bread, warm smiles. #bakery"
+
+    monkeypatch.setattr(llm, "complete", fake)
+    monkeypatch.setattr(research, "search", lambda q, n=8: searches.append(q) or [
+        {"title": "Cafe", "url": "https://cafe.test", "content": "a cafe"}])
+    monkeypatch.setattr(news, "fetch_headlines",
+                        lambda q, n=8: [{"title": "Flour prices fall", "link": ""}])
+    own = _make_client("Own Bakery", owner="cust@example.com")
+    clients.update(own, industry="bakery", city="Lahore", website="https://bakery.test")
+    try:
+        agent_id = next(iter(workspaces.for_account("cust@example.com").agents))
+        assert client.post(f"/api/me/agents/{agent_id}/chat", headers=hdr,
+                           json={"message": "what are you doing?"}).status_code == 200
+        assert client.post("/api/me/command", headers=hdr,
+                           json={"text": "grow our sales this week"}).status_code == 200
+        gen = client.post("/api/me/intel/generate", headers=hdr,
+                          json={"kind": "school_outreach", "topic": ""}).json()
+        assert gen["kind"] == "market_analysis"      # the founder-only kind is not offered
+        assert client.post("/api/me/intel/news", headers=hdr,
+                           json={"topic": ""}).status_code == 200
+        assert client.post("/api/me/leads/find", headers=hdr,
+                           json={"query": ""}).status_code == 200
+        assert searches and all("bakery" in q for q in searches)
+        assert any("Own Bakery" in s for s in systems)
+        assert any("reporting to the owner" in s for s in systems)
+        for text in systems + prompts:
+            for word in _FOUNDER_WORDS:
+                assert word not in text, (word, text[:120])
+
+        report = client.get("/api/me/voice-report", headers=hdr).json()
+        assert report["businesses"] == 1 and "cm_users" not in report
+        assert "عبداللہ" not in report["urdu"] and "अब्दुल्लाह" not in report["hindi"]
+
+        feed = [e["message"] for e in workspaces.for_account("cust@example.com").feed]
+        assert any(m.startswith("You talked to") for m in feed)
+        assert not any("Abdullah" in m for m in feed)
+    finally:
+        clients.delete_client(own)
+
+
+def test_a_subscribers_post_never_goes_through_the_founders_webhook(customer, monkeypatch):
+    """The publishing webhook posts to the founder's own accounts."""
+    import httpx
+    from app.core import clients, llm
+    from app.engines import publisher
+    client, token, workspaces = customer
+    hdr = {"X-Account-Token": token}
+    monkeypatch.setattr(publisher, "_webhook_url", lambda: "https://hook.founder.test")
+
+    class NoNetwork:
+        def __init__(self, *a, **k):
+            raise AssertionError("a subscriber's post reached the founder's webhook")
+
+    monkeypatch.setattr(httpx, "Client", NoNetwork)
+    monkeypatch.setattr(llm, "complete", lambda **kw: "Fresh bread daily #bakery")
+
+    # No business yet: a placeholder, which cannot be approved into the queue.
+    draft = client.get("/api/me/next-post", headers=hdr).json()
+    assert draft["unavailable"] == "no_business"
+    assert client.post("/api/me/next-post/approve", headers=hdr).status_code == 409
+
+    own = _make_client("Own Bakery", owner="cust@example.com")
+    clients.update(own, industry="bakery", website="https://bakery.test")
+    try:
+        draft = client.get("/api/me/next-post", headers=hdr).json()   # rebuilt for it
+        assert "Fresh bread" in draft["caption"] and "https://bakery.test" in draft["caption"]
+        assert draft["publish"]["ready"] is False
+        assert "does not post to your accounts" in draft["publish"]["reason"]
+        approved = client.post("/api/me/next-post/approve", headers=hdr).json()
+        assert approved["sent"] is False
+        post_id = approved["scheduled_id"]
+        assert post_id in workspaces.for_account("cust@example.com").posts
+        assert post_id not in st.founder_store().posts
+        out = client.post(f"/api/me/posts/{post_id}/publish", headers=hdr).json()
+        assert out["status"] == "queued"
+        assert all("yourself" in r["detail"] for r in out["results"])
+    finally:
+        clients.delete_client(own)
+
+
+def test_the_founders_figures_and_ai_are_no_longer_public(customer, monkeypatch):
+    """/api/voice-report and /api/assistant were open 'because the Space URL
+    is private'. It is not, and anyone could read his live figures and spend
+    his AI quota. With auth on, both need his token now."""
+    import secrets
+    client, token, _ = customer
+    monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
+    monkeypatch.setenv("TITAN_SECRET", secrets.token_urlsafe(48))
+    assert client.get("/api/voice-report").status_code == 401
+    assert client.post("/api/assistant", json={"question": "hi"}).status_code == 401
+    # A subscriber still has their own, through their own door. (A new secret
+    # means a new sign-in: tokens are signed with it.)
+    from app.core import billing
+    token = billing.authenticate("cust@example.com", "password123")
+    assert client.get("/api/me/voice-report",
+                      headers={"X-Account-Token": token}).status_code == 200
+
 
 _FRONTEND = __import__("pathlib").Path(__file__).resolve().parents[2] / "frontend"
 
@@ -762,9 +876,11 @@ def test_a_customer_is_never_shown_the_founder_sample_data():
     # the next-post one would draft a post with their AI calls.
     for feed in ("none<Connector[]>([]) : api.connectors()",
                  "none<IntelligenceStatus | null>(null) : api.intelligence()",
-                 "none({ channels: [] as ChannelTile[] }) : api.channels()",
-                 "none<NextPostType | null>(null) : api.nextPost()"):
+                 "none({ channels: [] as ChannelTile[] }) : api.channels()"):
         assert f"customer ? {feed}" in cc, feed
+    # Their next post is drafted only once they have a business to promote.
+    assert ("customer && !hasBusinessRef.current ? none<NextPostType | null>(null)"
+            " : api.nextPost()") in cc
     assert ".filter(([v]) => !customer || CUSTOMER_TABS.has(v))" in cc
 
 
@@ -810,6 +926,18 @@ def test_the_war_room_screen_keeps_the_founders_repo_tools_to_himself():
         encoding="utf-8").replace("\r\n", "\n")
     assert "{/* Auto-PR to Career Mind */}\n      {!customer && (" in wr
     assert 'customer ? "live web: off" : "live web: add TAVILY_API_KEY"' in wr
+
+
+def test_the_dashboard_never_names_the_founder_to_a_subscriber():
+    """The Urdu button carried his name, the command bar suggested posting
+    about Career Mind and the CRM offered "School/Uni" as a lead source."""
+    comp = _FRONTEND / "components"
+    read = lambda name: (comp / name).read_text(encoding="utf-8")  # noqa: E731
+    assert "(customer ? CUSTOMER_SUGGESTIONS : SUGGESTIONS)" in read("CommandBar.tsx")
+    assert "(customer ? CUSTOMER_SOURCES : FOUNDER_SOURCES)" in read("CrmLite.tsx")
+    urdu = read("UrduVoiceAssistant.tsx")
+    assert 'isCustomer() ? "\U0001f399 اردو رپورٹ"' in urdu
+    assert "`${apiBase()}/voice-report`" in urdu
 
 
 def test_unbound_code_still_sees_the_founder_store():
