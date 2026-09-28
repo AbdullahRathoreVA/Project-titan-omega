@@ -76,6 +76,32 @@ def test_a_workspace_survives_a_restart(clean_workspaces):
     assert again.metrics["mrr"] == 5.0
 
 
+def test_a_subscribers_research_and_content_survive_a_restart(clean_workspaces):
+    """The founder's heartbeat re-runs his research; nothing re-runs a
+    subscriber's, and their content packs exist nowhere else. The saved state
+    goes through JSON (db.put_many uses default=str), so dates come back as
+    text and must still load."""
+    import json
+    from app.domain.schemas import Deliverable
+    workspaces = clean_workspaces
+    ws = workspaces.for_account("a@example.com")
+    ws.intel = {"summary": "bakery brief", "keywords": ["bakery lahore"]}
+    for i in range(55):
+        ws.deliverables[f"deliv-{i}"] = {
+            "id": f"deliv-{i}", "title": f"Pack {i}", "kind": "growth_strategy",
+            "agent_id": "marketing-head", "agent_name": "Content Studio",
+            "opportunity_id": None, "content": "x", "source": "ai",
+            "created_at": st.now()}
+    state = json.loads(json.dumps(workspaces.export_state(), default=str))
+    workspaces.reset()
+    workspaces.import_state(state)
+    again = workspaces.for_account("a@example.com")
+    assert again.intel["summary"] == "bakery brief"
+    assert len(again.deliverables) == 50                 # the newest 50
+    assert "deliv-54" in again.deliverables and "deliv-0" not in again.deliverables
+    Deliverable(**again.deliverables["deliv-54"])        # still a valid record
+
+
 def test_saving_inside_a_customer_request_saves_the_founder_not_the_customer(
         clean_workspaces, monkeypatch, tmp_path):
     """Routes call persistence.save(STORE). Bound to a customer, STORE is
@@ -170,16 +196,22 @@ def _plant_founder_canaries():
                          "source": _CANARY, "contact": _CANARY, "note": _CANARY,
                          "updated_at": "2026-09-28T00:00:00+00:00"}
     f.decisions.append({"topic": _CANARY, "decision": _CANARY})
+    f.intel = {"opportunities": [], "competitors": [], "keywords": [_CANARY],
+               "headlines": [], "summary": f"{_CANARY} intel", "live": False,
+               "last_run": None}
     for rt in f.agents.values():
         rt.current_task = f"{_CANARY} task"
 
 
-def test_no_customer_route_ever_shows_founder_data(customer):
+def test_no_customer_route_ever_shows_founder_data(customer, monkeypatch):
     """The one that matters. Fails OPEN: every route on the allowlist is
     called, including ones added later, and any founder canary in any body
     fails the suite."""
-    from app.core import clients, cockpit_scope, voice_sessions as vs
+    from app.core import api_adapters, clients, cockpit_scope, voice_sessions as vs
     client, token, _ = customer
+    # The two live public-data routes would otherwise call out to the internet.
+    monkeypatch.setattr(api_adapters, "exchange_rates", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(api_adapters, "weather_for_place", lambda *a, **k: {"ok": True})
     _plant_founder_canaries()
     founders_business = _make_client(f"{_CANARY} Founder Business")
     own = _make_client("Own Business", owner="cust@example.com")
@@ -198,6 +230,8 @@ def test_no_customer_route_ever_shows_founder_data(customer):
                       else "monthly" if "/bi/" in pattern else own)
             path = "/api/me" + (pattern[len("/api"):]
                                 .replace("[^/]+", own_id).replace("\\.", "."))
+            if path.endswith("/live/weather"):
+                path += "?place=Lahore"
             r = client.get(path, headers=hdr)
             assert r.status_code == 200, (path, r.status_code, r.text[:200])
             body = r.content.decode("latin-1")
@@ -211,6 +245,7 @@ def test_no_customer_route_ever_shows_founder_data(customer):
         f.agents.clear(); f.opportunities.clear(); f.feed.clear()
         f.metrics.clear(); f.revenue_entries.clear(); f.expenses.clear()
         f.leads.clear(); f.decisions.clear()
+        f.intel = None
 
 
 def test_every_route_not_on_the_allowlist_is_closed_to_customers(customer):
@@ -568,6 +603,100 @@ def test_the_executive_report_names_only_the_callers_businesses(customer):
         clients.delete_client(own)
 
 
+def test_the_war_room_works_for_the_subscribers_own_business(customer, monkeypatch):
+    """The War Room's prompts named the founder's businesses and every debate
+    went to his Telegram. A subscriber's researches, debates and writes for
+    their own business, and nothing of theirs reaches the founder."""
+    from app.core import clients, llm
+    from app.engines import news, research, telegram_bot
+    client, token, workspaces = customer
+    hdr = {"X-Account-Token": token}
+    systems, searches, pushed = [], [], []
+    monkeypatch.setattr(llm, "complete", lambda system="", prompt="", **kw:
+                        systems.append(system) or "CONFIDENCE: 60%")
+    monkeypatch.setattr(research, "search", lambda q, n=8: searches.append(q) or [])
+    monkeypatch.setattr(news, "fetch_headlines", lambda q, n=8: [])
+    monkeypatch.setattr(telegram_bot, "send_to_founder",
+                        lambda *a, **k: pushed.append(a) or True)
+    founder = st.founder_store()
+    before = (founder.intel, len(founder.decisions), len(founder.deliverables))
+
+    # No business yet: nothing to research, and nothing is spent finding that out.
+    intel = client.post("/api/me/growth/scan", headers=hdr).json()
+    assert "Add your business" in intel["summary"]
+    assert systems == [] and searches == []
+
+    own = _make_client("Own Bakery", owner="cust@example.com")
+    clients.update(own, industry="bakery", city="Lahore")
+    try:
+        assert client.post("/api/me/growth/scan", headers=hdr).status_code == 200
+        assert client.post("/api/me/warroom/debate", headers=hdr,
+                           json={"topic": ""}).status_code == 200
+        seo = client.post("/api/me/seo/report", headers=hdr, json={"keyword": ""}).json()
+        assert seo["keyword"] == "bakery Lahore"
+        assert client.post("/api/me/content/repurpose", headers=hdr,
+                           json={"idea": "fresh bread every morning"}).status_code == 200
+        assert searches and all("bakery" in q for q in searches)
+        assert any("Own Bakery" in s for s in systems)
+        for s in systems:
+            for word in _FOUNDER_WORDS:
+                assert word not in s, (word, s[:120])
+        assert pushed == []                       # the founder's phone stays quiet
+        ws = workspaces.for_account("cust@example.com")
+        assert ws.intel and len(ws.decisions) == 1 and len(ws.deliverables) == 1
+        assert "Own Bakery" in ws.decisions[0]["goal"]
+        assert (founder.intel, len(founder.decisions),
+                len(founder.deliverables)) == before
+
+        # The founder's own War Room is exactly what it was.
+        systems.clear()
+        client.post("/api/warroom/debate", json={"topic": "founder goal"})
+        assert len(pushed) == 1 and any("Abdullah" in s for s in systems)
+    finally:
+        founder.decisions[:] = founder.decisions[:before[1]]
+        founder.pending_decision = None
+        clients.delete_client(own)
+
+
+def test_a_subscribers_war_room_is_rate_limited(customer, monkeypatch):
+    """Each click is web searches on the platform's key plus AI calls."""
+    from app.core import ratelimit
+    from app.engines import autonomous
+    client, token, _ = customer
+    hdr = {"X-Account-Token": token}
+    monkeypatch.setattr(ratelimit, "ENABLED", True)
+    monkeypatch.setattr(autonomous, "growth_cycle", lambda store=None: {"ok": True})
+    codes = [client.post("/api/me/growth/scan", headers=hdr).status_code
+             for _ in range(ratelimit.LIMITS["warroom"][0] + 1)]
+    assert codes[:-1] == [200] * (len(codes) - 1) and codes[-1] == 429
+    assert client.post("/api/growth/scan").status_code == 200   # founder: unlimited
+
+
+
+def test_a_subscriber_is_never_told_to_set_an_api_key(customer, monkeypatch):
+    """With no AI answer the founder's screens say which key to set. A
+    subscriber cannot set keys, so they hear the real reason instead - and
+    what to do about it when it is their plan's limit."""
+    from app.core import billing, llm
+    from app.engines import news, research
+    client, token, _ = customer
+    hdr = {"X-Account-Token": token}
+    monkeypatch.setattr(llm, "complete", lambda **kw: None)
+    monkeypatch.setattr(research, "search", lambda q, n=8: [])
+    monkeypatch.setattr(news, "fetch_headlines", lambda q, n=8: [])
+    down = client.post("/api/me/seo/report", headers=hdr,
+                       json={"keyword": "bakery"}).json()["report"]
+    assert "could not be reached" in down and "KEY" not in down
+    billing._accounts["cust@example.com"]["usage"]["ai_calls"] = 10 ** 6
+    pack = client.post("/api/me/content/repurpose", headers=hdr,
+                       json={"idea": "fresh bread daily"}).json()
+    for text in pack.values():
+        assert "KEY" not in text and "llm/health" not in text
+    assert "limit reached" in pack["blog"] and "resets in" in pack["blog"]
+    # The founder is still told which key to set.
+    founder = client.post("/api/seo/report", json={"keyword": "x"}).json()["report"]
+    assert "GROQ_API_KEY" in founder
+
 _FRONTEND = __import__("pathlib").Path(__file__).resolve().parents[2] / "frontend"
 
 # Which /api routes each customer-visible tab reads. A tab may be added to
@@ -590,6 +719,11 @@ TAB_ROUTES = {
     "finance": ["/api/finance", "/api/performance"],
     "customers": ["/api/leads"],
     "executive": ["/api/bi/monthly", "/api/mine/seo-overview"],
+    "graph": ["/api/divisions", "/api/agents"],
+    "city": ["/api/divisions", "/api/agents"],
+    "warroom": ["/api/growth/intel"],
+    "apis": ["/api/apis/integrated", "/api/apis", "/api/apis/live/rates",
+             "/api/apis/live/weather"],
 }
 
 
@@ -668,6 +802,14 @@ def test_the_money_screens_show_a_subscriber_only_their_own():
     assert 'customer ? "/mine/seo-overview" : "/founder/seo-overview"' in ex
     rev = (comp / "RevenueTracker.tsx").read_text(encoding="utf-8")
     assert "const sources = customer ? CUSTOMER_SOURCES : SOURCES;" in rev
+
+
+def test_the_war_room_screen_keeps_the_founders_repo_tools_to_himself():
+    """The auto-PR panel opens pull requests on Titan's own repository."""
+    wr = (_FRONTEND / "components" / "WarRoomView.tsx").read_text(
+        encoding="utf-8").replace("\r\n", "\n")
+    assert "{/* Auto-PR to Career Mind */}\n      {!customer && (" in wr
+    assert 'customer ? "live web: off" : "live web: add TAVILY_API_KEY"' in wr
 
 
 def test_unbound_code_still_sees_the_founder_store():

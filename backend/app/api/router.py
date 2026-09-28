@@ -966,7 +966,7 @@ def _subscriber_brief(email: str) -> dict:
     """What Ask Titan knows when a subscriber asks: their plan, their own
     businesses and their own leads. Nothing of Abdullah's, nothing of anyone
     else's - the model cannot repeat what it was never given."""
-    from ..core import billing, crm
+    from ..core import billing, crm, quota
     from ..store import founder_store
 
     acct = billing.public(email)
@@ -1000,11 +1000,7 @@ def _subscriber_brief(email: str) -> dict:
     n, k = len(businesses), len(leads)
     en = (f"You have {n} business{'es' if n != 1 else ''} on Titan and "
           f"{k} lead{'s' if k != 1 else ''} in your CRM. ")
-    quota_verdict = billing.check_quota(email, "ai_calls", 1)
-    if not quota_verdict.get("allowed", True):
-        en += quota_verdict.get("reason") or "This month's AI answers are used up."
-    else:
-        en += "I couldn't reach the AI just now - please ask again in a moment."
+    en += quota.no_answer_note("")
     return {
         "persona": persona,
         "context": context,

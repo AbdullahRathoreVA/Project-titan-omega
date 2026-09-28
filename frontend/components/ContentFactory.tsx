@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Copy, Factory, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
 import type { RepurposePack } from "@/lib/types";
 
 const LABELS: [keyof RepurposePack, string][] = [
@@ -48,7 +49,9 @@ export function ContentFactory() {
             value={idea}
             onChange={(e) => setIdea(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void run()}
-            placeholder="One idea (e.g. '5 AI resume mistakes students make')"
+            placeholder={isCustomer()
+              ? "One idea (e.g. 'why our regulars keep coming back')"
+              : "One idea (e.g. '5 AI resume mistakes students make')"}
             className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-hud-cyan/40 focus:outline-none"
           />
           <button

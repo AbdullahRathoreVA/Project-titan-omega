@@ -88,6 +88,32 @@ def spend(kind: str = AI_CALLS, cost: int = 1) -> dict:
             "reason": verdict.get("reason", ""), "account": email}
 
 
+def no_answer_note(founder_text: str) -> str:
+    """What to say when llm.complete() came back empty.
+
+    The founder's screens tell him which key to set. A subscriber cannot set
+    keys, so they get the real reason instead: their plan's AI calls are used
+    up (and what to do about it), or the AI could not be reached.
+    """
+    email = current()
+    if not email:
+        return founder_text
+    try:
+        from . import billing
+        verdict = billing.check_quota(email, AI_CALLS, 1)
+    except Exception:                                          # noqa: BLE001
+        verdict = {"allowed": True}
+    if not verdict.get("allowed", True):
+        parts = [verdict.get("reason")
+                 or "This month's AI answers on your plan are used up."]
+        if verdict.get("resets_in_days") is not None:
+            parts.append(f"It resets in {verdict['resets_in_days']:g} days.")
+        if verdict.get("upgrade_gives"):
+            parts.append(verdict["upgrade_gives"])
+        return " ".join(parts)
+    return "The AI could not be reached just now. Please try again in a moment."
+
+
 def status() -> dict:
     """What this request would be charged to. Diagnostics only."""
     email = current()

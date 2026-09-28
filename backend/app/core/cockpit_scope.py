@@ -76,6 +76,21 @@ ALLOWED: Tuple[Tuple[str, str], ...] = (
     # limits its client list and lead funnel to theirs.
     ("GET", r"/api/bi/[^/]+"),
     ("GET", r"/api/mine/seo-overview"),
+    # Phase 5 - War Room. engines/owner.py points research, the debate, the
+    # SEO co-pilot and the content factory at the subscriber's own businesses,
+    # and api/growth.py rate-limits them. Opening a PR on Titan's own repo
+    # (/api/devops/pr) stays founder-only.
+    ("GET", r"/api/growth/intel"),
+    ("POST", r"/api/growth/scan"),
+    ("POST", r"/api/warroom/debate"),
+    ("POST", r"/api/seo/report"),
+    ("POST", r"/api/content/repurpose"),
+    # APIs: the public-API catalogue and the keyless live adapters. Metadata
+    # and public data only - no account, no founder credential.
+    ("GET", r"/api/apis"),
+    ("GET", r"/api/apis/integrated"),
+    ("GET", r"/api/apis/live/rates"),
+    ("GET", r"/api/apis/live/weather"),
 )
 
 _COMPILED = tuple((m, re.compile(p + r"\Z")) for m, p in ALLOWED)

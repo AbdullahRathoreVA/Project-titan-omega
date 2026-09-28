@@ -11,6 +11,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
 import type { Debate, GrowthIntel, PrResult, SeoReport } from "@/lib/types";
 import { NeuralString } from "./NeuralString";
 import { ContentFactory } from "./ContentFactory";
@@ -18,6 +19,11 @@ import { ContentFactory } from "./ContentFactory";
 // The War Room: Titan's autonomous growth brain. Live research engine (runs
 // 24/7 server-side), a marketing team that argues then decides, and an SEO
 // co-pilot — all wrapped around the unique 3D Neural String signature.
+//
+// In a subscriber's cockpit the same engines work on their own business
+// (backend engines/owner.py), research runs when they ask rather than on the
+// heartbeat, and the auto-PR panel - a pull request on Titan's own repo - is
+// not shown.
 export function WarRoomView({
   intensity,
   agentCount,
@@ -25,8 +31,12 @@ export function WarRoomView({
   intensity: number;
   agentCount: number;
 }) {
+  const [customer] = useState(() => isCustomer());
   const [intel, setIntel] = useState<GrowthIntel | null>(null);
   const [scanning, setScanning] = useState(false);
+  // A click that came back empty. Said out loud rather than leaving the
+  // button looking like it did nothing.
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [topic, setTopic] = useState("");
   const [debate, setDebate] = useState<Debate | null>(null);
@@ -52,12 +62,21 @@ export function WarRoomView({
     return () => clearInterval(id);
   }, [loadIntel]);
 
+  const failed = () =>
+    setNotice(
+      customer
+        ? "That didn't go through. The War Room allows 10 runs an hour on your plan; if you haven't used them, try again in a moment."
+        : "That didn't go through — try again in a moment.",
+    );
+
   const scan = async () => {
     if (scanning) return;
     setScanning(true);
+    setNotice(null);
     try {
       const res = await api.growthScan();
       if (res) setIntel(res);
+      else failed();
     } finally {
       setScanning(false);
     }
@@ -66,8 +85,11 @@ export function WarRoomView({
   const runDebate = async () => {
     if (debating) return;
     setDebating(true);
+    setNotice(null);
     try {
-      setDebate(await api.warroomDebate(topic));
+      const res = await api.warroomDebate(topic);
+      setDebate(res);
+      if (!res) failed();
     } finally {
       setDebating(false);
     }
@@ -76,8 +98,11 @@ export function WarRoomView({
   const runSeo = async () => {
     if (seoBusy) return;
     setSeoBusy(true);
+    setNotice(null);
     try {
-      setSeo(await api.seoReport(keyword));
+      const res = await api.seoReport(keyword);
+      setSeo(res);
+      if (!res) failed();
     } finally {
       setSeoBusy(false);
     }
@@ -116,7 +141,7 @@ export function WarRoomView({
             app core ↔ {agentCount || 102} agents · strings pulse with live activity
           </span>
           <span className="min-w-0 truncate sm:whitespace-nowrap">
-            {intel?.live ? "live web: ON" : "live web: add TAVILY_API_KEY"}
+            {intel?.live ? "live web: ON" : customer ? "live web: off" : "live web: add TAVILY_API_KEY"}
           </span>
         </div>
       </section>
@@ -127,7 +152,7 @@ export function WarRoomView({
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-hud-emerald" strokeWidth={1.6} />
             <h2 className="text-sm font-medium text-slate-200">Autonomous Growth Engine</h2>
-            <span className="hud-label">24/7 research</span>
+            <span className="hud-label">{customer ? "on demand" : "24/7 research"}</span>
           </div>
           <button
             onClick={scan}
@@ -142,7 +167,10 @@ export function WarRoomView({
           <div>
             <div className="hud-label mb-1.5">This week&apos;s brief</div>
             <p className="scroll-thin max-h-48 overflow-y-auto whitespace-pre-line text-xs leading-relaxed text-slate-300">
-              {intel?.summary || "Booting the research engine… (runs automatically every 15 min)"}
+              {intel?.summary ||
+                (customer
+                  ? "Press Scan now and Titan researches your market: demand, competitors and the keywords people search."
+                  : "Booting the research engine… (runs automatically every 15 min)")}
             </p>
             {intel?.keywords && intel.keywords.length > 0 && (
               <div className="mt-3">
@@ -164,6 +192,12 @@ export function WarRoomView({
         </div>
       </section>
 
+      {notice && (
+        <div className="rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-3 py-2 text-[11px] text-hud-amber">
+          {notice}
+        </div>
+      )}
+
       <ContentFactory />
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -182,7 +216,7 @@ export function WarRoomView({
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && void runDebate()}
-                placeholder="Goal (e.g. first 10 Fiverr orders, free)"
+                placeholder={customer ? "Goal (e.g. 10 new customers this month, free)" : "Goal (e.g. first 10 Fiverr orders, free)"}
                 className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-hud-rose/40 focus:outline-none"
               />
               <button
@@ -238,7 +272,7 @@ export function WarRoomView({
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && void runSeo()}
-                placeholder="Keyword (e.g. AI resume help)"
+                placeholder={customer ? "Keyword (e.g. bakery in Lahore)" : "Keyword (e.g. AI resume help)"}
                 className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-hud-amber/40 focus:outline-none"
               />
               <button
@@ -264,52 +298,54 @@ export function WarRoomView({
       </div>
 
       {/* Auto-PR to Career Mind */}
-      <section className="panel">
-        <header className="panel-header">
-          <div className="flex items-center gap-2">
-            <GitPullRequest className="h-4 w-4 text-hud-blue" strokeWidth={1.6} />
-            <h2 className="text-sm font-medium text-slate-200">Auto-PR to Career Mind</h2>
-          </div>
-          <span className="hud-label">real pull request</span>
-        </header>
-        <div className="space-y-3 p-3">
-          <p className="text-[11px] text-slate-500">
-            An agent drafts the change and opens a real pull request on
-            AbdullahRathoreVA/career-mind — you review and merge. Safe: it edits one
-            file and never auto-merges. (Needs GITHUB_TOKEN with repo write scope.)
-          </p>
-          <textarea
-            value={prInstruction}
-            onChange={(e) => setPrInstruction(e.target.value)}
-            rows={2}
-            className="scroll-thin w-full resize-none rounded-lg border border-edge bg-panel-2/60 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-hud-blue/40 focus:outline-none"
-            placeholder="What should the agent improve? (defaults to the README)"
-          />
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={runPr}
-              disabled={prBusy}
-              className="flex items-center gap-1.5 rounded-lg border border-hud-blue/40 bg-hud-blue/10 px-3 py-1.5 text-xs text-hud-blue hover:bg-hud-blue/20 disabled:opacity-50"
-            >
-              <GitPullRequest className="h-3.5 w-3.5" />
-              {prBusy ? "Drafting & opening PR…" : "Draft & open PR"}
-            </button>
-            {pr?.ok && pr.pr_url && (
-              <a href={pr.pr_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-hud-emerald hover:underline">
-                View PR <ExternalLink className="h-3 w-3" />
-              </a>
+      {!customer && (
+        <section className="panel">
+          <header className="panel-header">
+            <div className="flex items-center gap-2">
+              <GitPullRequest className="h-4 w-4 text-hud-blue" strokeWidth={1.6} />
+              <h2 className="text-sm font-medium text-slate-200">Auto-PR to Career Mind</h2>
+            </div>
+            <span className="hud-label">real pull request</span>
+          </header>
+          <div className="space-y-3 p-3">
+            <p className="text-[11px] text-slate-500">
+              An agent drafts the change and opens a real pull request on
+              AbdullahRathoreVA/career-mind — you review and merge. Safe: it edits one
+              file and never auto-merges. (Needs GITHUB_TOKEN with repo write scope.)
+            </p>
+            <textarea
+              value={prInstruction}
+              onChange={(e) => setPrInstruction(e.target.value)}
+              rows={2}
+              className="scroll-thin w-full resize-none rounded-lg border border-edge bg-panel-2/60 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-hud-blue/40 focus:outline-none"
+              placeholder="What should the agent improve? (defaults to the README)"
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={runPr}
+                disabled={prBusy}
+                className="flex items-center gap-1.5 rounded-lg border border-hud-blue/40 bg-hud-blue/10 px-3 py-1.5 text-xs text-hud-blue hover:bg-hud-blue/20 disabled:opacity-50"
+              >
+                <GitPullRequest className="h-3.5 w-3.5" />
+                {prBusy ? "Drafting & opening PR…" : "Draft & open PR"}
+              </button>
+              {pr?.ok && pr.pr_url && (
+                <a href={pr.pr_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-hud-emerald hover:underline">
+                  View PR <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+            {pr?.ok && (
+              <div className="text-xs text-hud-emerald">
+                ✅ Pull request opened on {pr.repo} → {pr.path}. Review and merge it on GitHub.
+              </div>
+            )}
+            {pr && !pr.ok && (
+              <div className="text-xs text-hud-rose">⚠️ {pr.error}</div>
             )}
           </div>
-          {pr?.ok && (
-            <div className="text-xs text-hud-emerald">
-              ✅ Pull request opened on {pr.repo} → {pr.path}. Review and merge it on GitHub.
-            </div>
-          )}
-          {pr && !pr.ok && (
-            <div className="text-xs text-hud-rose">⚠️ {pr.error}</div>
-          )}
-        </div>
-      </section>
+        </section>
+      )}
     </div>
   );
 }
@@ -333,7 +369,11 @@ function Linklist({
         <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
       </div>
       {items.length === 0 ? (
-        <div className="text-[10px] text-slate-600">No live results yet — add TAVILY_API_KEY for live web search.</div>
+        <div className="text-[10px] text-slate-600">
+          {isCustomer()
+            ? "No live results yet — press Scan now."
+            : "No live results yet — add TAVILY_API_KEY for live web search."}
+        </div>
       ) : (
         <div className="scroll-thin max-h-40 space-y-1 overflow-y-auto pr-1">
           {items.slice(0, 6).map((it, i) => (

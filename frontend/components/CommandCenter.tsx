@@ -81,7 +81,7 @@ const POLL_MS = 5000;
 // here together with its routes there.
 const CUSTOMER_TABS = new Set<string>([
   "universe", "dashboard", "mission", "clients", "seo", "crm", "voice",
-  "finance", "customers", "executive",
+  "finance", "customers", "executive", "graph", "city", "warroom", "apis",
 ]);
 
 export function CommandCenter() {

@@ -23,8 +23,12 @@ from ..store import AgentRuntime, Store, now
 WAITING = "Waiting for your first business - add one in Clients"
 
 _METRICS = ("mrr", "traffic", "pipeline_value", "customers", "conversion_rate")
-# What survives a restart. Same fields the founder's Store keeps.
-_DURABLE = ("metrics", "revenue_entries", "expenses", "leads", "decisions")
+# What survives a restart: the fields the founder's Store keeps, plus the War
+# Room research and content packs. His heartbeat re-runs his research; nothing
+# re-runs a subscriber's, and their content packs exist nowhere else.
+_DURABLE = ("metrics", "revenue_entries", "expenses", "leads", "decisions",
+            "intel", "deliverables")
+_KEEP_DELIVERABLES = 50
 
 _lock = threading.RLock()
 _spaces: Dict[str, Store] = {}
@@ -53,6 +57,10 @@ def _restore(ws: Store, snap: dict) -> None:
             setattr(ws, name, snap[name])
     if isinstance(snap.get("leads"), dict):
         ws.leads = snap["leads"]
+    if isinstance(snap.get("intel"), dict):
+        ws.intel = snap["intel"]
+    if isinstance(snap.get("deliverables"), dict):
+        ws.deliverables = snap["deliverables"]
 
 
 def for_account(email: str) -> Store:
@@ -84,6 +92,9 @@ def export_state() -> dict:
                 "expenses": ws.expenses,
                 "leads": ws.leads,
                 "decisions": ws.decisions,
+                "intel": ws.intel,
+                # Insertion order is creation order; keep the newest.
+                "deliverables": dict(list(ws.deliverables.items())[-_KEEP_DELIVERABLES:]),
             }
         return out
 

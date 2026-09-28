@@ -11,15 +11,19 @@ Three honest capabilities, all degrade gracefully (never raise, never fake):
 
 With no ``TAVILY_API_KEY`` the web search returns [] and we fall back to an LLM
 brainstorm; with no LLM key the text falls back to a clear "set a key" note.
+
+From a subscriber's cockpit (/api/me) all three work on the subscriber's own
+businesses instead of the founder's (see engines/owner.py), and a debate is
+never pushed to the founder's Telegram.
 """
 
 from __future__ import annotations
 
 from typing import Dict, List
 
-from ..core import llm, model_router
+from ..core import llm, model_router, quota
 from ..store import STORE, Store, now
-from . import news, research
+from . import news, owner, research
 
 
 def _empty() -> dict:
@@ -47,8 +51,43 @@ def _rows(results: List[dict]) -> List[dict]:
     ]
 
 
+def _sources(opp: List[dict], comp: List[dict], heads: List[dict]) -> str:
+    src_parts = []
+    if opp:
+        src_parts.append("EARNING / OPPORTUNITY RESULTS:\n" + "\n".join(f"- {r['title']} | {r['url']}\n  {r['content']}" for r in opp))
+    if comp:
+        src_parts.append("COMPETITOR / NICHE RESULTS:\n" + "\n".join(f"- {r['title']} | {r['url']}\n  {r['content']}" for r in comp))
+    if heads:
+        src_parts.append("TODAY'S HEADLINES:\n" + "\n".join(f"- {h['title']}" for h in heads))
+    return "\n\n".join(src_parts) or "No live web results (add TAVILY_API_KEY for live search)."
+
+
+def _save_intel(store: Store, opp, comp, heads, summary, kw_raw, live, label) -> dict:
+    keywords = [k.strip() for k in (kw_raw or "").replace("\n", ",").split(",") if k.strip()][:8]
+    intel = {
+        "opportunities": _rows(opp),
+        "competitors": _rows(comp),
+        "keywords": keywords,
+        "headlines": [{"title": h["title"], "link": h.get("link", "")} for h in heads],
+        "summary": summary,
+        "live": live,
+        "last_run": now().isoformat(),
+    }
+    store.intel = intel
+    store.emit(
+        "growth-autonomous", "discovery",
+        f"{label}: {len(intel['opportunities'])} opportunities, "
+        f"{len(intel['competitors'])} competitor signals, {len(keywords)} keywords.",
+        "success",
+    )
+    return intel
+
+
 def growth_cycle(store: Store = STORE) -> dict:
     """One full research pass. Safe to call repeatedly (heartbeat or on demand)."""
+    businesses = owner.subscriber_businesses()
+    if businesses is not None:
+        return _subscriber_growth_cycle(businesses, store)
     opp = research.search(
         "freelance Upwork projects hiring AI chatbot automation resume writing remote, "
         "and paid contests or grants for student edtech founders",
@@ -61,15 +100,7 @@ def growth_cycle(store: Store = STORE) -> dict:
     )
     heads = news.fetch_headlines("AI careers OR freelancing OR edtech students jobs", 6)
     live = bool(opp or comp)
-
-    src_parts = []
-    if opp:
-        src_parts.append("EARNING / OPPORTUNITY RESULTS:\n" + "\n".join(f"- {r['title']} | {r['url']}\n  {r['content']}" for r in opp))
-    if comp:
-        src_parts.append("COMPETITOR / NICHE RESULTS:\n" + "\n".join(f"- {r['title']} | {r['url']}\n  {r['content']}" for r in comp))
-    if heads:
-        src_parts.append("TODAY'S HEADLINES:\n" + "\n".join(f"- {h['title']}" for h in heads))
-    src = "\n\n".join(src_parts) or "No live web results (add TAVILY_API_KEY for live search)."
+    src = _sources(opp, comp, heads)
 
     summary = llm.complete(
         system=(
@@ -95,25 +126,55 @@ def growth_cycle(store: Store = STORE) -> dict:
         prompt=src if live else "AI career guidance for students; affordable AI freelance services",
         max_tokens=120,
     )
-    keywords = [k.strip() for k in (kw_raw or "").replace("\n", ",").split(",") if k.strip()][:8]
+    return _save_intel(store, opp, comp, heads, summary, kw_raw, live,
+                       "Autonomous growth cycle")
 
-    intel = {
-        "opportunities": _rows(opp),
-        "competitors": _rows(comp),
-        "keywords": keywords,
-        "headlines": [{"title": h["title"], "link": h.get("link", "")} for h in heads],
-        "summary": summary,
-        "live": live,
-        "last_run": now().isoformat(),
-    }
-    store.intel = intel
-    store.emit(
-        "growth-autonomous", "discovery",
-        f"Autonomous growth cycle: {len(intel['opportunities'])} opportunities, "
-        f"{len(intel['competitors'])} competitor signals, {len(keywords)} keywords.",
-        "success",
+
+def _subscriber_growth_cycle(businesses: list, store: Store) -> dict:
+    """The same research pass, about the subscriber's own market.
+
+    With no business on file there is nothing to research, so it says so and
+    spends none of their AI calls or the platform's search quota."""
+    if not businesses:
+        intel = {**_empty(), "last_run": now().isoformat(), "summary": (
+            "Add your business in the Clients tab first. The War Room "
+            "researches your market, and it has nothing to research yet.")}
+        store.intel = intel
+        return intel
+
+    main = businesses[0]
+    trade = main.get("industry") or main.get("business_name") or "local business"
+    place = " ".join(x for x in (main.get("city"), main.get("country")) if x)
+    desc = owner.describe(businesses)
+
+    opp = research.search(f"{trade} {place} customer demand and marketing opportunities", 6)
+    comp = research.search(f"best {trade} {place} competitors and reviews", 6)
+    heads = news.fetch_headlines(f"{trade} {place}".strip(), 6)
+    live = bool(opp or comp)
+    src = _sources(opp, comp, heads)
+
+    summary = llm.complete(
+        system=(
+            f"You are the growth operator for {desc}. From the live research "
+            "below, write a tight brief for the owner: the 3 best moves to win "
+            "customers THIS WEEK, who the real competitors are and their weak "
+            "spot, and the single highest-leverage zero-cost action right now. "
+            "Short bullets."
+        ),
+        prompt=src,
+        max_tokens=700,
+    ) or quota.no_answer_note("")
+    kw_raw = llm.complete(
+        task=model_router.KEYWORDS,
+        system=(
+            f"List 8 specific, high-intent SEO keywords people search when they "
+            f"are looking for {desc}. Output ONLY a comma-separated list, no numbering."
+        ),
+        prompt=src if live else f"{trade} {place}".strip(),
+        max_tokens=120,
     )
-    return intel
+    return _save_intel(store, opp, comp, heads, summary, kw_raw, live,
+                       f"Growth research for {main.get('business_name') or 'your business'}")
 
 
 # --- marketing war room (debate -> decide -> execute) ----------------------
@@ -127,21 +188,32 @@ _TEAM = [
 
 def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
     """The marketing team argues; the head decides and gives an action plan."""
-    goal = topic.strip() or (
-        "Grow Career Mind AI signups and Upwork orders with a $0 budget this week."
-    )
+    businesses = owner.subscriber_businesses()
+    subscriber = businesses is not None
+    if subscriber:
+        desc = owner.describe(businesses) if businesses else "a small business"
+        first = businesses[0].get("business_name") if businesses else "your business"
+        goal = topic.strip() or (
+            f"Win more customers for {first} with a $0 budget this week.")
+        team, council = f"the marketing team for {desc}", f"the executive council for {desc}"
+    else:
+        goal = topic.strip() or (
+            "Grow Career Mind AI signups and Upwork orders with a $0 budget this week."
+        )
+        team, council = "Abdullah's team", "Abdullah's executive council"
 
     proposals: List[Dict[str, str]] = []
     for name, style in _TEAM:
         pitch = llm.complete(
             system=(
-                f"You are {name}, a marketing expert ({style}) on Abdullah's team. The "
+                f"You are {name}, a marketing expert ({style}) on {team}. The "
                 f"goal: {goal}. Give ONE concrete, zero-cost proposal in 2-3 sentences. "
                 "Be specific and bold — you're competing with teammates to win the plan."
             ),
             prompt=goal,
             max_tokens=220,
-        ) or f"{name}: (set a free LLM key like GROQ_API_KEY to hear my pitch.)"
+        ) or quota.no_answer_note(
+            f"{name}: (set a free LLM key like GROQ_API_KEY to hear my pitch.)")
         proposals.append({"name": name, "proposal": pitch})
 
     debate = "\n".join(f"{p['name']}: {p['proposal']}" for p in proposals)
@@ -154,7 +226,7 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
     ):
         note = llm.complete(
             system=(
-                f"You are {name} on Abdullah's executive council. In 2-3 blunt, specific "
+                f"You are {name} on {council}. In 2-3 blunt, specific "
                 f"sentences, {role}. Challenge weak thinking — don't rubber-stamp."
             ),
             prompt=f"Goal: {goal}\n\nTeam pitches:\n{debate}",
@@ -173,7 +245,8 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
         ),
         prompt=f"Team pitches:\n{debate}\n\nCouncil critiques:\n{critique_text}\n\nGoal: {goal}",
         max_tokens=500,
-    ) or "Decision pending — add a free LLM key (GROQ_API_KEY) to run the war room."
+    ) or quota.no_answer_note(
+        "Decision pending — add a free LLM key (GROQ_API_KEY) to run the war room.")
 
     import re as _re
 
@@ -201,19 +274,21 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
         "Marketing war room debated and locked this week's growth play.", "success",
     )
 
-    # Push the decision to Abdullah's phone for approval (no-op without Telegram).
-    store.pending_decision = {"goal": goal, "decision": decision, "time": now().isoformat()}
-    try:
-        from . import telegram_bot
+    # Push the decision to Abdullah's phone for approval (no-op without
+    # Telegram). Never a subscriber's: their plan is theirs, not his to approve.
+    if not subscriber:
+        store.pending_decision = {"goal": goal, "decision": decision, "time": now().isoformat()}
+        try:
+            from . import telegram_bot
 
-        telegram_bot.send_to_founder(
-            "⚔️ WAR ROOM DECISION — approval needed\n\n"
-            f"Goal: {goal}\n\n{decision[:2800]}\n\n"
-            "Reply /approveplan to lock it in, or /decision to re-read it.",
-            store,
-        )
-    except Exception:
-        pass
+            telegram_bot.send_to_founder(
+                "⚔️ WAR ROOM DECISION — approval needed\n\n"
+                f"Goal: {goal}\n\n{decision[:2800]}\n\n"
+                "Reply /approveplan to lock it in, or /decision to re-read it.",
+                store,
+            )
+        except Exception:
+            pass
 
     return {
         "goal": goal,
@@ -228,7 +303,21 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
 
 def seo_report(keyword: str = "", store: Store = STORE) -> dict:
     """Analyse the live ranking landscape for a keyword + an action list to climb."""
-    kw = keyword.strip() or "AI career guidance for students"
+    businesses = owner.subscriber_businesses()
+    if businesses is not None:
+        main = businesses[0] if businesses else {}
+        kw = keyword.strip() or " ".join(
+            x for x in (main.get("industry"), main.get("city")) if x
+        ) or main.get("business_name", "")
+        if not kw:
+            return {"keyword": "", "live": False, "competitors": [], "report": (
+                "Type a keyword, or add your business in the Clients tab so "
+                "Titan can pick one for you.")}
+        for_whom = (f"the owner of {owner.describe(businesses)}" if businesses
+                    else "a small business owner")
+    else:
+        kw = keyword.strip() or "AI career guidance for students"
+        for_whom = "Abdullah (Career Mind AI student platform + Upwork AI gigs)"
     results = research.search(f"{kw} top ranking websites and who ranks for it", 8)
     live = bool(results)
     src = "\n".join(f"- {r['title']} | {r['url']}\n  {r['content']}" for r in results) or (
@@ -240,13 +329,13 @@ def seo_report(keyword: str = "", store: Store = STORE) -> dict:
         system=(
             f"You are an SEO strategist. For the keyword '{kw}', use the live results to: "
             "(1) identify who currently ranks and why, (2) find concrete content/keyword "
-            "gaps, (3) give Abdullah (Career Mind AI student platform + Upwork AI gigs) a "
+            f"gaps, (3) give {for_whom} a "
             "prioritised, zero-cost action list to climb toward page one. Be specific and "
             "practical. Be honest: never promise a guaranteed #1 ranking."
         ),
         prompt="Live ranking results:\n" + src,
         max_tokens=800,
-    ) or "Add a free LLM key (GROQ_API_KEY) for the full SEO analysis."
+    ) or quota.no_answer_note("Add a free LLM key (GROQ_API_KEY) for the full SEO analysis.")
 
     store.emit("seo-strategist", "discovery", f"SEO report generated for '{kw}'.", "success")
     return {

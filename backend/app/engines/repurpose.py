@@ -10,14 +10,18 @@ from __future__ import annotations
 import re
 from typing import Dict
 
-from ..core import llm, model_router
+from ..core import llm, model_router, quota
 from ..store import STORE, Store, now
+from . import owner
 
 SECTIONS = ["BLOG", "LINKEDIN", "XTHREAD", "INSTAGRAM", "EMAIL", "SHORTS"]
 
-_PROMPT = (
+_FOUNDER_TEAM = (
     "You are the content team for Abdullah's businesses (Career Mind AI — a free "
     "AI career-guidance platform for students — and his Upwork AI services). "
+)
+
+_PROMPT = (
     "From the single idea below, produce SIX pieces of ready-to-publish content. "
     "Output EXACTLY this structure, each section starting with its delimiter line:\n"
     "===BLOG===\n(a 350-500 word blog post with a strong title on the first line)\n"
@@ -31,17 +35,29 @@ _PROMPT = (
 )
 
 
+def _team() -> str:
+    """Whose content team this is: the founder's, or - from a subscriber's
+    cockpit - the subscriber's own businesses."""
+    businesses = owner.subscriber_businesses()
+    if businesses is None:
+        return _FOUNDER_TEAM
+    if not businesses:
+        return "You are the content team for a small business. "
+    return f"You are the content team for {owner.describe(businesses)}. "
+
+
 def repurpose(idea: str, lang: str = "en", store: Store = STORE) -> Dict[str, str]:
     lang_name = "Urdu (اردو)" if lang == "ur" else "English"
     raw = llm.complete(
         task=model_router.REPURPOSE,
-        system=_PROMPT + f" Write everything in {lang_name}.",
+        system=_team() + _PROMPT + f" Write everything in {lang_name}.",
         prompt=f"The idea: {idea.strip()}",
         max_tokens=1900,
     )
 
     if not raw:
-        note = "AI generation unreachable right now — check /api/llm/health and retry."
+        note = quota.no_answer_note(
+            "AI generation unreachable right now — check /api/llm/health and retry.")
         return {s.lower(): note for s in SECTIONS}
 
     parts = re.split(r"===\s*(BLOG|LINKEDIN|XTHREAD|INSTAGRAM|EMAIL|SHORTS)\s*===", raw)

@@ -38,6 +38,7 @@ LIMITS: dict[str, tuple[int, int]] = {
     "demo": (30, 3600),         # demo sessions are cheap but not free
     "discover": (20, 3600),     # lead discovery burns Tavily quota
     "org": (10, 3600),          # an organisation is a permanent record
+    "warroom": (10, 3600),      # a subscriber's scan/debate: web search + AI calls
 }
 
 # Off in tests by default: a suite that creates dozens of accounts would trip
