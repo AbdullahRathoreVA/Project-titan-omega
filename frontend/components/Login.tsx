@@ -3,20 +3,14 @@
 /**
  * The front door.
  *
- * This used to be a bare username/password box. That meant a stranger landing
- * on titanomega-ai.com could not sign up, could not see a price, and could not
- * buy anything — the signup flow at /join existed but nothing on the site
- * linked to it. For a product whose problem is revenue, that was the most
- * expensive bug in the codebase.
+ * A stranger landing on titanomega-ai.com needs to see a price and be able to
+ * sign up and buy, not just a sign-in box. The order reflects who arrives:
+ *   1. Strangers, who need a price and a way in  -> plans + "Start free"
+ *   2. People evaluating it                      -> live demo
+ *   3. The founder                               -> sign in, tucked away
  *
- * The order below is deliberate and reflects who actually arrives here:
- *   1. Strangers, who need a price and a way in  → plans + "Start free"
- *   2. People evaluating it                      → live demo
- *   3. Abdullah                                  → sign in, tucked away
- *
- * Prices are FETCHED from /api/plans, never hardcoded. A landing page that
- * disagrees with what the server charges is how someone ends up billed for
- * something they were never shown.
+ * Prices are fetched from /api/plans, never hardcoded, so the page can't
+ * disagree with what the server charges.
  */
 
 import { useEffect, useState } from "react";
@@ -29,14 +23,16 @@ type Plan = {
   price_usd: number;
   limits: { clients: number; audits_per_month: number };
   features: string[];
-  /** How many days this plan's trial runs, straight from the server.
-   *  `billing.trial_days()` owns this and it is overridable per plan by
-   *  environment variable without a deploy, so it is never written here — a
-   *  page that says "free for 10 days" while the server grants 7 is a promise
-   *  nobody made. Same rule as the prices above. */
+  /**
+   * How many days this plan's trial runs, from the server.
+   * `billing.trial_days()` owns this and it can be overridden per plan by
+   * environment variable without a deploy, so it's never written here.
+   */
   trial_days?: number;
-  /** Whether that trial can actually convert into a subscription. False while
-   *  no payment processor is connected, which is the case today. */
+  /**
+   * Whether the trial can actually convert into a subscription. False while
+   * no payment processor is connected.
+   */
   trial_billable?: boolean;
 };
 
@@ -48,10 +44,11 @@ export function Login({
 }: {
   onSuccess: () => void;
   demo: boolean;
-  /** Which login the server is actually running. Under real accounts this box
-   *  wants an email address; under the old environment gate it wants a
-   *  username. Labelling it wrongly is a sign-in nobody can complete, so the
-   *  label comes from /api/auth rather than from an assumption here. */
+  /**
+   * Which login the server is running. Under real accounts this box wants an
+   * email address; under the old environment gate, a username. The label
+   * comes from /api/auth so it's never wrong.
+   */
   identityMode?: "identity" | "legacy";
   guestAvailable?: boolean;
 }) {
@@ -106,12 +103,11 @@ export function Login({
     }
   }
 
-  /** The demo is the cockpit a subscriber actually gets - every tab, the
-   *  boot, the voice, the 3D universe - on a read-only demo account holding
-   *  Titan's own demonstration businesses. It replaced two older demos: the
-   *  founder's console with sample figures, and the client portal. Neither is
-   *  what a customer receives, and Abdullah asked for the demo to be exactly
-   *  that. */
+  /**
+   * The demo is the cockpit a subscriber actually gets - every tab, the boot,
+   * the voice, the 3D universe - on a read-only demo account holding Titan's
+   * own demonstration businesses.
+   */
   async function startCockpitDemo() {
     setDemoBusy(true);
     setError("");
@@ -244,9 +240,9 @@ export function Login({
             </button>
           </div>
 
-          {/* Payment honesty, at the point of decision rather than at checkout.
-              Free works regardless; hiding this until the last screen would be
-              the dark pattern the pricing spec forbids. */}
+          {/* Say it at the point of decision rather than at checkout. Free
+              works regardless; hiding this until the last screen would be a
+              dark pattern. */}
           {processor === "none" && plans.length > 0 && (
             <p className="max-w-md text-center text-[10px] leading-relaxed text-hud-amber">
               Paid plans cannot be completed yet — no payment processor is

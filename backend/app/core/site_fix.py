@@ -1,50 +1,36 @@
-"""Propose → approve → apply → verify → rollback on a client's live website.
+"""Propose -> approve -> apply -> verify -> rollback on a client's live website.
 
-`site_access` holds the key. This is what Titan does with it, and it is the
-step where the product stops being a report and starts being a service.
+`site_access` holds the key; this is what Titan does with it. It's also where
+Titan could do real damage to a customer's business, so the module is built on
+one assumption: a write that returned HTTP 200 is not a change that happened.
 
-It is also the step where Titan can destroy a customer's business, so the
-whole module is built around one assumption: **a write that returned HTTP 200
-is not a change that happened.** Four separate things make that assumption
-concrete.
+- Nothing is applied without an explicit approval with a name on it. A
+  proposal stays `proposed` until someone approves it, and `apply` on an
+  unapproved fix is refused, not queued. There's no auto-apply flag here.
+- Stale proposals are refused. The field is read again right before the write
+  and compared with its value when the fix was proposed. If the owner edited
+  the page in between, Titan doesn't overwrite them: the fix fails and says
+  the page changed.
+- Every write is read back. WordPress runs `wp_kses_post` on content for any
+  user without `unfiltered_html`, which silently strips `<script>`, so a schema
+  fix can return 200 and change nothing. After every write the field is
+  fetched again and compared with what was sent; if it doesn't match, the fix
+  is `failed` with the readback quoted, never `applied`.
+- The exact previous value is snapshotted before the write, so rollback
+  restores a value instead of reconstructing one. Rollback is read back and
+  verified the same way.
 
-**Nothing is applied without an explicit approval carrying a name.** Same gate
-as the voice tool calls: a proposal sits in `proposed` until somebody approves
-it, and `apply` on an unapproved fix is refused, not queued. There is no
-"auto-apply" flag in this module, because the moment one exists somebody sets
-it and a model edits a stranger's homepage at 3am.
+Known limits:
 
-**A stale proposal is refused.** The value on the site is read again
-immediately before the write and compared with what it was when the fix was
-proposed. If the owner edited that page in between, Titan does not overwrite
-them — it fails the fix and says the page changed. A proposal is a claim about
-a specific prior state, and applying it to a different state is a guess.
-
-**Every write is read back.** WordPress runs `wp_kses_post` on content for any
-user without `unfiltered_html`, which silently strips `<script>` — so a schema
-fix can return 200, change nothing, and look like a success. After every write
-the field is fetched again and compared to what was sent. If it does not match,
-the fix is `failed` with the readback quoted, never `applied`. This is the
-never-invent-a-number rule applied to writes: "we sent it" is not a
-measurement, "we sent it and then read it back" is.
-
-**The exact prior value is snapshotted before the write, so rollback restores a
-value rather than reconstructing one.** Rollback is itself read back and
-verified the same way.
-
-Two honest limits, stated here rather than discovered later:
-
-* **Rollback depends on Titan's own storage.** The snapshot lives in the state
-  database. On a free Hugging Face Space that database is wiped by a rebuild,
-  so a fix applied before a rebuild may become un-undoable from Titan's side.
-  Every fix record therefore carries `durable`, straight from `db.stats()`, and
-  it is false until persistent storage is paid for. WordPress's own revisions
-  remain the backstop for content, but media alt text has no revision history.
-* **Meta descriptions are not writable through core WordPress.** There is no
-  such field: every site gets it from an SEO plugin storing post meta, and that
-  meta is only reachable over REST if the plugin registered it with
-  `show_in_rest`. Titan will not pretend to fix what it cannot reach, so a
-  missing meta description stays advice and `propose` says exactly why.
+* Rollback depends on Titan's own storage. The snapshot lives in the state
+  database, which a free Hugging Face Space wipes on rebuild, so a fix applied
+  before a rebuild may no longer be undoable from Titan's side. Every fix
+  record carries `durable` from `db.stats()`. WordPress revisions remain a
+  backstop for content, but media alt text has no revision history.
+* Meta descriptions can't be written through core WordPress. There's no such
+  field: SEO plugins store it as post meta, which is only reachable over REST
+  if the plugin registered it with `show_in_rest`. So a missing meta
+  description stays advice, and `propose` says why.
 """
 
 from __future__ import annotations
@@ -65,21 +51,19 @@ APPLIED = "applied"
 FAILED = "failed"
 ROLLED_BACK = "rolled_back"
 REJECTED = "rejected"
-# Titan applied it, verified it, and later found the site no longer holds it.
-# Somebody edited the page back, or a plugin overwrote it. This is a REPORT,
-# not a problem to correct: the owner is allowed to disagree with a change,
-# and a tool that silently reinstates its own edit after a human removed it
-# has no business holding a credential.
+# Titan applied and verified it, but the site no longer holds it - someone
+# edited the page back, or a plugin overwrote it. This is reported, not
+# corrected: the owner is allowed to disagree with a change, and Titan never
+# silently reinstates an edit a person removed.
 DRIFTED = "drifted"
 
 STATUSES = (PROPOSED, APPROVED, APPLIED, FAILED, ROLLED_BACK, REJECTED,
             DRIFTED)
 
-# A failed fix may be approved again — the cause is usually on the site (a
-# plugin stripped the markup, the page moved) and is worth another attempt once
-# it is dealt with. Nothing leaves `rolled_back` or `rejected`: re-applying a
-# reverted change silently is exactly the behaviour that makes an automated
-# tool untrustworthy. Propose it again and have it approved again.
+# A failed fix may be approved again - the cause is usually on the site (a
+# plugin stripped the markup, the page moved). Nothing leaves `rolled_back` or
+# `rejected`: re-applying a reverted change silently would make the tool
+# untrustworthy. Propose it again and get it approved again.
 TRANSITIONS: dict[str, tuple[str, ...]] = {
     PROPOSED:    (APPROVED, REJECTED),
     APPROVED:    (APPLIED, FAILED, REJECTED),
@@ -87,14 +71,14 @@ TRANSITIONS: dict[str, tuple[str, ...]] = {
     FAILED:      (APPROVED, REJECTED),
     ROLLED_BACK: (),
     REJECTED:    (),
-    # Nothing leaves `drifted` either. Re-applying needs a NEW proposal
-    # against what the page says now, approved again by a human.
+    # Nothing leaves `drifted` either. Re-applying needs a new proposal against
+    # what the page says now, approved again by a person.
     DRIFTED:     (),
 }
 
 # ------------------------------------------------------------------- kinds --
-# Only what core WordPress will actually accept over REST and hand back on a
-# read. Anything else belongs in `skipped` with a reason.
+# Only what core WordPress accepts over REST and returns on a read. Anything
+# else goes in `skipped` with a reason.
 KIND_TITLE = "title"
 KIND_ALT = "alt_text"
 KIND_SCHEMA = "schema"
@@ -107,17 +91,16 @@ _counter = 0
 
 TIMEOUT = 20.0
 
-# A filename is not a description. WordPress derives a media item's title from
-# the uploaded file name, so "IMG_4821" and "DSC00013" arrive as titles and
-# would become alt text that is worse than none — it tells a screen reader and
-# an image crawler precisely nothing while looking filled in.
+# A filename isn't a description. WordPress derives a media title from the
+# uploaded file name, so "IMG_4821" or "DSC00013" would become alt text that
+# tells a screen reader nothing while looking filled in.
 _JUNK_NAME = re.compile(r"""^(?:
     img | dsc | dscn | pxl | photo | image | pic | picture | screenshot |
     untitled | unnamed | download | copy | final | scan | capture | wa
 )?[\W_]*\d[\d\W_]*$|^[0-9a-f]{8,}$""", re.I | re.X)
 
-# A placeholder in generated schema, e.g. "<street address>". Publishing one to
-# a live site tells Google the business is literally called "<city>".
+# A placeholder in generated schema, e.g. "<street address>". Publishing one
+# would tell Google the business is literally called "<city>".
 _PLACEHOLDER = re.compile(r"<[^<>]{1,40}>")
 
 
@@ -134,11 +117,10 @@ def _wp(cred: dict, method: str, path: str, *, params: Optional[dict] = None,
     """One authenticated REST call. Returns the httpx response, or raises.
 
     Redirects are followed on GET (a site whose canonical host differs from the
-    stored one would otherwise fail every read) but **never on a write**. A
-    redirected POST is not a successful write: httpx drops the Authorization
-    header across hosts, and a security plugin bouncing writes to a login page
-    would answer 200 with HTML that parses as "not what we sent" only by luck.
-    Refusing the redirect turns that into an error we can report.
+    stored one would otherwise fail every read) but never on a write. httpx
+    drops the Authorization header across hosts, and a security plugin
+    redirecting writes to a login page could answer 200 with HTML. Refusing the
+    redirect turns that into a reportable error.
     """
     import httpx
     from . import safe_fetch
@@ -162,8 +144,8 @@ def _json(resp):
 def _raw(value) -> str:
     """WordPress returns {'raw': ..., 'rendered': ...} under context=edit.
 
-    `raw` is what was stored and what a write must be compared against;
-    `rendered` has run through shortcodes and filters and will never match.
+    `raw` is what was stored and what a write is compared against; `rendered`
+    has been through shortcodes and filters and will never match.
     """
     if isinstance(value, dict):
         return str(value.get("raw", "") or "")
@@ -176,12 +158,12 @@ def _norm(url: str) -> str:
 
 
 def find_object(cred: dict, url: str) -> dict:
-    """Locate the WordPress page or post that serves `url`.
+    """Find the WordPress page or post that serves `url`.
 
     Slug first (one indexed query), then a scan of published pages and posts
     comparing WordPress's own `link`. The scan is what finds a front page: it
-    has no slug in the URL, and core REST does not expose `page_on_front`
-    without `manage_options`, which Titan does not require.
+    has no slug in the URL, and core REST doesn't expose `page_on_front`
+    without `manage_options`, which Titan doesn't ask for.
     """
     target = _norm(url)
     path = urllib.parse.urlparse(
@@ -242,7 +224,7 @@ def _read_field(cred: dict, target: dict, field: str) -> tuple[Optional[str], st
 
 def _write_field(cred: dict, target: dict, field: str,
                  value: str) -> tuple[bool, str]:
-    """Write one field. (accepted, error) — acceptance is NOT verification."""
+    """Write one field. (accepted, error) - accepted doesn't mean verified."""
     try:
         r = _wp(cred, "POST", f"/wp-json/wp/v2/{target['type']}/{target['id']}",
                 body={field: value})
@@ -286,13 +268,12 @@ def _record(client_id: str, kind: str, target: dict, field: str, *,
         "finding_id": finding_id,
         "title": title,
         "why": why,
-        # What the site said when the proposal was made. `apply` refuses if the
-        # site no longer says this.
+        # What the site said when the proposal was made. `apply` refuses if it no
+        # longer says this.
         "current": current,
         "proposed": proposed,
-        # The weight this check carries in Titan's OWN audit score. It is not a
-        # traffic prediction and must never be presented as one — Titan cannot
-        # measure a ranking change and does not claim to.
+        # The weight this check has in Titan's own audit score. Not a traffic
+        # prediction and never presented as one; Titan can't measure ranking changes.
         "audit_weight": weight,
         "risk": risk,
         "created_at": time.time(),
@@ -322,10 +303,9 @@ def _durable() -> bool:
 def _clean_schema(raw: str) -> tuple[Optional[dict], list[str]]:
     """Strip every placeholder out of generated JSON-LD.
 
-    Returns (node, missing). A partial but true node is worth publishing; a
-    node containing "<street address>" is not, and neither is one so empty it
-    says nothing. Callers must treat a None node as "we do not know enough
-    about this business yet".
+    Returns (node, missing). A partial but true node is worth publishing; one
+    containing "<street address>" isn't, and neither is one so empty it says
+    nothing. A None node means we don't know enough about the business yet.
     """
     try:
         node = json.loads(raw)
@@ -333,12 +313,11 @@ def _clean_schema(raw: str) -> tuple[Optional[dict], list[str]]:
         return None, ["the generated markup was not valid JSON"]
     missing: list[str] = []
 
-    # `suggested_schema` fills these with template defaults — priceRange "$$"
-    # and 09:00-18:00 seven days a week. They are not placeholders, so nothing
-    # below would catch them, and they are not observations either: nobody
-    # measured this business's opening hours. Publishing them states as fact to
-    # Google something Titan invented, which is the one thing this codebase
-    # does not do. They are dropped here and stay in the audit as advice.
+    # `suggested_schema` fills these with template defaults (priceRange "$$",
+    # 09:00-18:00 every day). They aren't placeholders, so nothing below would
+    # catch them, but they aren't observations either - nobody measured this
+    # business's opening hours. They're dropped here and stay in the audit as
+    # advice.
     for invented in ("priceRange", "openingHoursSpecification"):
         if node.pop(invented, None) is not None:
             missing.append(f"{invented} (not measured — left out deliberately)")
@@ -365,8 +344,8 @@ def _clean_schema(raw: str) -> tuple[Optional[dict], list[str]]:
     node = walk(node)
     if not isinstance(node, dict) or not node.get("name") or not node.get("@type"):
         return None, missing or ["the business name"]
-    # Name, type and URL alone describe nothing a search engine did not already
-    # know from the page. Require at least one real fact beyond them.
+    # Name, type and URL alone tell a search engine nothing it didn't already know
+    # from the page. Require at least one real fact beyond them.
     substantive = [k for k in node
                    if k not in ("@context", "@type", "name", "url", "priceRange")]
     if not substantive:
@@ -378,19 +357,14 @@ def propose(client_id: str, audit: dict, *,
             business: Optional[dict] = None) -> dict:
     """Turn audit findings into concrete, appliable changes. Never raises.
 
-    Only findings that map to a field core WordPress will accept and hand back
-    become proposals. Everything else is returned under `skipped` with the
-    reason, because "Titan found 9 problems and can fix 2 of them" is a true
-    sentence and "Titan will fix your site" is not.
+    Only findings that map to a field core WordPress accepts and returns become
+    proposals. Everything else comes back under `skipped` with the reason:
+    "found 9 problems, can fix 2" is accurate, "will fix your site" isn't.
     """
-    # The kill switch, and the only reason one exists: this function edits a
-    # page on somebody else's live website. Flags were unenforced for a whole
-    # release — the screen said "site_fix: enabled", an operator could set it
-    # to disabled, and this function never asked.
+    # The kill switch, since this edits a page on someone else's live website.
     #
-    # Returned rather than raised because the docstring above promises "Never
-    # raises" and callers depend on that. A kill switch that turns a safe
-    # refusal into a 500 has traded one incident for another.
+    # Returned rather than raised because this function promises never to raise
+    # and callers rely on that.
     from . import flags
     if not flags.is_enabled("site_fix"):
         return {"ok": False, "error": (
@@ -536,15 +510,15 @@ def _suggest_title(business: dict, audit: dict) -> str:
         return ""
     parts = [p for p in (trade, city) if p]
     title = f"{name} — {' in '.join(parts) if len(parts) == 2 else parts[0]}"
-    # The audit fails a title outside 15-65 characters; proposing one that
-    # fails the same check Titan just raised would be absurd.
+    # The audit fails a title outside 15-65 characters, so a proposal must pass
+    # that same check.
     return title if 15 <= len(title) <= 65 else title[:62].rstrip(" -—") + ""
 
 
-# The client record stores a country NAME ("Pakistan"), and schema wants an ISO
-# code. Guessing one is the same class of error as guessing a phone number:
-# `addressCountry: "DE"` on a Lahore business is a false statement published to
-# Google. An unmapped country becomes a placeholder and is stripped out.
+# The client record stores a country name ("Pakistan"); schema wants an ISO
+# code. Guessing one would publish a false statement (`addressCountry: "DE"`
+# on a Lahore business), so an unmapped country becomes a placeholder and is
+# stripped.
 _COUNTRY_CODES = {
     "pakistan": "PK", "germany": "DE", "deutschland": "DE",
     "united kingdom": "GB", "uk": "GB", "england": "GB",
@@ -581,13 +555,12 @@ def _schema_for(business: dict, audit: dict) -> tuple[Optional[dict], list[str]]
 
 def _propose_alt_text(client_id: str, cred: dict,
                       weight: Optional[int]) -> tuple[list[dict], list[dict]]:
-    """One proposal per image whose FILE NAME actually describes it.
+    """One proposal per image whose file name actually describes it.
 
-    WordPress derives a media title from the uploaded file name. When somebody
-    uploaded `black-leather-biker-jacket.jpg` that is a real description and
-    worth writing into alt text. When they uploaded `IMG_4821.jpg` it is not,
-    and Titan has not seen the image — so that one is handed back to a human
-    instead of being filled with a plausible guess.
+    WordPress derives a media title from the uploaded file name.
+    `black-leather-biker-jacket.jpg` is a real description worth using as alt
+    text; `IMG_4821.jpg` isn't, and Titan hasn't seen the image, so that one is
+    left for a person instead of filled with a guess.
     """
     proposals: list[dict] = []
     skipped: list[dict] = []
@@ -650,7 +623,7 @@ def _transition(fix: dict, to: str) -> Optional[str]:
 
 
 def approve(fix_id: str, approver: str) -> dict:
-    """Approve a fix. An approval with no name attached is not an approval."""
+    """Approve a fix. An approval without a name isn't an approval."""
     approver = (approver or "").strip()
     if not approver:
         return {"ok": False, "error": (
@@ -687,15 +660,13 @@ def reject(fix_id: str, approver: str = "", reason: str = "") -> dict:
 def apply(fix_id: str) -> dict:
     """Apply an approved fix, then read the site back to see if it took.
 
-    The order is deliberate: read → compare with the proposal → write → read
-    again → compare with what was sent. A failure at any step leaves the fix
-    `failed` with the reason, and the caller is told what the site actually
-    says rather than what Titan hoped.
+    Order: read -> compare with the proposal -> write -> read again -> compare
+    with what was sent. A failure at any step leaves the fix `failed` with the
+    reason, and the caller is told what the site actually says.
     """
-    # The half that actually writes. Checked separately from propose() on
-    # purpose: a fix proposed while the feature was on must not still be
-    # appliable after somebody switched it off, which is exactly the moment
-    # they are trying to stop the writing.
+    # Checked here as well as in propose(): a fix proposed while the feature was
+    # on mustn't still be appliable after someone switched it off, which is
+    # exactly when they're trying to stop writes.
     from . import flags
     if not flags.is_enabled("site_fix"):
         return {"ok": False, "error": (
@@ -715,7 +686,7 @@ def apply(fix_id: str) -> dict:
         return _fail(fix, "The website credential for this business is no "
                           "longer connected, so nothing was changed.")
 
-    # 1. What does the site say RIGHT NOW?
+    # 1. What does the site say right now?
     live, err = _read_field(cred, fix["target"], fix["field"])
     if err:
         return _fail(fix, err)
@@ -808,10 +779,9 @@ def _fail(fix: dict, message: str, *, stale: bool = False,
 def mark_drifted(fix_id: str, live_value: str) -> dict:
     """Record that an applied fix is no longer live. Changes nothing on the site.
 
-    Called by the 24/7 verify pass. It deliberately has no counterpart that
+    Called by the 24/7 verify pass. There's deliberately no counterpart that
     puts the value back: the owner editing Titan's change is a legitimate
-    decision, and reversing it automatically would be Titan overruling the
-    person who owns the site.
+    decision, and reversing it automatically would overrule them.
     """
     with _lock:
         fix = _fixes.get(fix_id)
@@ -831,7 +801,7 @@ def mark_drifted(fix_id: str, live_value: str) -> dict:
 
 
 def rollback(fix_id: str) -> dict:
-    """Put the snapshotted value back, and read the site to prove it went."""
+    """Put the snapshotted value back, and read the site to confirm it."""
     with _lock:
         fix = _fixes.get(fix_id)
         if not fix:
@@ -882,14 +852,14 @@ def rollback(fix_id: str) -> dict:
 
 # ------------------------------------------------------------------ reading --
 def public(fix_id: str) -> Optional[dict]:
-    """Safe to send over the wire. Carries no credential and no invention."""
+    """Safe to send over the wire. No credentials, nothing made up."""
     with _lock:
         fix = _fixes.get(fix_id)
         if not fix:
             return None
         out = {k: v for k, v in fix.items()}
-    # Long fields are shown as a diff-able preview; the full text stays
-    # available through the detail endpoint, not the list.
+    # Long fields are shown as a preview; the full text is available from the
+    # detail endpoint, not the list.
     for key in ("current", "proposed", "snapshot"):
         val = out.get(key)
         if isinstance(val, str) and len(val) > 600:
@@ -917,8 +887,9 @@ def awaiting_approval() -> list[dict]:
     """Every proposed fix across every client, oldest first.
 
     For the approval centre, which needs the whole queue rather than one
-    client's slice. Read-only: approving still goes through `approve()`, which
-    is where the staleness check and the named-approver rule live."""
+    client's slice. Read-only: approving still goes through `approve()`, where
+    the staleness check and the named-approver rule live.
+    """
     with _lock:
         ids = [f["id"] for f in _fixes.values() if f["status"] == PROPOSED]
     rows = [public(i) for i in ids]
@@ -926,7 +897,7 @@ def awaiting_approval() -> list[dict]:
 
 
 def summary(client_id: str = "") -> dict:
-    """Counts by status. Never a success rate — see the note."""
+    """Counts by status. Never a success rate."""
     with _lock:
         rows = [f for f in _fixes.values()
                 if not client_id or f["client_id"] == client_id]
@@ -935,8 +906,8 @@ def summary(client_id: str = "") -> dict:
     return {
         "total": len(rows),
         "counts": counts,
-        # Verified means read back off the live site, not "the write returned
-        # 200". The two are different numbers and only this one is measured.
+        # Verified means read back from the live site, not "the write returned 200".
+        # Only this number is measured.
         "verified_live": sum(1 for f in rows
                              if f["status"] == APPLIED and f["verified"]),
         "durable": _durable(),

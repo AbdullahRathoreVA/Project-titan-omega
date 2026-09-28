@@ -1,36 +1,20 @@
-"""Backup, restore, and — the part that matters — a restore that is tested.
+"""Backup and restore, where every backup is verified by restoring it.
 
-An untested backup is not a backup. It is a file that makes people feel safe
-until the day it is needed. So the design rule here is that **every backup
-verifies itself by being restored into a scratch database and read back**,
-before it is reported as a backup at all.
+Titan holds subscribers' accounts, client records, voice transcripts, the
+evidence ledger and the previous content of pages it has changed on
+customers' sites. A free Hugging Face Space wipes `/tmp` on every rebuild, and
+losing that store would also lose the ability to undo those changes.
 
-What this protects against, concretely: Titan holds subscribers' accounts,
-their clients' records, voice transcripts, the evidence ledger, and — since the
-fix loop shipped — the exact previous value of pages Titan has changed on
-customers' live websites. A free Hugging Face Space wipes `/tmp` on every
-rebuild. Losing that store does not just lose history; it loses the ability to
-undo a change Titan made to somebody else's business.
-
-Design decisions:
-
-**SQLite's own backup API, not a file copy.** Copying a file that is being
-written produces a torn database that opens fine and fails later. `conn.backup()`
-takes a consistent snapshot of a live connection, WAL and all.
-
-**Verification is a real restore, not a checksum.** A checksum proves the bytes
-survived the disk. It does not prove the file is a working database with the
-rows in it. `verify()` opens the backup, runs `PRAGMA integrity_check`, and
-counts the rows in every subsystem — the same counts are recorded in the
-manifest so a later restore can be compared against what was backed up.
-
-**Restore never overwrites in place.** The live database is copied aside first,
-so a restore that turns out to be wrong is itself reversible. A recovery tool
-that can destroy the thing it is recovering is a liability.
-
-**Retention is by count, not by "delete old ones".** Keeping N and removing the
-rest is easy to reason about; a date rule silently keeps nothing if the clock
-is wrong.
+- SQLite's backup API, not a file copy. Copying a file mid-write can produce
+  a torn database that opens fine and fails later; `conn.backup()` takes a
+  consistent snapshot, WAL included.
+- Verification is a real restore, not a checksum. `verify()` opens the backup,
+  runs `PRAGMA integrity_check` and counts the rows in every subsystem; the
+  same counts go in the manifest so a later restore can be compared.
+- Restore never overwrites in place. The live database is moved aside first,
+  so a wrong restore can itself be undone.
+- Retention is by count. "Keep the newest N" is easy to reason about; a date
+  rule can quietly keep nothing if the clock is wrong.
 """
 
 from __future__ import annotations
@@ -43,8 +27,8 @@ import threading
 import time
 from typing import Optional
 
-# On this machine D: has the free space and C: is chronically full. Default
-# there when it exists, so a backup does not fill the drive it is protecting.
+# On the dev machine D: has the free space and C: is usually full, so use D:
+# when it exists rather than filling the drive being protected.
 def _default_dir() -> str:
     explicit = os.getenv("TITAN_BACKUP_DIR", "").strip()
     if explicit:
@@ -69,7 +53,7 @@ def _live_path() -> str:
 
 
 def _subsystem_counts(conn: sqlite3.Connection) -> dict:
-    """How much is actually in there, per subsystem. Real counts, from rows."""
+    """How much is in there, per subsystem. Real counts, from rows."""
     out: dict[str, int] = {}
     try:
         for row in conn.execute("SELECT key, LENGTH(value) AS bytes FROM state"):
@@ -80,8 +64,8 @@ def _subsystem_counts(conn: sqlite3.Connection) -> dict:
         row = conn.execute("SELECT COUNT(*) AS n FROM jobs").fetchone()
         out["_jobs_rows"] = int(row["n"])
     except Exception:
-        # The jobs table only exists from migration 2. Its absence is a fact
-        # about the backup, not an error.
+        # The jobs table only exists from migration 2; its absence is a fact about the
+        # backup, not an error.
         out["_jobs_rows"] = 0
     return out
 
@@ -93,7 +77,7 @@ def _open(path: str) -> sqlite3.Connection:
 
 
 def create(note: str = "") -> dict:
-    """Take a consistent snapshot, then prove it restores. Never raises."""
+    """Take a consistent snapshot, then check it restores. Never raises."""
     from . import db, obs
 
     started = time.monotonic()
@@ -109,8 +93,8 @@ def create(note: str = "") -> dict:
             stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
             target = os.path.join(BACKUP_DIR, f"titan-{stamp}.db")
 
-            # SQLite's own backup API. A shutil.copy of a live database can
-            # capture a torn write that opens cleanly and fails later.
+            # SQLite's own backup API. Copying a live database can capture a torn write
+            # that opens cleanly and fails later.
             source = db.connect(live)
             dest = _open(target)
             try:
@@ -137,8 +121,8 @@ def create(note: str = "") -> dict:
                 json.dump(manifest, f, indent=2)
 
             if not checked["ok"]:
-                # A backup that does not restore is not a backup. Say so
-                # loudly rather than leaving a reassuring file on disk.
+                # A backup that does not restore isn't a backup - report it
+                # loudly instead of leaving a reassuring file on disk.
                 obs.error("backup.failed_verification", file=target,
                           error=checked.get("error"))
                 return {"ok": False, "error": (
@@ -156,10 +140,10 @@ def create(note: str = "") -> dict:
 
 
 def verify(path: str) -> dict:
-    """Open a backup and prove it is a working database with rows in it.
+    """Open a backup and check it's a working database with rows in it.
 
-    A checksum proves the bytes survived the disk; it does not prove the file
-    is a database or that anything is in it.
+    A checksum only proves the bytes survived the disk, not that the file is
+    a database or has anything in it.
     """
     if not os.path.exists(path):
         return {"ok": False, "error": "That backup file does not exist."}
@@ -191,9 +175,8 @@ def verify(path: str) -> dict:
 def restore(path: str, *, confirm: bool = False) -> dict:
     """Replace the live database with a backup, keeping the old one aside.
 
-    `confirm` must be True. This is the one genuinely destructive operation in
-    the codebase, and a default-safe signature means a mistyped call cannot
-    perform it.
+    `confirm` must be True. This is the one destructive operation in the
+    codebase, so a mistyped call can't trigger it.
     """
     from . import db, obs
 
@@ -211,8 +194,8 @@ def restore(path: str, *, confirm: bool = False) -> dict:
     try:
         with _lock:
             live = _live_path()
-            # The live database is moved aside, never overwritten. A recovery
-            # tool that can destroy what it is recovering is a liability.
+            # The live database is moved aside, never overwritten, so a bad restore can
+            # be reversed.
             aside = ""
             if os.path.exists(live):
                 aside = f"{live}.replaced-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
@@ -230,8 +213,8 @@ def restore(path: str, *, confirm: bool = False) -> dict:
                     "verify. The previous database is at " + aside),
                     "previous": aside}
 
-            # Reload every subsystem from the restored file, or the process
-            # keeps serving the in-memory state of the database it replaced.
+            # Reload every subsystem from the restored file, or the process keeps serving
+            # the in-memory state of the database it replaced.
             from .. import persistence
             persistence.load()
 
@@ -287,7 +270,7 @@ def prune(keep: int = KEEP) -> int:
 
 
 def status() -> dict:
-    """What protection actually exists. Never reassuring beyond the evidence."""
+    """What protection actually exists, based only on what's on disk."""
     from . import db
 
     rows = listing()
@@ -303,7 +286,7 @@ def status() -> dict:
         "backups": len(rows),
         "verified_backups": len(verified),
         "keep": KEEP,
-        # None, not 0 — "never backed up" is not "backed up zero seconds ago".
+        # None, not 0: "never backed up" isn't "backed up zero seconds ago".
         "newest_age_seconds": (round(time.time() - newest["modified"], 1)
                                if newest else None),
         "newest": newest["name"] if newest else None,

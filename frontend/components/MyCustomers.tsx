@@ -1,15 +1,14 @@
 "use client";
 
 /**
- * MyCustomers — the Customers tab in a subscriber's cockpit.
+ * MyCustomers - the Customers tab in a subscriber's cockpit.
  *
  * The founder's Customers tab lists Titan's own subscribers, which a
- * subscriber must never see. Theirs is the other end of their CRM: every
- * lead they have marked won. It reads the same /api/me/leads the CRM tab
- * does, so the two can never disagree.
+ * subscriber must never see. Theirs is the other end of their CRM: every lead
+ * they've marked won. It reads the same /api/me/leads as the CRM tab, so the
+ * two always agree.
  *
- * A failed request is shown as a failure, not as "no customers yet" - an
- * owner who reads an empty list after a network error assumes the worst.
+ * A failed request is shown as a failure, not as "no customers yet".
  */
 
 import { useCallback, useEffect, useState } from "react";

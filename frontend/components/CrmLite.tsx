@@ -35,8 +35,9 @@ const STATUS_COLOR: Record<string, string> = {
   lost: "text-slate-500 border-edge",
 };
 
-// Where a lead came from. The founder's list names his own channels (Fiverr,
-// schools for Career Mind); a subscriber's covers how any business meets people.
+// Where a lead came from. The founder's list names the founder's own channels
+// (Fiverr, schools for Career Mind); a subscriber's covers how any business
+// meets people.
 const FOUNDER_SOURCES: [string, string][] = [
   ["manual", "Manual"], ["fiverr", "Fiverr"], ["linkedin", "LinkedIn"],
   ["school", "School/Uni"], ["jobradar", "Job Radar"], ["instagram", "Instagram"],

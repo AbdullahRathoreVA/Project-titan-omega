@@ -1,10 +1,8 @@
-"""What cosine values do answerable and unanswerable questions actually get?
+"""Print the cosine scores answerable and unanswerable questions actually get.
 
-COS_FLOOR was 0.52 while the module's own comment records that sentence models
-score almost any two English sentences 0.6-0.9. A floor below the noise band
-admits the whole corpus, which is how the semantic-rescue branch answered every
-unanswerable question. This prints the real distribution so the floor is chosen
-from measurement rather than from a guess.
+Sentence models score almost any two English sentences 0.6-0.9, so the
+semantic floor has to sit above that band or it lets everything through.
+Use this output to pick COS_FLOOR from data rather than by guessing.
 
 Run:  python -m evaluation.calibrate_cosine
 """

@@ -1,10 +1,10 @@
 "use client";
 
-// The Neural Command Universe — Titan's home view. An infinite living space:
-// nebulas + star layers, an evolving central Core, the 12 real divisions as
-// orbiting particle galaxies fed by colored energy streams, real metrics as
-// floating holographic nodes, and comets that fire through the network on real
-// feed activity. The camera never stops breathing; clicking flies you there.
+// The Neural Command Universe - Titan's home view: nebulas and star layers, a
+// central core, the 12 divisions as orbiting particle galaxies fed by coloured
+// energy streams, live metrics as floating holographic nodes, and comets fired
+// through the network by feed activity. The camera keeps moving slowly;
+// clicking something flies you there.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -323,7 +323,7 @@ function Comets({ pulse, galaxies }: { pulse: number; galaxies: UniGalaxy[] }) {
   const MAX = 14;
 
   useEffect(() => {
-    // Real activity arrived → launch 1-2 light packets from the core outward.
+    // New activity arrived: launch 1-2 light packets from the core outward.
     const n = Math.min(2, MAX - list.current.length);
     for (let i = 0; i < n; i++) {
       const gi = Math.floor(Math.random() * Math.max(1, galaxies.length));
@@ -396,7 +396,7 @@ function Rig({ selected, galaxies }: { selected: UniSelection; galaxies: UniGala
       const r = 11.5;
       targetPos = new THREE.Vector3(Math.sin(angle.current) * r, 4.5, Math.cos(angle.current) * r);
     } else {
-      // idle: the camera never stops — slow orbit + breathing radius + bob
+      // idle: slow orbit + breathing radius + bob
       angle.current += dt * 0.045;
       const r = 16.5 + Math.sin(t * 0.25) * 1.1;
       targetPos = new THREE.Vector3(

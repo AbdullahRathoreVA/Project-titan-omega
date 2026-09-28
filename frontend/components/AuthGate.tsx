@@ -7,15 +7,15 @@ import { getCustomerToken, setCustomerToken } from "@/lib/session";
 import { Login } from "./Login";
 import { CommandCenter } from "./CommandCenter";
 
-// Decides whether to show the login screen or the dashboard. When the core does
-// not require auth (local dev / auth disabled), it goes straight to the
-// dashboard. When auth IS required, we VERIFY the stored token actually works
-// before trusting it — otherwise a stale token (e.g. after changing the
-// username/password) would silently trap the dashboard in 401/demo mode.
+// Decides whether to show the login screen or the dashboard. When the backend
+// doesn't require auth (local dev), it goes straight to the dashboard. When
+// it does, the stored token is verified before it's trusted, so a stale token
+// (e.g. after changing the username/password) can't trap the dashboard in
+// 401/demo mode.
 //
-// The SAME deployment also serves a public read-only demo: "View the live demo"
-// on the login screen starts a guest session (GET-only, private data replaced
-// with sample content), so one Space covers both the founder and the public.
+// The same deployment also serves a public read-only demo: the demo button on
+// the login screen starts a guest session (GET-only, private data replaced
+// with sample content), so one Space serves both the founder and the public.
 
 const GUEST_FLAG = "titan_guest_session";
 
@@ -33,9 +33,8 @@ export function AuthGate() {
   const [state, setState] = useState<"loading" | "login" | "ready">("loading");
   const [demo, setDemo] = useState(true);
   const [guestAvailable, setGuestAvailable] = useState(true);
-  // "legacy" until the server says otherwise: assuming real accounts and then
-  // being wrong would label the box "Email address" on a deployment that wants
-  // a username, which is a login nobody can complete.
+  // "legacy" until the server says otherwise: wrongly assuming real accounts
+  // would label the box "Email address" on a deployment that wants a username.
   const [identityMode, setIdentityMode] = useState<"identity" | "legacy">("legacy");
   const [guest, setGuest] = useState(false);
 
@@ -80,9 +79,9 @@ export function AuthGate() {
     // Verify the stored token really works; if it's stale, force a fresh login.
     const ok = await verifyToken();
     if (ok) {
-      // Ask the server what this token actually is. Guessing from
-      // sessionStorage broke in a new tab: a restored DEMO token was shown as
-      // the founder while still being served sample data.
+      // Ask the server what this token is instead of guessing from
+      // sessionStorage - in a new tab a restored demo token could otherwise be
+      // shown as the founder while still getting sample data.
       const kind = await api.sessionKind();
       markGuest(kind.guest);
       setGuest(kind.guest);
@@ -99,15 +98,12 @@ export function AuthGate() {
   }, [probe]);
 
   if (state === "loading") {
-    // This is what a CRAWLER sees. The app is client-rendered, so the static
-    // export prerenders exactly this state — and it used to contain only the
-    // words "Booting Titan Omega…", no heading and no links. Titan's own audit
-    // reported the resulting page as having an H1 problem and no privacy
-    // policy linked, which is the same finding it charges clients to fix.
+    // This is what a crawler sees: the app is client-rendered, so the static
+    // export prerenders exactly this state. It needs a real heading and links
+    // (including the privacy policy) or Titan's own audit would flag the page.
     //
-    // The content below is real and visible, not markup hidden for robots:
-    // a visitor on a slow connection sees this too, and every claim in it is
-    // accurate.
+    // The content is real and visible, not markup hidden for robots - a visitor
+    // on a slow connection sees it too.
     return (
       <main className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
         <h1 className="font-mono text-2xl font-semibold tracking-wide text-white">

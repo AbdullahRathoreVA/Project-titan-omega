@@ -60,43 +60,35 @@ def auth_status() -> dict:
         "guest": auth.guest_mode(),
         # Public "View demo" button on the login screen.
         "guest_available": auth.guest_enabled(),
-        # Which login is in force. `identity` means real accounts with roles;
-        # `legacy` means the single environment gate is still answering. This
-        # endpoint is public, so identity.mode() deliberately carries no
-        # address — publishing the one account that can administer the system
-        # would hand a passer-by the first half of the credentials.
+        # Which login is active. `identity` means real accounts with roles; `legacy`
+        # means the single environment gate is still answering. This endpoint is
+        # public, so identity.mode() carries no address.
         "identity": identity.mode(),
     }
 
 
 @router.get("/session", tags=["auth"])
 def session(request: Request) -> dict:
-    """What KIND of session is this token? The front end must not guess from
-    browser storage — a demo token restored in a new tab would otherwise be
-    presented as the founder while still being served sample data."""
+    """What kind of session is this token? The front end mustn't guess from
+    browser storage, or a demo token restored in a new tab would be shown as
+    the founder while still being served sample data.
+    """
     tok = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
     return {"founder": auth.valid_token(tok), "guest": auth.valid_guest_token(tok)}
 
 
 @router.post("/demo/enter", tags=["auth"])
 def enter_demo(request: Request) -> dict:
-    """Start a read-only tour of the OPERATOR console — no login required.
+    """Start a read-only tour of the operator console, no login required.
 
-    This is not the customer product. It is Abdullah's own sixteen-tab cockpit
-    with every private figure replaced by demo-safe sample content, and it is
-    labelled as such on the way in. A prospect who wants to see what they would
-    actually receive wants /api/demo/portal below.
+    This isn't the customer product: it's the founder's cockpit with every
+    private figure replaced by sample content, and it's labelled that way.
 
-    Returns a guest token that unlocks GET-only access. Every endpoint holding
-    real business data is served demo-safe sample content instead, and any
-    write is refused, so a visitor can explore the whole system without ever
-    seeing the founder's private data or changing anything.
+    Returns a guest token that unlocks GET-only access. Endpoints holding real
+    business data serve sample content instead, and any write is refused.
     """
     from ..core import ratelimit
-    # LIMITS has carried a "demo" bucket, with the words "demo sessions are
-    # cheap but not free" written beside it, since the day it was added — and
-    # nothing ever called it. Sixth time a thing in this repository was
-    # defined, reasoned about, and never invoked.
+    # Demo sessions are cheap but not free, so they're rate-limited per caller.
     verdict = ratelimit.check("demo", ratelimit.identity_for(request))
     if not verdict["allowed"]:
         raise HTTPException(status_code=429, detail=verdict)
@@ -107,17 +99,15 @@ def enter_demo(request: Request) -> dict:
 
 @router.post("/demo/cockpit", tags=["auth"])
 def enter_cockpit_demo(request: Request) -> dict:
-    """Open the subscriber's cockpit itself - all sixteen tabs, boot, voice,
-    3D universe - on the public demo account, with no signup.
+    """Open the subscriber cockpit itself - all sixteen tabs, boot, voice, 3D
+    universe - on the public demo account, with no signup.
 
-    Abdullah's words: the demo must be what a customer gets, not "the operator
-    console, our internal view, sample figures". So this is not a tour of the
-    founder's cockpit and not a portal: it is exactly the cockpit a subscriber
-    signs into, holding Titan's own demonstration businesses (their pages,
-    audited for real) and nothing of anybody else's.
+    This is exactly the cockpit a subscriber signs into, not the founder's
+    console and not the portal. It holds Titan's own demonstration businesses
+    (its own pages, audited for real) and nothing belonging to anyone else.
 
     The demo account is read-only on every door (main.auth_guard): a visitor
-    can open every screen and cannot change or send anything.
+    can open every screen but can't change or send anything.
     """
     from ..core import billing, ratelimit, sessions
     from ..engines import demo_workspace
@@ -140,34 +130,22 @@ def enter_cockpit_demo(request: Request) -> dict:
 
 @router.post("/demo/portal", tags=["auth"])
 def enter_customer_demo(request: Request) -> dict:
-    """Open the CUSTOMER product — the thing a paying customer actually gets.
+    """Open the customer portal on a demo business, with no signup.
 
-    The public demo used to hand a prospect the founder's cockpit. They then
-    paid, and received /portal: a different, narrower product. Reported live:
-    "I made an enterprise account but I cannot open it the way it is shown in
-    the demo." That mismatch is a refund waiting to happen, and it is a lie
-    told by a company whose product is checking whether other people's
-    websites tell the truth.
+    Nothing here is sample data. The business is one of those seeded by
+    engines/demo_workspace.py, whose sites are Titan's own pages and whose
+    audits really run every six hours.
 
-    Nothing here is sample data. The business is one of the demo businesses
-    seeded by engines/demo_workspace.py, whose sites are Titan's OWN pages and
-    whose audits genuinely run every six hours. The score a visitor sees is the
-    score that page really has.
-
-    THE BUSINESS IS CHOSEN BY THE SERVER. The caller cannot name one, because a
-    caller who can name a business is a caller who can name somebody else's —
-    and this endpoint is reachable by anyone on the internet with no token at
-    all. demo_workspace.showcase() only ever returns a business carrying
-    is_demo, and returns None rather than substituting a real one.
+    The server chooses the business; the caller can't name one, since this is
+    reachable by anyone with no token. demo_workspace.showcase() only returns
+    a business carrying is_demo, and returns None rather than a real one.
     """
     from ..core import ratelimit
     from ..engines import demo_workspace
 
-    # Named differently from the one in enter_demo above on purpose: both call
-    # the same bucket, and a mutation guard needs an anchor that matches in
-    # exactly one place. An ambiguous anchor disarms the first match and leaves
-    # the other call site untested, which is what `if role not in ROLES:` was
-    # quietly doing in identity.py.
+    # Named differently from the one in enter_demo on purpose: both use the same
+    # bucket, and each mutation guard needs an anchor that matches in exactly one
+    # place.
     portal_limit = ratelimit.check("demo", ratelimit.identity_for(request))
     if not portal_limit["allowed"]:
         raise HTTPException(status_code=429, detail=portal_limit)
@@ -176,16 +154,14 @@ def enter_customer_demo(request: Request) -> dict:
 
     business = demo_workspace.showcase()
     if not business:
-        # No fallback to a real client. Ever. An empty demo workspace is a
-        # refusal, not an opportunity to show somebody a stranger's audit.
+        # Never fall back to a real client. An empty demo workspace is a refusal.
         raise HTTPException(
             status_code=503,
             detail=("The demonstration workspace is not available. It is "
                     "seeded on boot and disabled by TITAN_DEMO_WORKSPACE=0."))
 
-    # Belt and braces. showcase() already filters on is_demo; this refuses to
-    # mint the session if that ever stops being true, rather than trusting a
-    # function two modules away to have stayed correct.
+    # Belt and braces: showcase() already filters on is_demo, but this refuses to
+    # mint the session if that ever stops being true.
     if not demo_workspace.is_demo_client(business):
         raise HTTPException(status_code=503,
                             detail="Demonstration business is not marked as one.")
@@ -208,19 +184,17 @@ def enter_customer_demo(request: Request) -> dict:
 @router.post("/login", tags=["auth"])
 def login(req: LoginRequest, request: Request) -> dict:
     from ..core import ratelimit
-    # The founder's door had no rate limit at all, while the customer door a
-    # few hundred lines below has had one since the day it was written. Keyed
-    # on the caller rather than on what was typed, so nobody can lock the
-    # founder out of his own site by hammering his address.
+    # Rate-limited per caller, not per address typed, so nobody can lock the
+    # founder out by hammering the founder's address.
     verdict = ratelimit.check("login", ratelimit.identity_for(request))
     if not verdict["allowed"]:
         raise HTTPException(status_code=429, detail=verdict)
     token = auth.login(req.username, req.password)
     if not token:
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    # The identifier Titan actually authenticated, not the one that was typed.
-    # Real accounts normalise the address, so echoing the input back would show
-    # a capitalisation that is not what is stored.
+    # The identifier Titan authenticated, not the one typed: real accounts
+    # normalise the address, so echoing the input could show different
+    # capitalisation from what's stored.
     return {"token": token,
             "username": auth.founder_from_token(token) or req.username}
 
@@ -315,11 +289,12 @@ class AgentChatRequest(BaseModel):
 
 @router.post("/agents/{agent_id}/chat", tags=["agents"])
 def agent_chat(agent_id: str, req: AgentChatRequest) -> dict:
-    """Talk directly to one agent — it replies in character, using its own role,
-    mission, and current task as context.
+    """Talk directly to one agent. It replies in character, using its own role,
+    mission and current task as context.
 
     In a subscriber's cockpit the agent works for their workspace and their
-    businesses, and talks to them as "you" rather than as Abdullah."""
+    businesses, and addresses them directly.
+    """
     from ..core import quota
     from ..engines import owner
     rt = STORE.agents.get(agent_id)
@@ -526,11 +501,11 @@ def get_feed(limit: int = Query(default=50, ge=1, le=200)) -> List[FeedEvent]:
 # --- real metrics webhook (Make.com / Zapier push real data here) ----------
 
 def _verify_webhook(secret: Optional[str]) -> None:
-    """Reject requests when TITAN_WEBHOOK_SECRET is set and header doesn't match.
+    """Reject requests when TITAN_WEBHOOK_SECRET is set and the header doesn't match.
 
-    Used ONLY on the external metric-push endpoints that Make.com / Zapier call.
-    In-dashboard buttons (revenue log, inbox reply) do NOT use this — they are
-    same-origin and gated by the normal login token when auth is enabled.
+    Only used on the external metric-push endpoints that Make.com / Zapier
+    call. In-dashboard buttons (revenue log, inbox reply) don't use this; they
+    are same-origin and use the normal login token when auth is enabled.
     """
     expected = os.getenv("TITAN_WEBHOOK_SECRET")
     if expected and secret != expected:
@@ -585,7 +560,7 @@ def bulk_update_metrics(
     return {"updated": keys, "count": len(keys), "source": update.source}
 
 
-# --- REAL revenue ledger (Upwork orders, Career Mind sales, Kindle, etc.) ---
+# --- revenue ledger (Upwork orders, Career Mind sales, Kindle, etc.) -------
 
 _SOURCE_KEY = {
     "fiverr": "fiverr_revenue",
@@ -623,14 +598,14 @@ def get_revenue() -> dict:
 
 @router.get("/revenue/entries", tags=["revenue"])
 def revenue_entries() -> list:
-    """Full order history, newest first — shows where every dollar came from."""
+    """Full order history, newest first."""
     return list(reversed(STORE.revenue_entries))
 
 
 @router.post("/revenue/log", tags=["revenue"])
 def log_revenue(entry: RevenueLog) -> dict:
-    """Record a REAL earned order/sale. Appends a dated ledger entry and bumps
-    the running total so the dashboard shows the truth.
+    """Record a real order or sale. Appends a dated ledger entry and updates the
+    running total.
     """
     m = STORE.metrics
     source = (entry.source or "other").lower()
@@ -785,10 +760,10 @@ _INTEL_PROMPTS = {
 
 
 # The same studio for a subscriber, written about their own business. The
-# founder-only kinds (school and job-seeker outreach for Career Mind) are not
-# offered to them; an unknown kind falls back to market analysis. {desc} is
-# replaced with the business description, never str.format()ed - a business
-# name may contain braces.
+# founder-only kinds (school and job-seeker outreach for Career Mind) aren't
+# offered; an unknown kind falls back to market analysis. {desc} is replaced
+# with the business description by plain substitution, not str.format(),
+# since a business name may contain braces.
 _SUBSCRIBER_INTEL = {
     "market_analysis": (
         "You are a sharp market analyst for {desc}. Produce a concise, actionable "
@@ -819,7 +794,7 @@ class IntelRequest(BaseModel):
 
 @router.post("/intel/generate", tags=["system"])
 def intel_generate(req: IntelRequest) -> dict:
-    """Generate market analysis or outreach copy on demand via the free LLM."""
+    """Generate market analysis or outreach copy on demand via the LLM."""
     from ..core import quota
     from ..engines import owner
     businesses = owner.subscriber_businesses()
@@ -887,10 +862,11 @@ def _empire_context() -> dict:
 @router.get("/voice-report", tags=["system"])
 def voice_report() -> dict:
     """Returns the briefing in Urdu (for display) and Hindi/Devanagari (for the
-    browser TTS engine, since Urdu voices are rarely installed but Hindi ones
+    browser TTS engine - Urdu voices are rarely installed, but Hindi ones
     pronounce the same words correctly).
 
-    A subscriber gets their own briefing from /api/me/voice-report."""
+    A subscriber gets their own briefing from /api/me/voice-report.
+    """
     subscriber = cockpit_scope.customer_email()
     if subscriber:
         return _subscriber_voice_report(subscriber)
@@ -927,9 +903,9 @@ def voice_report() -> dict:
 
 def _subscriber_voice_report(email: str) -> dict:
     """The same spoken briefing about a subscriber's own workspace: their
-    businesses, their leads, the sales they logged and their agents. No name -
-    the account holds an email, not a name, and a guessed one is worse than
-    none."""
+    businesses, leads, logged sales and agents. No name - the account holds
+    an email, not a name, and a guessed name is worse than none.
+    """
     from ..core import billing, crm
     from ..store import founder_store
 
@@ -966,9 +942,9 @@ def _subscriber_voice_report(email: str) -> dict:
 
 # --- Ask Titan assistant (voice/text, ~12 languages) -----------------------
 
-# Universal voice: the LLM is natively multilingual; the browser supplies the
-# TTS voice per language. Urdu keeps its special trick (### + Devanagari) since
-# Urdu voices are rarely installed but Hindi ones read the same words aloud.
+# The LLM is multilingual; the browser supplies the TTS voice per language.
+# Urdu is special-cased (### + Devanagari) because Urdu voices are rarely
+# installed but Hindi ones read the same words aloud.
 ASSISTANT_LANGS = {
     "en": "English",
     "ur": "Urdu (اردو)",
@@ -992,13 +968,14 @@ class AssistantRequest(BaseModel):
 
 @router.post("/assistant", tags=["system"])
 def assistant(req: AssistantRequest) -> dict:
-    """Answer Abdullah's question in his chosen language. Returns 'answer'
+    """Answer the founder's question in the chosen language. Returns 'answer'
     (display) and 'spoken' (Devanagari for Urdu so the Hindi voice reads it;
-    identical to 'answer' for every other language).
+    the same as 'answer' for every other language).
 
-    Asked from a subscriber's cockpit (/api/me/assistant) it answers about
-    their own businesses instead - see _subscriber_brief. The empire figures
-    below are Abdullah's and never reach a subscriber."""
+    From a subscriber's cockpit (/api/me/assistant) it answers about their own
+    businesses instead - see _subscriber_brief. The founder's figures below
+    never reach a subscriber.
+    """
     lang = req.lang if req.lang in ASSISTANT_LANGS else "en"
     is_urdu = lang == "ur"
     subscriber = cockpit_scope.customer_email()
@@ -1022,15 +999,10 @@ def assistant(req: AssistantRequest) -> dict:
         )
 
     if is_urdu:
-        # The old prompt said "write the SAME reply in Hindi (Devanagari)",
-        # which asked the model to TRANSLATE into Hindi. It obliged: Hindi
-        # vocabulary and Hindi register, which a Hindi voice then read as
-        # Hindi. Urdu speakers heard Hindi because it WAS Hindi.
-        #
-        # What is actually wanted is a transliteration: the same Urdu
-        # sentence, letter for letter, written in Devanagari purely so a
-        # Hindi TTS voice pronounces it. Urdu and Hindi share phonetics; they
-        # do not share vocabulary at this register.
+        # Ask for a transliteration, not a translation: the same Urdu sentence,
+        # letter for letter, written in Devanagari only so a Hindi TTS voice can
+        # pronounce it. Asking for "the same reply in Hindi" gets Hindi vocabulary,
+        # which Urdu speakers then hear as Hindi.
         instructions = (
             "Reply in Urdu using Arabic script. Then output a line containing "
             "exactly '###'. After it, TRANSLITERATE that same Urdu sentence "
@@ -1060,13 +1032,11 @@ def assistant(req: AssistantRequest) -> dict:
             answer = parts[0].strip()
             spoken = parts[1].strip()
         else:
-            # The model dropped the separator — common, and it used to mean
-            # the Devanagari half was shown to the reader. An Urdu speaker
-            # then sees Hindi script, which is the single most visible way
-            # this feature was broken.
+            # The model often drops the separator; split by script instead, so the
+            # Devanagari half is never shown to the reader.
             answer, spoken = _split_urdu_scripts(raw)
-        # Belt and braces: whatever happened above, the DISPLAYED answer must
-        # never contain Devanagari, and the SPOKEN line must never be empty.
+        # Whatever happened above, the displayed answer must never contain
+        # Devanagari, and the spoken line must never be empty.
         answer = _strip_devanagari(answer) or _strip_devanagari(raw)
         spoken = spoken.strip() or answer
 
@@ -1097,8 +1067,9 @@ def assistant(req: AssistantRequest) -> dict:
 
 def _subscriber_brief(email: str) -> dict:
     """What Ask Titan knows when a subscriber asks: their plan, their own
-    businesses and their own leads. Nothing of Abdullah's, nothing of anyone
-    else's - the model cannot repeat what it was never given."""
+    businesses and their own leads. Nothing of the founder's or anyone else's -
+    the model can't repeat what it was never given.
+    """
     from ..core import billing, crm, quota
     from ..store import founder_store
 
@@ -1146,10 +1117,9 @@ def _subscriber_brief(email: str) -> dict:
 
 
 # --- Urdu script handling -------------------------------------------------
-# Urdu is written in Arabic script; Hindi in Devanagari. They share phonetics,
-# which is why a Hindi TTS voice can read transliterated Urdu convincingly —
-# and also why the two kept getting mixed up here, with Devanagari reaching
-# the screen. These keep the two apart explicitly instead of trusting the
+# Urdu is written in Arabic script, Hindi in Devanagari. They share phonetics,
+# which is why a Hindi TTS voice can read transliterated Urdu - and why the two
+# are easy to mix up. These keep them apart explicitly instead of relying on the
 # model to emit a separator.
 
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
@@ -1175,10 +1145,10 @@ def _split_urdu_scripts(raw: str) -> tuple[str, str]:
     """Separate an Urdu reply from its Devanagari transliteration by script,
     for when the model forgets the '###' separator.
 
-    Returns (displayed_urdu, spoken_devanagari). If there is no Devanagari at
-    all the Urdu is used for both — a Hindi voice reading Arabic script is
-    poor, but silence would be worse and inventing a transliteration here
-    would be guessing at pronunciation.
+    Returns (displayed_urdu, spoken_devanagari). With no Devanagari at all the
+    Urdu is used for both: a Hindi voice reading Arabic script is poor, but
+    silence is worse, and inventing a transliteration here would be guessing
+    at pronunciation.
     """
     urdu_lines, deva_lines = [], []
     for ln in (raw or "").splitlines():
@@ -1210,10 +1180,9 @@ def intelligence_status() -> dict:
 def tools_registry() -> dict:
     """Every external capability, its licence, and whether it can actually run.
 
-    Spec Part 2 Layer 4 + Part 8. The point of this endpoint is that the answer
-    to "can Titan crawl / call / message yet?" is a fact on a screen rather than
-    a guess: `not_configured` names the missing variable, `licence_blocked`
-    cannot be fixed by writing code.
+    So "can Titan crawl / call / message yet?" is answered on screen:
+    `not_configured` names the missing variable, and `licence_blocked` can't
+    be fixed by writing code.
     """
     from ..core import tools as tool_layer
     return tool_layer.registry_report()
@@ -1233,9 +1202,8 @@ def tools_invoke(name: str, payload: dict | None = None) -> dict:
 def ai_economics() -> dict:
     """Cost and reliability per task and per provider, from counted calls.
 
-    Every cost here is ESTIMATED — no provider returns token usage through
-    `llm.complete()`, so actual spend is reported as null rather than as an
-    estimate wearing a different label.
+    Every cost here is estimated: no provider returns token usage through
+    `llm.complete()`, so actual spend is reported as null.
     """
     from ..core import model_router
     return model_router.economics()
@@ -1243,21 +1211,20 @@ def ai_economics() -> dict:
 
 @router.get("/approvals", tags=["system"])
 def approvals_pending() -> dict:
-    """Everything waiting on a human, across every surface.
+    """Everything waiting on a person, across every surface.
 
-    Read-only by design. Approving happens on each item's own endpoint, which
-    enforces rules this list does not know — a site fix whose page changed
-    since it was proposed is refused there, and an improvement that measured
-    worse is refused there. A central approve-all would delete those checks.
+    Read-only. Approving happens on each item's own endpoint, which enforces
+    rules this list doesn't know (a site fix whose page changed is refused
+    there, so is an improvement that measured worse). A central approve-all
+    would skip those checks.
     """
     from ..core import approvals
     return approvals.pending(STORE)
 
 
 # --- self-improvement -----------------------------------------------------
-# Abdullah IS the approval step, so these have to exist for the loop to close.
-# Everything here is founder-only: `approve` changes how a live product
-# behaves, and there is no version of that a demo visitor should reach.
+# The founder is the approval step. Everything here is founder-only: `approve`
+# changes how the live product behaves.
 
 class ProposalRequest(BaseModel):
     param: str
@@ -1267,18 +1234,18 @@ class ProposalRequest(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    # Not optional and not defaulted. An approval without a name is not an
-    # audit trail, and a default like "founder" would be a name nobody typed.
+    # Required, with no default. An approval without a name isn't an audit trail,
+    # and a default like "founder" would be a name nobody typed.
     approver: str
     why: str = ""
 
 
 def _improve_call(fn, *args, **kwargs) -> dict:
-    """ValueError from the engine is a 400 with its own message.
+    """ValueError from the engine becomes a 400 with its own message.
 
-    Those messages are the product — "this measured WORSE", "Titan does not
-    deploy its own changes" — so they are surfaced rather than flattened into
-    a generic error.
+    Those messages ("this measured worse", "Titan doesn't deploy its own
+    changes") are meant for the user, so they're passed through rather than
+    replaced with a generic error.
     """
     try:
         return fn(*args, **kwargs)
@@ -1333,7 +1300,7 @@ def improve_reject(proposal_id: str, req: ApprovalRequest) -> dict:
 
 @router.post("/improve/{proposal_id}/activate", tags=["system"])
 def improve_activate(proposal_id: str) -> dict:
-    """Apply an already-APPROVED proposal. Refuses anything else."""
+    """Apply an already approved proposal. Refuses anything else."""
     from ..core import improve
     return _improve_call(improve.activate, proposal_id)
 
@@ -1351,17 +1318,17 @@ class PlanRequest(BaseModel):
 
 @router.post("/plan", tags=["executive"])
 def make_plan(req: PlanRequest) -> dict:
-    """State what would be done, and what it would cost, before doing it.
+    """Say what would be done, and what it would cost, before doing it.
 
-    Spec Part 2. This deliberately does NOT execute — /api/agent/act does that.
-    Separating them is the point: a plan can be read, priced and refused first,
-    and a plan with a blocked step says so instead of failing halfway through.
+    Doesn't execute - /api/agent/act does that. Keeping them separate means a
+    plan can be read, priced and refused first, and a plan with a blocked step
+    says so instead of failing halfway through.
     """
     from ..core import planner
     return planner.plan(req.goal).as_dict()
 
 
-# --- subscriptions and signup (spec Part 5B) --------------------------------
+# --- subscriptions and signup --------------------------------------------
 
 class SignupIn(BaseModel):
     email: str = Field(..., min_length=5)
@@ -1384,12 +1351,11 @@ def account_onboard(req: OnboardIn, request: Request,
                     x_account_token: Optional[str] = Header(None)) -> dict:
     """A subscriber adds their business and gets their first audit immediately.
 
-    This is the conversion path. Everything before it is a promise; this is the
-    first moment the product does something for the person who signed up, and
-    the audit is what makes the value obvious rather than described.
+    This is the conversion path: the first moment the product does something
+    for the person who signed up.
 
     The plan's business limit is enforced here, and a refusal names the limit
-    and the tier that lifts it rather than failing blankly.
+    and the tier that lifts it.
     """
     from ..core import billing
 
@@ -1405,9 +1371,9 @@ def onboard_business(email: str, req: OnboardIn) -> dict:
     from ..core import analytics, billing, evidence
     from ..engines import client_seo as _cs
 
-    # Onboarding fetches a URL the caller supplies. Unmetered, that makes Titan
-    # a request amplifier aimed at somebody else's server. Keyed on the
-    # account, since the caller is authenticated here.
+    # Onboarding fetches a URL the caller supplies; unmetered, Titan would become
+    # a request amplifier aimed at someone else's server. Keyed on the account,
+    # since the caller is authenticated here.
     from ..core import ratelimit
     limited = ratelimit.check("onboard", email)
     if not limited["allowed"]:
@@ -1415,13 +1381,12 @@ def onboard_business(email: str, req: OnboardIn) -> dict:
 
     verdict = billing.can_add_client(email)
     if not verdict["allowed"]:
-        # 402 rather than 403: this is not forbidden, it is a plan ceiling.
+        # 402 rather than 403: it isn't forbidden, it's a plan limit.
         raise HTTPException(status_code=402, detail=verdict)
 
-    # A subscriber's own business gets no separate portal login — they already
-    # authenticate as the account holder. A random credential is stored so the
-    # shared client record shape stays valid without creating a usable second
-    # login nobody was told about.
+    # A subscriber's own business gets no separate portal login - they already
+    # sign in as the account holder. A random credential is stored so the shared
+    # client record stays valid without creating a usable second login.
     import secrets as _secrets
     try:
         rec = clients.create_client(
@@ -1462,15 +1427,14 @@ def onboard_business(email: str, req: OnboardIn) -> dict:
                 clients.bump(rec["id"], "issues_found",
                              len(audit.get("findings", [])))
                 clients.update_raw(rec["id"], last_audit=audit)
-                # The crawl already happened — file what it observed.
+                # The crawl already happened - record what it observed.
                 try:
                     page, _e, _s = _cs._fetch(rec["website"])
                     if page:
                         evidence.observe_from_page(rec["id"], page)
-                        # ...and keep the readable text, so the voice agent can
-                        # answer questions about this business from its own
-                        # site instead of guessing. The fetch is already paid
-                        # for; throwing the text away was the waste.
+                        # ...and keep the readable text, so the voice agent can answer
+                        # questions about this business from its own site. The page is
+                        # already fetched.
                         from ..core import knowledge
                         knowledge.ingest(rec["id"], page, rec["website"])
                 except Exception:
@@ -1496,10 +1460,10 @@ class SiteConnectIn(BaseModel):
 
 @router.get("/account/site/guide", tags=["billing"])
 def site_setup_guide(provider: str = Query(default="wordpress")) -> dict:
-    """How a non-technical owner produces the credential Titan needs.
+    """How a non-technical owner creates the credential Titan needs.
 
-    Public: someone deciding whether to sign up should be able to see exactly
-    what will be asked of them before they hand over anything.
+    Public: someone deciding whether to sign up should see exactly what will
+    be asked of them first.
     """
     from ..core import site_access
     return site_access.setup_guide(provider)
@@ -1510,9 +1474,9 @@ def connect_site(cid: str, req: SiteConnectIn,
                  x_account_token: Optional[str] = Header(None)) -> dict:
     """Give Titan write access to a business's own website.
 
-    The credential is verified against the live site before anything is
+    The credential is checked against the live site before anything is
     stored, encrypted at rest, and never returned by any endpoint. Ownership
-    is checked first — a token for one subscriber must never connect another
+    is checked first, so one subscriber's token can never connect another
     subscriber's site.
     """
     from ..core import site_access
@@ -1544,11 +1508,10 @@ def disconnect_site(cid: str,
 
 
 # ---------------------------------------------------------------- site fixes --
-# Titan changing a page on somebody else's live website. Every endpoint here
-# checks TWO things: that the caller owns the business, and that the fix
-# belongs to that business. Checking only the first would let a valid
-# subscriber apply a fix belonging to another subscriber's site by guessing an
-# id, which is a worse leak than any read endpoint in this file.
+# Titan changing a page on someone else's live website. Every endpoint checks
+# two things: that the caller owns the business, and that the fix belongs to
+# that business. Checking only the first would let a subscriber apply another
+# subscriber's fix by guessing its id.
 
 class ApproveIn(BaseModel):
     approver: str = Field(..., min_length=1,
@@ -1557,18 +1520,17 @@ class ApproveIn(BaseModel):
 
 
 def _owned(cid: str, token: Optional[str]) -> str:
-    """The single ownership gate. See core/tenancy.py for why it lives there.
+    """The single ownership gate. See core/tenancy.py.
 
     Also binds the tenant to the logging context, so every log line for the
-    rest of the request carries it and a cross-tenant incident is
-    reconstructable.
+    rest of the request carries it.
     """
     from ..core import tenancy
     try:
         return tenancy.require_owner(cid, token or "")
     except tenancy.NotOwned:
-        # The SAME 404 as "no such client" — two different answers would tell
-        # a prober which client ids exist.
+        # Same 404 as "no such client"; two different answers would tell a prober
+        # which client ids exist.
         raise HTTPException(status_code=404, detail="Not found")
 
 
@@ -1576,8 +1538,8 @@ def _owned_fix(cid: str, fix_id: str, token: Optional[str]) -> dict:
     from ..core import site_fix
     _owned(cid, token)
     fix = site_fix.get(fix_id)
-    # Same 404 for "no such fix" and "not yours" — distinguishing them tells a
-    # prober which ids exist.
+    # Same 404 for "no such fix" and "not yours", so a prober can't tell which
+    # ids exist.
     if not fix or fix["client_id"] != cid:
         raise HTTPException(status_code=404, detail="Not found")
     return fix
@@ -1588,10 +1550,9 @@ def propose_fixes(cid: str,
                   x_account_token: Optional[str] = Header(None)) -> dict:
     """Turn the latest audit's findings into concrete, appliable changes.
 
-    Nothing is changed on the site by this call. It reads the connected
-    WordPress site to find the real page behind the audited URL and records
-    what it would write — plus, explicitly, every finding it cannot fix and
-    why.
+    Nothing on the site changes. It reads the connected WordPress site to
+    find the real page behind the audited URL and records what it would
+    write, plus every finding it can't fix and why.
     """
     from ..core import site_fix
     _owned(cid, x_account_token)
@@ -1622,7 +1583,7 @@ def list_fixes(cid: str, status: str = Query(default=""),
 @router.get("/account/clients/{cid}/fixes/{fix_id}", tags=["billing"])
 def fix_detail(cid: str, fix_id: str,
                x_account_token: Optional[str] = Header(None)) -> dict:
-    """The full before/after text, so a human can read what they are approving."""
+    """The full before/after text, so a person can read what they're approving."""
     return _owned_fix(cid, fix_id, x_account_token)
 
 
@@ -1655,9 +1616,9 @@ def apply_fix(cid: str, fix_id: str,
               x_account_token: Optional[str] = Header(None)) -> dict:
     """Write the approved change to the live site, then read it back.
 
-    A 409 here means the change did NOT go live — either the page moved on
-    since it was proposed, or the site accepted the write and discarded it.
-    The body carries what the site actually says now.
+    A 409 means the change did not go live - either the page changed since it
+    was proposed, or the site accepted the write and discarded it. The body
+    carries what the site says now.
     """
     from ..core import site_fix
     _owned_fix(cid, fix_id, x_account_token)
@@ -1683,19 +1644,13 @@ def rollback_fix(cid: str, fix_id: str,
 @router.post("/account/clients/{cid}/portal", tags=["billing"])
 def open_client_portal(cid: str,
                        x_account_token: Optional[str] = Header(None)) -> dict:
-    """Open the dashboard for a business this subscriber owns.
+    """Open the customer portal for a business this subscriber owns.
 
-    The gap this closes: a paying customer had nowhere to go. /join is a
-    three-step wizard and the dashboard at / is the FOUNDER's - the public demo
-    shows that one, so a prospect was being shown a product no customer could
-    reach at any price.
+    A subscriber's own business is created with a deliberately unusable portal
+    password, so this is their way in.
 
-    /portal is a real customer dashboard and it already existed; the only thing
-    missing was a way in, because a subscriber's own business is created with a
-    deliberately unusable portal password.
-
-    Ownership is checked FIRST and by the same gate every other client route
-    uses, so a token for one subscriber can never open another's business.
+    Ownership is checked first, by the same gate as every other client route,
+    so one subscriber's token can never open another's business.
     """
     from ..core import audit, clients as registry
     _owned(cid, x_account_token)
@@ -1722,20 +1677,14 @@ def set_portal_password(cid: str, req: PortalPasswordIn,
                         x_account_token: Optional[str] = Header(None)) -> dict:
     """The owner sets the portal password for one of their businesses.
 
-    clients.set_password() has been correct and unreachable since the registry
-    was written, so a business could never change its portal password. Found by
-    evaluation/dead_code.py, which then HID it again the moment
-    billing.set_password() gained a caller — the sweep matches bare names. It
-    was named explicitly in the ratchet so it would not be lost twice.
+    Owner-only. The portal password starts as a random unusable string, so the
+    owner is the one who sets a real one. A portal session can't change it:
+    that session was minted for an owner who already proved ownership, and
+    letting it change the credential would turn a link shared once into
+    permanent access.
 
-    Owner-only. The portal password is created during onboarding as a random
-    unusable string, so the owner is who sets a real one. A portal session
-    cannot rewrite it: that session is minted for an owner who already proved
-    ownership, and letting it change the credential would turn a link shared
-    once into permanent access.
-
-    Every existing portal session for this business ends — clients.set_password
-    revokes them — which is the point of changing a password.
+    Every existing portal session for this business ends (clients.set_password
+    revokes them).
     """
     email = _owned(cid, x_account_token)
     if not clients.set_password(cid, req.password):
@@ -1751,7 +1700,7 @@ def set_portal_password(cid: str, req: PortalPasswordIn,
 
 @router.get("/account/clients", tags=["billing"])
 def account_clients(x_account_token: Optional[str] = Header(None)) -> dict:
-    """The businesses THIS subscriber owns. Never anyone else's."""
+    """The businesses this subscriber owns. Never anyone else's."""
     from ..core import billing
     email = billing.resolve(x_account_token or "")
     if not email:
@@ -1765,8 +1714,8 @@ def account_clients(x_account_token: Optional[str] = Header(None)) -> dict:
 def account_report(cid: str, x_account_token: Optional[str] = Header(None)):
     """The PDF a subscriber can hand to their own client.
 
-    Ownership is checked against the account's own list — a valid token for one
-    subscriber must never fetch another subscriber's report.
+    Ownership is checked against the account's own list, so one subscriber's
+    token can never fetch another's report.
     """
     email = _owned(cid, x_account_token)
     return business_report_pdf(cid, email)
@@ -1796,11 +1745,9 @@ def business_report_pdf(cid: str, email: str) -> Response:
 def self_seo_report() -> dict:
     """Titan's own audit score, from the engine it sells.
 
-    Deliberately PUBLIC. It is the strongest trust signal available and it
-    costs nothing: anyone can claim their SEO tool is good, but a score
-    produced by the same code the customer is buying can be checked by the
-    reader in seconds. Published as measured — if Titan's own site regresses,
-    this number falls in public.
+    Public on purpose: a score produced by the same code customers are buying
+    can be checked by anyone in seconds. Published as measured - if Titan's own
+    site regresses, this number drops in public.
     """
     from ..engines import self_seo
     return self_seo.report()
@@ -1808,8 +1755,9 @@ def self_seo_report() -> dict:
 
 @router.get("/structured-data", tags=["billing"])
 def structured_data() -> dict:
-    """JSON-LD for the product, offers generated from the real plan table so a
-    marked-up price can never drift from the price actually charged."""
+    """JSON-LD for the product, with offers generated from the real plan table so
+    a marked-up price can't drift from what's charged.
+    """
     from ..engines import self_seo
     return self_seo.structured_data()
 
@@ -1826,8 +1774,8 @@ def signup(req: SignupIn, request: Request) -> dict:
     from ..core import analytics, billing, ratelimit
     verdict = ratelimit.check("signup", ratelimit.identity_for(request))
     if not verdict["allowed"]:
-        # 429 with the reason and a retry time, not a bare refusal — the same
-        # rule the plan quotas follow.
+        # 429 with the reason and a retry time, not a bare refusal - same as the plan
+        # quotas.
         raise HTTPException(status_code=429, detail=verdict)
     try:
         account = billing.signup(req.email, req.password, req.plan)
@@ -1842,15 +1790,15 @@ def signup(req: SignupIn, request: Request) -> dict:
 def account_login(req: SignupIn, request: Request) -> dict:
     from ..core import billing, ratelimit
     # Slows credential stuffing. Keyed on the caller, not the email, so an
-    # attacker cannot lock a real customer out of their own account.
+    # attacker can't lock a real customer out of their own account.
     verdict = ratelimit.check("login", ratelimit.identity_for(request))
     if not verdict["allowed"]:
         raise HTTPException(status_code=429, detail=verdict)
     token = billing.authenticate(req.email, req.password)
     if not token:
         raise HTTPException(status_code=401, detail="Wrong email or password")
-    # Coming back after signup is the difference between interest and use. It
-    # has no durable trace anywhere else, so it is recorded here or not at all.
+    # Coming back after signup is the difference between interest and use, and
+    # nothing else records it, so it's recorded here.
     from ..core import analytics
     analytics.record(req.email, analytics.SIGNED_IN)
     return {"token": token, "account": billing.public(req.email)}
@@ -1866,22 +1814,16 @@ def account_change_password(req: PasswordChangeIn, request: Request,
                             x_account_token: Optional[str] = Header(None)) -> dict:
     """A subscriber changes their own password.
 
-    Until now NOBODY could change a password anywhere in this product — not the
-    founder, not a subscriber, not a business. billing had no setter at all,
-    and identity.set_password() and clients.set_password() both had zero
-    callers. Found by evaluation/dead_code.py.
-
-    The current password is required even though the caller already holds a
-    valid session, because otherwise a stolen token becomes a permanent
-    takeover: the thief changes the password and the owner is locked out of
-    their own billing.
+    The current password is required even though the caller has a valid
+    session; otherwise a stolen token would be a permanent takeover (the thief
+    changes the password and locks the owner out of their own billing).
     """
     from ..core import billing, ratelimit
     email = billing.resolve(x_account_token or "")
     if not email:
         raise HTTPException(status_code=401, detail="Sign in first")
-    # Same bucket as the login. This endpoint verifies a password, so leaving
-    # it unmetered would just move credential stuffing one door along.
+    # Same bucket as the login. This endpoint checks a password, so leaving it
+    # unmetered would just move credential stuffing one door along.
     verdict = ratelimit.check("login", ratelimit.identity_for(request))
     if not verdict["allowed"]:
         raise HTTPException(status_code=429, detail=verdict)
@@ -1890,16 +1832,14 @@ def account_change_password(req: PasswordChangeIn, request: Request,
     if not out.get("ok"):
         raise HTTPException(status_code=400, detail=out.get("error"))
     persistence.save(STORE)
-    # Audited, never with the password. audit.py redacts on the way IN, so a
-    # field named *password* could not reach the table even by mistake, and
-    # record() never raises — a failed audit write must not break the change it
-    # is recording.
+    # Audited, without the password. audit.py redacts on the way in, so a field
+    # named *password* can't reach the table even by mistake, and record() never
+    # raises, so a failed audit write can't break the change.
     from ..core import audit
     audit.record(email, "account.password_changed",
                  target_type="account", target_id=email)
-    # The caller's own token died with the rest, which is the point. Hand back
-    # a fresh one so changing a password is not also a logout — a change people
-    # find annoying is a change people do not make.
+    # The caller's own token ended with the rest. Return a fresh one so changing a
+    # password isn't also a logout.
     return {"ok": True, "signed_out_everywhere": True,
             "token": billing.authenticate(email, req.new_password)}
 
@@ -1907,8 +1847,8 @@ def account_change_password(req: PasswordChangeIn, request: Request,
 def _account_or_401(token) -> str:
     """The subscriber this request belongs to, or 401.
 
-    One helper rather than the same four lines at each CRM route: the copy that
-    gets edited and the copy that does not is how a tenant filter goes missing.
+    One helper rather than the same lines at each CRM route, so the tenant
+    filter can't go missing from one copy.
     """
     from ..core import billing
     email = billing.resolve(token or "")
@@ -1933,14 +1873,9 @@ class CustomerLeadStatus(BaseModel):
 def customer_leads(x_account_token: Optional[str] = Header(None)) -> dict:
     """This customer's pipeline, and nothing else.
 
-    Titan has had a working leads pipeline since early on and every route
-    reaching it was FOUNDER ONLY, over a flat dict with no owner field. So the
-    product could find leads for Abdullah and for nobody who paid for it.
-
-    Everything here reads through crm.visible_to(), including the counts. A
-    count computed over the unfiltered table tells one customer how many leads
-    another has, which is a smaller leak than the records themselves and still
-    a leak.
+    Everything reads through crm.visible_to(), including the counts: a count
+    over the unfiltered table would tell one customer how many leads another
+    has.
     """
     from ..core import crm
     email = _account_or_401(x_account_token)
@@ -1957,11 +1892,10 @@ def customer_leads(x_account_token: Optional[str] = Header(None)) -> dict:
 @router.post("/account/leads", tags=["crm"])
 def customer_create_lead(req: CustomerLeadIn,
                          x_account_token: Optional[str] = Header(None)) -> dict:
-    """File a lead against THIS account.
+    """File a lead against this account.
 
-    The owner comes from the session, never from the body. A caller who can
-    name the owner is a caller who can file into somebody else's pipeline — or
-    read it back out by filing into it.
+    The owner comes from the session, never the body; a caller who could name
+    the owner could file into, and read from, someone else's pipeline.
     """
     from ..core import crm
     email = _account_or_401(x_account_token)
@@ -1988,7 +1922,7 @@ def customer_lead_status(lead_id: str, req: CustomerLeadStatus,
     try:
         lead = crm.require_owned(STORE.leads, lead_id, email)
     except crm.NotYours:
-        # Identical to "no such lead". Two answers enumerate other people's.
+        # Identical to "no such lead", so other people's ids can't be enumerated.
         raise HTTPException(status_code=404, detail="Lead not found")
     lead["status"] = status
     lead["updated_at"] = now().isoformat()
@@ -2014,15 +1948,12 @@ def customer_delete_lead(lead_id: str,
 def account_usage(x_account_token: Optional[str] = Header(None)) -> dict:
     """What this customer has used this month, and what their plan allows.
 
-    A limit nobody can see is a surprise rather than a limit. Every plan has
-    declared ai_calls_per_month since billing was written; nothing charged it
-    and nothing displayed it, so the number on the pricing page described
-    nothing that happened.
+    A limit nobody can see is just a surprise.
 
-    `billed_to` is what the CURRENT request resolved to through the middleware.
-    It is reported rather than assumed, because a request that binds nobody
-    spends nobody's quota, and the difference between "you have used none" and
-    "we were not counting" is the whole point.
+    `billed_to` is what the current request resolved to through the
+    middleware. It's reported rather than assumed, because a request that
+    binds nobody spends nobody's quota, and "you've used none" is different
+    from "we weren't counting".
     """
     from ..core import billing, quota
     email = billing.resolve(x_account_token or "")
@@ -2035,7 +1966,7 @@ def account_usage(x_account_token: Optional[str] = Header(None)) -> dict:
         "usage": acct.get("usage"),
         "limits": acct.get("limits"),
         "period_start": acct.get("period_start"),
-        # Proof the meter is pointed at this request, not a claim that it is.
+        # Shows the meter is actually pointed at this request.
         "billed_to": quota.current() or None,
         "note": ("A limit of -1 means unlimited. Usage resets at the start of "
                  "each billing period. Work Titan does for itself — the "
@@ -2046,7 +1977,7 @@ def account_usage(x_account_token: Optional[str] = Header(None)) -> dict:
 
 @router.post("/account/logout", tags=["billing"])
 def account_logout(x_account_token: Optional[str] = Header(None)) -> dict:
-    """End this session. billing.sign_out() existed and had no caller."""
+    """End this session."""
     from ..core import billing
     if not billing.resolve(x_account_token or ""):
         raise HTTPException(status_code=401, detail="Sign in first")
@@ -2059,16 +1990,13 @@ def account_logout(x_account_token: Optional[str] = Header(None)) -> dict:
 def founder_change_password(req: PasswordChangeIn, request: Request) -> dict:
     """The founder changes their own password.
 
-    Only reachable once the login runs on real accounts. Under the retiring
-    environment gate there is no stored password to change — the credential is
-    a Space variable, and pretending otherwise would report success for a
-    change that did not happen.
+    Only available once the login runs on real accounts. Under the environment
+    gate there's no stored password to change (the credential is a Space
+    variable), and reporting success would be wrong.
 
-    FOUNDER only today, and deliberately not described as more. This path sits
-    behind the middleware in main.py, which requires role == founder, so a
-    member holding a perfectly valid session cannot reach it. Members will need
-    their own door; saying "any real account" here would be a promise the
-    middleware breaks.
+    Founder only for now: this path sits behind the middleware in main.py,
+    which requires role == founder, so a member with a valid session can't
+    reach it. Members will need their own endpoint.
     """
     from ..core import identity, ratelimit
     token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
@@ -2104,10 +2032,11 @@ def account_me(x_account_token: Optional[str] = Header(None)) -> dict:
 
 @router.post("/webhooks/billing", tags=["billing"])
 async def billing_webhook(request: Request) -> dict:
-    """Paddle tells Titan that a subscription started, renewed, lapsed or
-    ended. Unauthenticated by design — Paddle holds no Titan token — so the
-    HMAC signature IS the authentication, and without a secret nothing is
-    accepted."""
+    """Paddle notifies Titan that a subscription started, renewed, lapsed or
+    ended. Unauthenticated by design - Paddle holds no Titan token - so the
+    HMAC signature is the authentication, and without a secret nothing is
+    accepted.
+    """
     import json as _json
 
     from ..core import billing
@@ -2130,10 +2059,10 @@ async def billing_webhook(request: Request) -> dict:
 @router.post("/checkout/{plan_key}", tags=["billing"])
 def checkout(plan_key: str,
              x_account_token: Optional[str] = Header(None)) -> dict:
-    """Where the CUSTOMER goes to approve a subscription.
+    """Where the customer goes to approve a subscription.
 
-    Titan never handles a card number and never completes a payment on anyone's
-    behalf — this returns an approval target the customer opens themselves.
+    Titan never handles a card number or completes a payment on anyone's
+    behalf; this returns an approval target the customer opens themselves.
     """
     from ..core import billing
     email = billing.resolve(x_account_token or "")
@@ -2148,10 +2077,10 @@ def checkout(plan_key: str,
 
 
 # --- founder analytics ------------------------------------------------------
-# Founder-only by construction: `/api/founder` is registered in
-# demo_data._SENSITIVE_PREFIXES, so a guest token is refused outright by the
-# middleware rather than served a sample. Subscriber tokens never reach here —
-# they authenticate with X-Account-Token, which this route does not accept.
+# Founder-only: `/api/founder` is in demo_data._SENSITIVE_PREFIXES, so a guest
+# token is refused by the middleware rather than served a sample. Subscriber
+# tokens never reach here - they use X-Account-Token, which this route doesn't
+# accept.
 
 @router.get("/founder/analytics", tags=["executive"])
 def founder_analytics(days: int = Query(default=30, ge=1, le=365),
@@ -2165,17 +2094,13 @@ def founder_analytics(days: int = Query(default=30, ge=1, le=365),
 def founder_list_accounts() -> dict:
     """Every customer, with the plan and status the founder acts on.
 
-    `POST /api/founder/accounts` has worked for a long time with nothing to
-    show what it created — the first Enterprise seat on this platform was
-    granted from a browser console. This is the read side.
+    The read side of `POST /api/founder/accounts`. It serves the same rows as
+    the funnel (`analytics.accounts_snapshot`), so the customers screen and the
+    funnel can't disagree about someone's plan.
 
-    It serves the SAME rows as the funnel (`analytics.accounts_snapshot`)
-    rather than re-deriving them, so the customers screen and the funnel cannot
-    disagree about what plan somebody is on.
-
-    Founder-only by construction: `/api/founder` is registered in
-    `demo_data._SENSITIVE_PREFIXES`, so a demo visitor is refused outright
-    rather than served a sample. Every row is a real person's email address.
+    Founder-only: `/api/founder` is in `demo_data._SENSITIVE_PREFIXES`, so a
+    demo visitor is refused rather than served a sample. Every row is a real
+    person's email address.
     """
     from ..core import analytics, billing
 
@@ -2189,16 +2114,15 @@ def founder_list_accounts() -> dict:
             "by_plan": snap["by_plan"],
             "by_status": snap["by_status"],
         },
-        # Read from the catalogue billing actually enforces, so the form cannot
-        # offer a plan the POST would refuse.
+        # Read from the plan catalogue billing enforces, so the form can't offer a
+        # plan the POST would refuse.
         "plans": [{"key": k, "name": billing.PLANS[k].name,
                    "price_usd": billing.PLANS[k].price_usd}
                   for k in billing.ORDER],
         "processor": billing.processor_name(),
         "billable": billing.configured(),
-        # These accounts are only as durable as the state file. Saying so on the
-        # screen that creates them is the difference between a customer list and
-        # a customer list that quietly disappears on the next rebuild.
+        # These accounts are only as durable as the state file, and the screen that
+        # creates them should say so.
         "storage_warning": analytics.storage_warning(),
     }
 
@@ -2208,11 +2132,8 @@ class GrantIn(BaseModel):
     password: str = Field(default="", min_length=0)
     plan: str = Field(default="enterprise")
     note: str = Field(default="")
-    # Step 2 of the brief's create-customer flow. All optional, so every
-    # existing caller is unaffected: without a business_name this endpoint
-    # behaves exactly as it did. With one, the account and the business are
-    # created together instead of the operator having to remember a second
-    # call and an attach.
+    # Optional business details. Without business_name this behaves as before;
+    # with it, the account and the business are created together.
     business_name: str = Field(default="")
     website: str = Field(default="")
     industry: str = Field(default="")
@@ -2222,15 +2143,12 @@ class GrantIn(BaseModel):
 
 @router.post("/founder/accounts", tags=["executive"])
 def founder_create_account(req: GrantIn) -> dict:
-    """Create a subscriber and put them on any plan, bypassing payment.
+    """Create a subscriber on any plan, bypassing payment.
 
-    This is how a free Enterprise seat is given to a pilot customer, a friend
-    or a case study — the thing that gets a product its first real users while
-    checkout is still unfinished.
+    For giving a free seat to a pilot customer, a friend or a case study.
 
-    Founder-only by construction: /api/founder is registered sensitive, so a
-    guest is refused outright and a subscriber's own X-Account-Token is not
-    accepted here at all.
+    Founder-only: /api/founder is registered as sensitive, so a guest is
+    refused outright, and a subscriber's X-Account-Token isn't accepted here.
     """
     from ..core import analytics, billing
 
@@ -2238,8 +2156,8 @@ def founder_create_account(req: GrantIn) -> dict:
         raise HTTPException(status_code=400,
                             detail=f"Unknown plan. One of {list(billing.PLANS)}.")
 
-    # A generated password is stronger than one typed in a hurry, and it means
-    # a seat can be granted without inventing a credential for someone else.
+    # A generated password is stronger than one typed in a hurry, and nobody has
+    # to invent a credential for someone else.
     import secrets as _secrets
     password = req.password or _secrets.token_urlsafe(12)
     if len(password) < 8:
@@ -2279,19 +2197,16 @@ def founder_create_account(req: GrantIn) -> dict:
                 country=req.country.strip() or "Pakistan")
             billing.attach_client(req.email, business["id"])
         except Exception as exc:                               # noqa: BLE001
-            # The account already exists at this point. Reporting the failure
-            # is honest; rolling the account back would be worse, because the
-            # operator has already been shown a password for it.
+            # The account already exists at this point. Report the failure rather than
+            # roll the account back - the operator has already been shown its password.
             business_error = str(exc)[:200]
         else:
-            # `account` was read before the attach, so without this the
-            # response describes the customer as owning nothing a moment after
-            # a business was attached to them.
+            # `account` was read before the attach; refresh it so the response shows the
+            # business that was just attached.
             account = billing.public(req.email)
 
-    # Every sensitive executive action leaves a record. The password is NOT
-    # passed here - and core/audit.py would redact it by key name anyway,
-    # which is the belt to this braces.
+    # Every sensitive founder action leaves a record. The password isn't passed
+    # here (and core/audit.py would redact it by key name anyway).
     from ..core import audit
     audit.record("founder", "customer.create", "account", req.email,
                  plan=req.plan, created=created, granted=True,
@@ -2303,11 +2218,11 @@ def founder_create_account(req: GrantIn) -> dict:
         "account": account,
         "created": created,
         "business": business,
-        # Named rather than swallowed: the account exists either way, and an
-        # operator who is not told will assume the business was created.
+        # Reported, not swallowed: the account exists either way, and an operator
+        # who isn't told will assume the business was created.
         "business_error": business_error,
-        # Shown ONCE. It is stored only as a PBKDF2 hash, so nobody — not even
-        # Abdullah — can read it back later.
+        # Shown once. It's stored only as a PBKDF2 hash, so nobody can read it back
+        # later.
         "password": password if created else None,
         "note": ("Give this password to the user now; it is stored only as a "
                  "hash and cannot be shown again. They sign in at /join."
@@ -2340,7 +2255,7 @@ def founder_set_plan(email: str, req: GrantIn) -> dict:
 
 @router.get("/founder/demo-workspace", tags=["executive"])
 def founder_demo_workspace() -> dict:
-    """What the 24/7 engines are practising on, and when they last ran."""
+    """What the background engines are working on, and when they last ran."""
     from ..engines import demo_workspace
     return demo_workspace.status()
 
@@ -2360,12 +2275,10 @@ def api_catalogue(q: str = Query(default=""),
                   no_credential: bool = Query(default=False),
                   https_only: bool = Query(default=False),
                   limit: int = Query(default=25, ge=1, le=100)) -> dict:
-    """Search the external-API catalogue. Metadata only — no calls are made.
+    """Search the external-API catalogue. Metadata only - no calls are made.
 
-    Public by design: it is a directory of publicly listed APIs and contains
-    no customer data. Paginated because the catalogue is 1,675 entries and
-    shipping all of them to a phone would be the performance bug the brief
-    warns about.
+    Public: it's a directory of publicly listed APIs with no customer data.
+    Paginated because the catalogue has 1,675 entries.
     """
     from ..core import api_registry
     return api_registry.search(q, category=category, auth=auth,
@@ -2383,10 +2296,10 @@ def api_catalogue_stats() -> dict:
 
 @router.get("/apis/integrated", tags=["system"])
 def api_integrated() -> dict:
-    """What Titan can genuinely CALL, versus what it has merely catalogued.
+    """What Titan can actually call, versus what it has catalogued.
 
-    The dashboard reads this to show the honest number. It is 4 capabilities
-    against 3 providers, beside 1,675 catalogued entries with 0 adapters.
+    The dashboard uses this to show the real number of integrations next to
+    the size of the catalogue.
     """
     from ..core import api_adapters, api_registry
     return {"integrated": api_adapters.integrated(),
@@ -2415,9 +2328,9 @@ def api_capability(intent: str = Query(..., min_length=2),
                    limit: int = Query(default=5, ge=1, le=25)) -> dict:
     """Map an intent ("current exchange rate") onto candidate providers.
 
-    Returns candidates ranked by catalogue facts — credential needed, HTTPS,
-    CORS — not by a quality score nobody measured. Candidates are not
-    connections; see the note on the response.
+    Candidates are ranked by catalogue facts (credential needed, HTTPS, CORS),
+    not by an unmeasured quality score. Candidates aren't connections; see the
+    note on the response.
     """
     from ..core import api_registry
     return api_registry.for_capability(intent, limit=limit)
@@ -2430,8 +2343,8 @@ def founder_models(free_only: bool = Query(default=False),
                    limit: int = Query(default=40, ge=1, le=200)) -> dict:
     """Model capability and per-token price, from OpenRouter's live catalogue.
 
-    This is what makes a cost figure possible at all: measured token counts
-    times a published price. Cost stays null wherever tokens were not counted.
+    Measured token counts times a published price is what makes a cost figure
+    possible. Cost stays null wherever tokens weren't counted.
     """
     from ..core import model_catalog
     model_catalog.refresh()
@@ -2455,7 +2368,7 @@ def founder_logs(limit: int = Query(default=100, ge=1, le=300),
     """Recent structured log lines, for when no log shipper is attached.
 
     Under /api/founder because log lines carry paths, statuses and tenant ids.
-    Credentials and emails are redacted before a line is ever written — see
+    Credentials and emails are redacted before a line is written - see
     core/obs.py.
     """
     from ..core import obs
@@ -2472,7 +2385,7 @@ def founder_backups() -> dict:
 
 @router.post("/founder/backups", tags=["executive"])
 def founder_backup_create(note: str = Query(default="")) -> dict:
-    """Take a snapshot now. It is verified by restoring it before it counts."""
+    """Take a snapshot now. It's verified by restoring it before it counts."""
     from ..core import backup
     out = backup.create(note=note)
     if not out["ok"]:
@@ -2482,18 +2395,18 @@ def founder_backup_create(note: str = Query(default="")) -> dict:
 
 @router.post("/founder/backups/verify", tags=["executive"])
 def founder_backup_verify(file: str = Query(...)) -> dict:
-    """Open a backup and prove it is a working database with rows in it."""
+    """Open a backup and check it's a working database with rows in it."""
     from ..core import backup
     return backup.verify(file)
 
 
 @router.get("/founder/rendering", tags=["executive"])
 def founder_rendering() -> dict:
-    """Whether Titan can see JavaScript-built pages, stated plainly.
+    """Whether Titan can see JavaScript-built pages.
 
-    A large share of small-business sites are client-rendered. Without a
-    browser renderer Titan detects them and says its findings are unreliable
-    rather than publishing a confident score on an empty shell.
+    Many small-business sites are client-rendered. Without a browser renderer
+    Titan detects them and marks its findings unreliable instead of scoring an
+    empty shell.
     """
     from ..core import render
     return render.status()
@@ -2501,7 +2414,7 @@ def founder_rendering() -> dict:
 
 @router.get("/founder/fix-cycle", tags=["executive"])
 def founder_fix_cycle() -> dict:
-    """What the 24/7 fix loop is responsible for, and what it has actually done.
+    """What the 24/7 fix loop is responsible for, and what it has done.
 
     Under /api/founder because it names the client ids Titan holds keys to.
     """
@@ -2513,8 +2426,8 @@ def founder_fix_cycle() -> dict:
 def founder_fix_cycle_run() -> dict:
     """Enqueue a re-audit of every connected site now.
 
-    This enqueues; it does not apply. Nothing in the cycle can change a
-    customer's site without a named human approval.
+    This only enqueues. Nothing in the cycle can change a customer's site
+    without a named person's approval.
     """
     from ..engines import fix_cycle
     return fix_cycle.cycle(force=True) or {"skipped": True,
@@ -2525,7 +2438,7 @@ def founder_fix_cycle_run() -> dict:
 def founder_queue(limit: int = Query(default=50, ge=1, le=200),
                   kind: str = Query(default=""),
                   status: str = Query(default="")) -> dict:
-    """The durable work queue — what is pending, what ran, and how long it took."""
+    """The durable work queue: what's pending, what ran, and how long it took."""
     from ..core import queue
     return {"stats": queue.stats(),
             "jobs": queue.recent(limit=limit, kind=kind, status=status)}
@@ -2540,20 +2453,20 @@ def founder_queue_drain(limit: int = Query(default=5, ge=1, le=50)) -> dict:
 
 @router.get("/founder/traffic", tags=["executive"])
 def founder_traffic(days: int = Query(default=30, ge=1, le=90)) -> dict:
-    """How many people opened the site, measured in-process — no analytics
-    vendor, no cookie, no consent banner, and no IP address stored."""
+    """How many people opened the site, measured in-process: no analytics
+    vendor, no cookie, no consent banner, no stored IP address.
+    """
     from ..core import traffic
     return traffic.report(days=days)
 
 
 @router.get("/founder/seo-overview", tags=["executive"])
 def founder_seo_overview() -> dict:
-    """Titan's own SEO score beside every client site it manages.
+    """Titan's own SEO score next to every client site it manages.
 
-    Abdullah asked to see these together, and they belong together: Titan
-    audits itself with the same engine it sells, so its own score is the one
-    number a prospect can check. A client scoring above the platform selling
-    them SEO is a thing he needs to find out from this screen, not from them.
+    Titan audits itself with the same engine it sells, so its score is the one
+    number a prospect can check. If a client scores above Titan itself, the
+    founder should find out here first.
     """
     from ..engines import self_seo
 
@@ -2569,8 +2482,8 @@ def founder_seo_overview() -> dict:
             "score": own.get("score"),
             "grade": own.get("grade"),
             "open_findings": own.get("open_findings", []),
-            # The full picture, not just the headline. "94/A" without the list
-            # of what passed is a number to be trusted rather than checked.
+            # The full picture, not just the headline: "94/A" without the list of what
+            # passed can't be checked.
             "passed": own.get("passed", []),
             "failed": own.get("failed", []),
             "counts": own.get("counts", {}),
@@ -2581,7 +2494,7 @@ def founder_seo_overview() -> dict:
                 max(0, round(interval_h * 60 - (_t.time() - checked_at) / 60, 1))
                 if checked_at else None),
             "interval_hours": interval_h,
-            # An audit that failed to run is not a passing audit.
+            # An audit that failed to run isn't a passing audit.
             "error": own.get("error"),
             "note": own.get("note", ""),
         },
@@ -2601,7 +2514,8 @@ SEO_OVERVIEW_NOTE = (
 def seo_rows(only=None) -> tuple:
     """One row per business from its last stored audit, worst score first,
     plus the scores that count towards the average. `only` limits it to those
-    client ids - a subscriber's Executive tab (api/mine.py) passes theirs."""
+    client ids - a subscriber's Executive tab (api/mine.py) passes theirs.
+    """
     from ..engines import demo_workspace as _demo
 
     rows = []
@@ -2617,8 +2531,8 @@ def seo_rows(only=None) -> tuple:
             "website": rec.get("website", ""),
             "country": rec.get("country", ""),
             "industry": rec.get("industry", ""),
-            # None, never 0 — a site that has not been audited has no score,
-            # and a 0 next to a real 58 reads as "audited, and terrible".
+            # None, never 0: an unaudited site has no score, and a 0 next to a real 58
+            # reads as "audited, and terrible".
             "score": audit.get("score"),
             "grade": audit.get("grade"),
             "findings": len(audit.get("findings", []) or []),
@@ -2626,8 +2540,8 @@ def seo_rows(only=None) -> tuple:
             "is_demo": is_demo,
         })
 
-    # The client average is a claim about Abdullah's book of business. Demo
-    # sites are Titan's own pages and would flatter it.
+    # The client average describes the founder's real clients. Demo sites are
+    # Titan's own pages and would flatter it.
     scored = [r["score"] for r in rows
               if isinstance(r.get("score"), (int, float)) and not r["is_demo"]]
     rows.sort(key=lambda r: (r["score"] is None, r["score"] or 0))
@@ -2638,9 +2552,8 @@ def seo_rows(only=None) -> tuple:
 def reflection_report(limit: int = Query(default=20, ge=1, le=100)) -> dict:
     """What Titan learned from finishing things, and what it changed as a result.
 
-    Spec Part 2. The calibration_factor is the load-bearing number: it is
-    applied to every subsequent plan's runtime estimate, which is what makes
-    this a feedback loop rather than a log.
+    The calibration_factor is applied to every later plan's runtime estimate,
+    which makes this a feedback loop rather than a log.
     """
     from ..core import reflection
     return reflection.report(limit=limit)
@@ -2668,12 +2581,11 @@ def reflection_record(req: ReflectIn) -> dict:
 
 @router.get("/bi/{period}", tags=["executive"])
 def bi_report(period: str) -> dict:
-    """Period report built only from what is actually in the ledger.
+    """Period report built only from what's in the ledger.
 
-    Spec Part 4C. Where there is not enough history to project, the forecast
-    reports `available: false` with the reason instead of a number — a
-    projection invented from two data points is worse than none, because it
-    gets planned against.
+    Where there isn't enough history to project, the forecast reports
+    `available: false` with the reason instead of a number; a projection from
+    two data points would just get planned against.
     """
     from ..engines import bi as bi_engine
     if period not in bi_engine.PERIODS:
@@ -2687,8 +2599,8 @@ def bi_report(period: str) -> dict:
 def routing_report() -> dict:
     """Measured per-provider performance and the order it produces.
 
-    Spec Part 6. The order shown is the one the next completion will actually
-    use, so a provider sitting last is visibly last rather than quietly slow.
+    The order shown is the one the next completion will use, so a provider in
+    last place is visibly last.
     """
     from ..core import llm as llm_mod
     from ..core import routing as routing_mod
@@ -2701,7 +2613,7 @@ def routing_report() -> dict:
 @router.get("/events", tags=["system"])
 def event_trace(limit: int = Query(default=50, ge=1, le=500),
                 event: str = Query(default="")) -> dict:
-    """Structured event trace — the machine-readable twin of /api/feed."""
+    """Structured event trace - the machine-readable twin of /api/feed."""
     from ..core import events as bus
     return {"events": bus.trace(limit=limit, event=event), **bus.stats()}
 
@@ -2725,8 +2637,8 @@ def evolution_status() -> dict:
 
 
 # ---------------------------------------------------------------- learning ---
-# Titan adapting its ranking to what Abdullah actually pursues, rather than
-# ranking identically forever. See core/learning.py for the honesty rules.
+# Ranking that adapts to what the founder actually pursues. See
+# core/learning.py.
 
 class LearnIn(BaseModel):
     text: str = Field(..., description="Opportunity title + rationale")
@@ -2741,7 +2653,7 @@ def learning_stats() -> dict:
 
 @router.post("/learning/record", tags=["system"])
 def learning_record(payload: LearnIn) -> dict:
-    """Log one real decision so the ranking improves."""
+    """Record one real decision so the ranking improves."""
     learning.record(payload.text, payload.pursued)
     return {"ok": True, "stats": learning.stats()}
 
@@ -2760,9 +2672,9 @@ def learning_from_opportunity(opportunity_id: str, pursued: bool = Query(...)) -
 def learning_bootstrap() -> dict:
     """Teach the ranker from the LLM chain so it works without waiting for clicks.
 
-    Judges the currently-known opportunities against Abdullah's real situation
-    (solo, no capital, needs revenue in weeks) and learns from those verdicts.
-    His own execute/dismiss decisions still override this later.
+    Judges the known opportunities against the founder's situation (solo, no
+    capital, needs revenue in weeks) and learns from those verdicts. Real
+    execute/dismiss decisions override this later.
     """
     items = [
         (f"{o.get('title','')} {o.get('rationale','') or o.get('description','')}",
@@ -2815,7 +2727,7 @@ def _client_from_header(x_client_token: Optional[str]) -> str:
     return cid
 
 
-# ---- admin (Abdullah only) -------------------------------------------------
+# ---- admin (founder only) --------------------------------------------------
 @router.post("/admin/clients", tags=["clients"])
 def admin_create_client(payload: ClientCreateIn) -> dict:
     try:
@@ -2873,17 +2785,17 @@ def run_client_audit(cid: str) -> dict:
                               city=rec.get("city", ""),
                               country=rec.get("country", ""),
                               industry=rec.get("industry", ""))
-    # The crawl already happened. File what it OBSERVED about the business,
-    # tagged with the surface it was seen on, so the CRM record carries its own
-    # provenance instead of a value nobody can trace. Never fatal to the audit.
+    # The crawl already happened. Record what it observed about the business,
+    # tagged with where it was seen, so the CRM record carries its own source.
+    # Never fatal to the audit.
     try:
         from ..core import evidence
         from ..engines import client_seo as _cs
         page, _err, _st = _cs._fetch(result.get("url") or rec.get("website", ""))
         if page:
             evidence.observe_from_page(cid, page)
-        # The Impressum is a separate page and is the strongest source there is
-        # for the operator's legal name, address and VAT id.
+        # The Impressum is a separate page and the strongest source for the
+        # operator's legal name, address and VAT id.
         if result.get("ok"):
             base = (result.get("url") or "").rstrip("/")
             for path in ("/impressum", "/imprint"):
@@ -2897,8 +2809,8 @@ def run_client_audit(cid: str) -> dict:
     clients.bump(cid, "seo_audits")
     if result.get("ok"):
         clients.bump(cid, "issues_found", len(result.get("findings", [])))
-        # Keep the last result so discovery can aggregate across clients
-        # without re-crawling every site on every request.
+        # Keep the last result so discovery can aggregate across clients without
+        # re-crawling every site on every request.
         clients.update_raw(cid, last_audit=result)
         clients.log_activity(
             cid, "seo",
@@ -2915,9 +2827,8 @@ def run_client_audit(cid: str) -> dict:
 def admin_client_schema(cid: str) -> dict:
     """The ready-to-paste JSON-LD block, admin side.
 
-    The client portal already had this at /client/seo/schema, but that is
-    behind a client token — so the SEO view in the dashboard, where the work
-    actually gets done, could not show the single highest-value fix.
+    The client portal has this at /client/seo/schema behind a client token;
+    this gives the dashboard's SEO view the same block.
     """
     return client_schema(cid)
 
@@ -2948,8 +2859,8 @@ def client_login(payload: ClientLoginIn) -> dict:
 def client_me(x_client_token: Optional[str] = Header(None)) -> dict:
     from ..core import billing
     cid = _client_from_header(x_client_token)
-    # The plan name only - never the owning subscriber's email, which a
-    # business an agency manages has no business seeing.
+    # The plan name only - never the owning subscriber's email, which a business
+    # managed by an agency shouldn't see.
     return {**clients.public(cid), "plan_name": billing.plan_for_client(cid)}
 
 
@@ -2966,7 +2877,7 @@ def client_seo_report(x_client_token: Optional[str] = Header(None)) -> dict:
 
 @router.get("/client/seo/schema", tags=["clients"])
 def client_seo_schema(x_client_token: Optional[str] = Header(None)) -> dict:
-    """The ready-to-paste JSON-LD block — usually the single biggest win."""
+    """The ready-to-paste JSON-LD block - usually the single biggest win."""
     cid = _client_from_header(x_client_token)
     rec = clients.get(cid) or {}
     return {"json_ld": client_seo.suggested_schema(
@@ -2977,17 +2888,14 @@ def client_seo_schema(x_client_token: Optional[str] = Header(None)) -> dict:
 # ---- client report + social plan -------------------------------------------
 
 def _social_pack(rec: dict) -> dict:
-    """Localised social plan for a client, from the measured brand playbook.
+    """Localised social plan for a client, from the brand playbook.
 
-    The weekly plan and the highlight names are HOSPITALITY research — the
-    dish, the kitchen, the room — and they are withheld from a business the
-    playbook was not measured for, with the reason attached. Handing a
-    wholesaler "Hero dish, close and clean" is advice with no evidence dressed
-    as advice with evidence.
+    The weekly plan and highlight names come from hospitality research (the
+    dish, the kitchen, the room) and are withheld, with the reason, from a
+    business the playbook wasn't researched for.
 
-    The cadence, the forbidden list and the benchmarks are NOT withheld:
-    following count, post-to-follower ratio and discount-led posting were
-    measured across all seven profiles and apply to any brand.
+    The cadence, forbidden list and benchmarks aren't withheld: following
+    count, post-to-follower ratio and discount-led posting apply to any brand.
     """
     lang = {"Germany": "de", "Austria": "de", "Switzerland": "de",
             "Italy": "it", "France": "fr"}.get(rec.get("country", ""), "en")
@@ -3015,7 +2923,7 @@ def client_social(x_client_token: Optional[str] = Header(None)) -> dict:
 
 @router.get("/client/report.pdf", tags=["clients"])
 def client_report_pdf(x_client_token: Optional[str] = Header(None)):
-    """The PDF the client downloads — the thing that justifies the fee."""
+    """The PDF the client downloads."""
     cid = _client_from_header(x_client_token)
     rec = clients.get(cid) or {}
     seo = client_seo.audit(rec.get("website", ""),
@@ -3097,7 +3005,7 @@ def admin_discovery(live: bool = Query(False)) -> dict:
 
 @router.get("/admin/news", tags=["clients"])
 def news_watch() -> dict:
-    """What the 24/7 news watch has found across every client."""
+    """What the news watch has found across every client."""
     from ..engines import client_news
     return client_news.summary()
 
@@ -3113,12 +3021,11 @@ def news_for_client(cid: str) -> dict:
 
 @router.get("/admin/clients/{cid}/evidence", tags=["clients"])
 def client_evidence(cid: str) -> dict:
-    """What Titan believes about this business, and why it believes it.
+    """What Titan believes about this business, and why.
 
-    Every field carries the surface it was observed on. Fields with only weak
-    evidence stay BLANK and appear as a suggestion for a human to settle — a
-    confidently wrong fact about a client is worse than an empty one, because
-    nobody can tell it is wrong.
+    Every field carries where it was observed. Fields with only weak evidence
+    stay blank and show up as a suggestion for a person to settle - a
+    confidently wrong fact is worse than an empty field.
     """
     from ..core import evidence
     if not clients.get(cid):
@@ -3133,8 +3040,9 @@ class SettleIn(BaseModel):
 
 @router.post("/admin/clients/{cid}/evidence/settle", tags=["clients"])
 def settle_evidence(cid: str, req: SettleIn) -> dict:
-    """A human decides a contested field. Recorded as manual, which outranks
-    every machine observation from then on."""
+    """A person settles a contested field. Recorded as manual, which outranks
+    every machine observation from then on.
+    """
     from ..core import evidence
     if not clients.get(cid):
         raise HTTPException(status_code=404, detail="Client not found")
@@ -3146,14 +3054,15 @@ def settle_evidence(cid: str, req: SettleIn) -> dict:
 @router.get("/evidence/sources", tags=["clients"])
 def evidence_sources() -> dict:
     """The source ranking, and the rule that nothing accepts a self-reported
-    confidence score."""
+    confidence score.
+    """
     from ..core import evidence
     return evidence.sources()
 
 
 @router.get("/admin/watch", tags=["clients"])
 def admin_watch() -> dict:
-    """Autonomous monitoring status: what changed on client sites, unprompted."""
+    """Monitoring status: what changed on client sites."""
     return client_watch.summary()
 
 
@@ -3170,19 +3079,18 @@ def admin_watch_now(cid: str) -> dict:
 # --- organisations ---------------------------------------------------------
 # Several people, one account, different privileges. See core/orgs.py.
 #
-# Every route here carries its OWN credential — an identity session, resolved
-# through core/identity.py — which is why /api/org is in main._OPEN_PREFIXES
-# alongside /api/client/ and /api/account. Open at the middleware, guarded at
-# the endpoint, exactly as those are.
+# Every route here has its own credential - an identity session resolved
+# through core/identity.py - which is why /api/org is in main._OPEN_PREFIXES
+# next to /api/client/ and /api/account: open at the middleware, guarded at
+# the endpoint.
 #
-# A legacy environment-gate token does NOT work here, and that is correct
-# rather than an oversight: those sessions belong to a configured username, not
-# to a person, and there is no person for a membership row to point at. Set
-# TITAN_FOUNDER_EMAIL and the founder gets a real account like everybody else.
+# A legacy environment-gate token doesn't work here, by design: those sessions
+# belong to a configured username, not a person, so there's nobody for a
+# membership row to point at. Set TITAN_FOUNDER_EMAIL and the founder gets a
+# real account like everyone else.
 #
-# The adversarial route walk in the test suite attacks every route under this
-# prefix with a non-member's token and fails on anything that answers 200, so a
-# new endpoint that forgets its check is a failing test rather than a leak.
+# The adversarial route walk in the tests calls every route under this prefix
+# with a non-member's token and fails on any 200.
 
 class OrgCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -3213,9 +3121,8 @@ def _identity_user(token: Optional[str]) -> dict:
 def _org_role(org_id: str, token: Optional[str], minimum: str) -> tuple:
     """The single gate for organisations, mirroring _owned for businesses.
 
-    Returns (user, role). Every refusal — not signed in aside — is the SAME
-    404, because "no such organisation" and "not yours" being distinguishable
-    tells a prober which ids are real.
+    Returns (user, role). Every refusal except "not signed in" is the same
+    404, so a prober can't tell which organisation ids exist.
     """
     from ..core import orgs
     user = _identity_user(token)
@@ -3232,9 +3139,8 @@ def create_org(req: OrgCreateIn, request: Request,
     """Start an organisation. The caller becomes its first owner."""
     from ..core import orgs, ratelimit
     user = _identity_user(authorization)
-    # Keyed on the person, not the address: this endpoint is authenticated, so
-    # the account is the thing worth limiting, and an office behind one IP must
-    # not throttle each other.
+    # Keyed on the person, not the address: this endpoint is authenticated, and
+    # people in one office behind one IP shouldn't throttle each other.
     verdict = ratelimit.check("org", user["id"])
     if not verdict["allowed"]:
         raise HTTPException(status_code=429, detail=verdict)
@@ -3279,14 +3185,13 @@ def org_members(org_id: str,
 @router.post("/org/{org_id}/members", tags=["orgs"])
 def org_add_member(org_id: str, req: MemberAddIn,
                    authorization: Optional[str] = Header(None)) -> dict:
-    """Give somebody access. Administrator and above."""
+    """Give someone access. Administrator and above."""
     from ..core import identity, orgs
     user, role = _org_role(org_id, authorization, orgs.ADMIN)
     person = identity.get(req.email)
     if not person:
-        # Not the same 404 as the org gate: the caller is a proven
-        # administrator of this organisation, so telling them the address has
-        # no account is help, not disclosure.
+        # Not the org gate's 404: the caller is a proven administrator here, so
+        # telling them the address has no account is help, not disclosure.
         raise HTTPException(status_code=400,
                             detail="That address has no Titan account yet.")
     from ..core import audit
@@ -3311,9 +3216,8 @@ def org_set_member_role(org_id: str, user_id: str, req: MemberRoleIn,
     try:
         changed = orgs.set_member_role(org_id, user_id, req.role)
     except orgs.OrgError as e:
-        # A refused attempt is recorded too. Six refusals to demote the last
-        # owner is the signal; keeping only successes throws away the half
-        # worth looking at.
+        # Refused attempts are recorded too; repeated attempts to demote the last
+        # owner are exactly the signal worth seeing.
         audit.record(user["email"], "org.member.role", "org", org_id,
                      audit.REFUSED, member_id=user_id, role=req.role,
                      reason=str(e))
@@ -3347,8 +3251,9 @@ def org_remove_member(org_id: str, user_id: str,
 @router.patch("/org/{org_id}", tags=["orgs"])
 def org_set_status(org_id: str, req: OrgStatusIn,
                    authorization: Optional[str] = Header(None)) -> dict:
-    """Suspend or reactivate. Owners only — a suspended organisation refuses
-    everybody, including its own administrators, so it is not an admin action."""
+    """Suspend or reactivate. Owners only - a suspended organisation refuses
+    everyone, including its own administrators.
+    """
     from ..core import orgs
     user, role = _org_role(org_id, authorization, orgs.OWNER)
     from ..core import audit
@@ -3369,11 +3274,9 @@ def org_audit(org_id: str, limit: int = 50,
               authorization: Optional[str] = Header(None)) -> dict:
     """What has been done to this organisation, newest first.
 
-    Administrator and above: an audit trail names who did what, and that is
-    exactly the thing a plain member should not be able to read about their
-    colleagues. `stats.durable` says whether any of it survives the next
-    rebuild - on the current free tier it does not, and a compliance record you
-    wrongly believe is kept is worse than none at all.
+    Administrator and above, since an audit trail says who did what and plain
+    members shouldn't read that about colleagues. `stats.durable` says whether
+    it survives the next rebuild (on the current free tier it doesn't).
     """
     from ..core import audit, orgs
     user, role = _org_role(org_id, authorization, orgs.ADMIN)
@@ -3383,16 +3286,15 @@ def org_audit(org_id: str, limit: int = 50,
 
 @router.get("/founder/metrics", tags=["founder"])
 def founder_metrics(days: int = 30) -> dict:
-    """Executive metrics, every one carrying whether it was measured.
+    """Executive metrics, each saying whether it was measured.
 
-    Behind the founder token, and `/api/founder` is already in
-    `demo_data._SENSITIVE_PREFIXES`, so a demo visitor is refused rather than
-    shown a substituted version - there is no demo-safe edition of revenue.
+    Behind the founder token, and `/api/founder` is in
+    `demo_data._SENSITIVE_PREFIXES`, so a demo visitor is refused - there's no
+    demo version of revenue.
 
-    Read `metrics.measured` before `metrics.value` on every field. A `value` of
-    null means nothing was measured, and is deliberately NOT zero: with no
-    payment processor connected, $0 MRR would read as a business result when
-    the truth is that nobody could have paid.
+    Check `metrics.measured` before `metrics.value` on every field. A null
+    value means nothing was measured, and isn't zero: with no payment
+    processor connected, $0 MRR would look like a business result.
     """
     from ..core import metrics
     return metrics.report(days=days)
@@ -3409,10 +3311,10 @@ class FlagOverrideIn(BaseModel):
 @router.get("/founder/flags", tags=["founder"])
 def founder_flags(plan: str = "", user_id: str = "",
                   org_id: str = "") -> dict:
-    """Every flag as it resolves, and WHY.
+    """Every flag as it resolves, and why.
 
-    `decided_by` is the field that matters. "It is off for this customer" is
-    not something anybody can act on; "the plan layer said no" is.
+    `decided_by` is the useful field: "the plan layer said no" is actionable,
+    "it's off for this customer" isn't.
     """
     from ..core import flags
     return {"flags": flags.all_flags(user_id=user_id, org_id=org_id,
@@ -3451,11 +3353,11 @@ def founder_clear_flag(key: str, scope: str, scope_id: str) -> dict:
 
 @router.get("/founder/integrations", tags=["founder"])
 def founder_integrations() -> dict:
-    """What is actually connected, what it unlocks, and what it costs.
+    """What's connected, what it unlocks, and what it costs.
 
-    Every row is answered by the module that owns the question. A check that
-    raises reads `unknown`, never `not_configured` - "go and connect it" and
-    "something is broken on our side" are different actions.
+    Each row is answered by the module that owns it. A check that raises reads
+    `unknown`, never `not_configured` - "go connect it" and "something's
+    broken on our side" are different actions.
     """
     from ..core import integrations
     return integrations.summary()
@@ -3463,16 +3365,18 @@ def founder_integrations() -> dict:
 
 @router.get("/founder/onboarding", tags=["founder"])
 def founder_onboarding() -> dict:
-    """Setup completion across every account, averaged only over the accounts
-    that could actually be scored."""
+    """Setup completion across every account, averaged only over accounts that
+    could be scored.
+    """
     from ..core import onboarding
     return onboarding.summary()
 
 
 @router.get("/account/onboarding", tags=["billing"])
 def account_onboarding(x_account_token: Optional[str] = Header(None)) -> dict:
-    """The caller's OWN setup score. Scoped by the token, so there is no id to
-    manipulate and nothing to walk sideways into."""
+    """The caller's own setup score. Scoped by the token, so there's no id to
+    tamper with.
+    """
     from ..core import billing, onboarding
     email = billing.resolve(x_account_token or "")
     if not email:
@@ -3482,14 +3386,12 @@ def account_onboarding(x_account_token: Optional[str] = Header(None)) -> dict:
 
 @router.get("/founder/search", tags=["founder"])
 def founder_search(q: str = "", limit: int = 20) -> dict:
-    """Find a customer from anything you can remember about them.
+    """Find a customer from anything you remember about them.
 
-    Searches ACROSS tenants by design, which is what makes it useful to the
-    operator and exactly what makes it unsafe for a customer. It lives under
-    `/api/founder`, already in `demo_data._SENSITIVE_PREFIXES`. A per-tenant
-    search would need its own function with an org filter, not a parameter on
-    this one - a boolean deciding whether to leak every tenant is one wrong
-    default away from doing it.
+    Searches across tenants by design, which is what makes it useful to the
+    operator and unsafe for customers. It lives under `/api/founder`, already
+    in `demo_data._SENSITIVE_PREFIXES`. A per-tenant search should be its own
+    function with an org filter, not a flag on this one.
     """
     from ..core import search
     return search.search(q, limit=limit)
@@ -3499,9 +3401,9 @@ def founder_search(q: str = "", limit: int = 20) -> dict:
 def founder_notifications() -> dict:
     """Conditions that are true right now, worst first.
 
-    Nothing is stored, so a notification disappears when the condition does.
-    Read `not_emitted` too: it lists what Titan deliberately does NOT notify
-    about yet and names the missing data, rather than inventing an alert.
+    Nothing is stored, so a notification disappears when its condition does.
+    `not_emitted` lists what Titan doesn't notify about yet and the missing
+    data, instead of inventing an alert.
     """
     from ..core import notifications
     return notifications.current()
@@ -3511,11 +3413,10 @@ def founder_notifications() -> dict:
 def founder_customer_360(email: str) -> dict:
     """Everything Titan knows about one customer, in one payload.
 
-    Composed from the modules that already own each part rather than
-    recomputed here, so this screen and the customers list cannot disagree.
-    Anything a section cannot answer is returned as an explicit `unavailable`
-    entry naming the source - a blank panel and a broken panel look identical
-    otherwise, and only one of them means "there is nothing here".
+    Composed from the modules that own each part rather than recomputed, so
+    this screen and the customers list can't disagree. A section that can't
+    answer is returned as an explicit `unavailable` entry naming the source,
+    since a blank panel and a broken one otherwise look the same.
     """
     from ..core import (analytics, audit, billing, identity, onboarding,
                         orgs, site_access)
@@ -3534,7 +3435,7 @@ def founder_customer_360(email: str) -> dict:
             unavailable.append({"section": name, "error": str(exc)[:160]})
             return default
 
-    # Businesses, each with whether Titan actually holds a credential for it.
+    # Businesses, each with whether Titan holds a credential for it.
     businesses = []
     for biz in account.get("businesses", []):
         state = _try(f"site_access:{biz['id']}",
@@ -3543,8 +3444,8 @@ def founder_customer_360(email: str) -> dict:
                            "connected": (state or {}).get("connected"),
                            "connection": state})
 
-    # The person behind the account, if they have a real identity record. Not
-    # every billing account does - that migration is deliberately not done.
+    # The person behind the account, if they have an identity record. Not every
+    # billing account does yet.
     person = _try("identity", lambda: identity.get(email), None)
     memberships = (_try("orgs", lambda: orgs.orgs_for(person["id"]), [])
                    if person else [])

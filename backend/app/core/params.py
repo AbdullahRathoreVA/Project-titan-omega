@@ -1,34 +1,28 @@
-"""The registry of things Titan is allowed to change about itself.
+"""Registry of the settings Titan is allowed to change about itself.
 
-This is the boundary of the self-improvement engine, and it is deliberately
-narrow. **Titan cannot modify its own source code**, and nothing here pretends
-otherwise: deploying a code change means a git push, a GitHub Action and a
-Hugging Face rebuild, and the running container has no git credentials, no
-write access to its own image, and loses `/tmp` on every rebuild. An engine
-that claimed to ship a code change would be describing something that cannot
-happen.
+This is the boundary of the self-improvement engine, and it's narrow on
+purpose. Titan can't modify its own code: a code change needs a git push, a
+GitHub Action and a Hugging Face rebuild, and the container has no git
+credentials.
 
-What CAN happen honestly is this. Several numbers in Titan were chosen by
-measurement, are read as module globals at call time, and have a benchmark
-that says whether a different value is better. `COS_FLOOR` is the worked
-example: it shipped at 0.52, which sat below the 0.6-0.9 band where sentence
-models score any two English sentences, so semantic rescue answered 5 of 5
-UNANSWERABLE questions. A benchmark caught it and it was recalibrated to 0.60.
-That episode is the whole design brief — the value was wrong, the benchmark
-knew, and a human decided.
+What it can change are a few numbers that were chosen by measurement, are read
+as module globals at call time, and have a benchmark that says whether another
+value is better. `COS_FLOOR` is the typical case: it was first set to 0.52,
+below the 0.6-0.9 range where sentence models score any two English
+sentences, so semantic rescue answered questions it shouldn't have. The
+benchmark caught it and it was recalibrated to 0.60.
 
-So a parameter may be changed only if:
+A parameter can only be changed if:
 
-  * it is REGISTERED here, with bounds. Arbitrary attributes are not tunable,
-    and "tune anything" is how a model turns a rate limit off at 3am.
-  * it is read as a module global at call time, so an override actually takes
-    effect. A value captured into a local at import would accept the override
-    and change nothing, which is worse than refusing it.
-  * it has a BENCHMARK. A change nobody can measure cannot be proposed, let
-    alone approved — that is the same rule the rest of the codebase runs on.
+  * it's registered here with bounds. "Tune anything" is how a rate limit gets
+    switched off at 3am.
+  * it's read as a module global at call time, so an override actually takes
+    effect. A value copied into a local at import would accept the override
+    and change nothing.
+  * it has a benchmark. A change nobody can measure can't be proposed.
 
-`why_default` is not documentation. It is the evidence for the value that is
-already there, and a proposal has to argue against it.
+`why_default` records the evidence for the current value; a proposal has to
+argue against it.
 """
 
 from __future__ import annotations
@@ -54,10 +48,9 @@ class Param:
     metric: str               # the number in that benchmark's result that decides
     higher_is_better: bool
     why_default: str          # the measured reason the shipped value was chosen
-    # Other numbers from the same benchmark that must NOT get worse, as
-    # (metric, higher_is_better). A change judged on one metric alone can buy
-    # it with another — silence traded for invented answers — which is the
-    # trade evaluation/retrieval_benchmark.py says no change may make.
+    # Other numbers from the same benchmark that must not get worse, as
+    # (metric, higher_is_better). Improving one metric by making another worse
+    # (fewer silences, more invented answers) isn't allowed.
     guards: tuple = ()
 
 
@@ -107,7 +100,7 @@ PARAMS: dict[str, Param] = {
 
 # --- benchmarks -------------------------------------------------------------
 # A benchmark is a callable returning a dict of measured numbers. Registered by
-# name so a proposal records WHICH harness judged it, and so tests can supply a
+# name so a proposal records which harness judged it, and so tests can supply a
 # deterministic one instead of downloading a 130MB embedding model.
 _BENCHMARKS: dict[str, Any] = {}
 
@@ -123,8 +116,8 @@ def benchmark(key: str):
 
 def _default_benchmarks() -> None:
     def retrieval() -> dict:
-        # Imported inside the function: the benchmark corpus and the embedding
-        # path must never be pulled in at module import time.
+        # Imported inside the function: the benchmark corpus and the embedding path
+        # must never load at module import time.
         from evaluation import retrieval_benchmark
         return retrieval_benchmark.run(use_embeddings=False)
 
@@ -153,7 +146,7 @@ def coerce(param: Param, value: Any) -> float:
 
 
 def current(name: str) -> Any:
-    """The value the running code is actually using, read from the module."""
+    """The value the running code is using, read from the module."""
     param = PARAMS[name]
     return getattr(_module(param), param.attr)
 
@@ -165,11 +158,10 @@ def overrides() -> dict:
 
 
 def set_value(name: str, value: Any) -> Any:
-    """Apply a value to the live module AND persist it. Returns the value set.
+    """Apply a value to the live module and persist it. Returns the value set.
 
-    Both halves matter: the setattr is what changes behaviour now, the persist
-    is what survives the container being recycled — which a free Space does
-    routinely.
+    The setattr changes behaviour now; persisting it survives the container
+    being recycled, which a free Space does regularly.
     """
     from . import db
     param = PARAMS[name]
@@ -183,9 +175,10 @@ def set_value(name: str, value: Any) -> Any:
 
 
 def clear(name: str) -> None:
-    """Drop the override. Does NOT restore the shipped value on its own —
-    callers that need the old behaviour must set it explicitly, because the
-    shipped default is not always what was running before the override."""
+    """Drop the override. Doesn't restore the shipped value by itself - callers
+    that need the old behaviour must set it explicitly, because the shipped
+    default isn't always what was running before.
+    """
     from . import db
     with _lock:
         stored = db.get(_OVERRIDE_KEY, {}) or {}
@@ -196,8 +189,7 @@ def clear(name: str) -> None:
 def apply_stored() -> list:
     """Re-apply persisted overrides to the live modules. Called at boot.
 
-    Without this an approved, activated change silently reverts on the next
-    rebuild and nobody would know why the numbers moved back.
+    Without this an approved change would silently revert on the next rebuild.
     """
     applied = []
     for name, value in overrides().items():
@@ -206,14 +198,14 @@ def apply_stored() -> list:
             setattr(_module(param), param.attr, coerce(param, value))
             applied.append(name)
         except Exception:
-            # A stored value that no longer validates is ignored, not fatal.
-            # Booting is more important than honouring a stale override.
+            # A stored value that no longer validates is ignored, not fatal; booting
+            # matters more than a stale override.
             continue
     return applied
 
 
 def status() -> dict:
-    """What is tunable, what is overridden, and the evidence for each default."""
+    """What's tunable, what's overridden, and the evidence for each default."""
     stored = overrides()
     rows = []
     for name in sorted(PARAMS):

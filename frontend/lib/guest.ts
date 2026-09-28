@@ -1,7 +1,7 @@
-// Is this browser session the PUBLIC read-only demo (not the founder)?
-// Set by AuthGate the moment a demo session starts. Used to (a) hide controls
-// that the backend would refuse anyway, and (b) drop the founder-personalised
-// copy — a visitor should never be greeted as "Abdullah".
+// Is this browser session the public read-only demo (not the founder)?
+// Set by AuthGate when a demo session starts. Used to hide controls the backend
+// would refuse anyway, and to drop founder-specific copy so a visitor isn't
+// greeted by the founder's name.
 
 export function isGuest(): boolean {
   return (

@@ -1,13 +1,12 @@
-"""One private cockpit workspace per subscriber.
+"""One private workspace per subscriber.
 
-A workspace is an ordinary `Store`, so every engine that already runs against
-the founder's Store runs against a customer's unchanged. main.auth_guard binds
-the right one for each /api/me request (see store.bind).
+A workspace is an ordinary Store, so every engine that runs against the
+founder's Store works on a subscriber's unchanged. main.auth_guard binds the
+right one for each /api/me request (see store.bind).
 
-Seeded honestly: the agent roster is there, but nobody is "working" on
-anything and every figure is zero until the customer does something. The
-founder's own seed mentions Career Mind, Upwork and Kindle; none of that
-belongs in a stranger's workspace.
+New workspaces start empty: the agent roster is there, idle, and every
+figure is zero until the subscriber does something. None of the founder's
+seed data (Career Mind, Upwork, Kindle) is copied in.
 """
 
 from __future__ import annotations
@@ -23,9 +22,9 @@ from ..store import AgentRuntime, Store, now
 WAITING = "Waiting for your first business - add one in Clients"
 
 _METRICS = ("mrr", "traffic", "pipeline_value", "customers", "conversion_rate")
-# What survives a restart: the fields the founder's Store keeps, plus the War
-# Room research and content packs. His heartbeat re-runs his research; nothing
-# re-runs a subscriber's, and their content packs exist nowhere else.
+# Fields that survive a restart: the same ones the founder's Store keeps, plus
+# War Room research and content packs, since nothing regenerates those for a
+# subscriber.
 _DURABLE = ("metrics", "revenue_entries", "expenses", "leads", "decisions",
             "intel", "deliverables", "jobs")
 _KEEP_DELIVERABLES = 50

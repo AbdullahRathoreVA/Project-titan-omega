@@ -1,8 +1,8 @@
 "use client";
 
-// Dynamic wrapper for the Neural String signature scene: ssr:false keeps the
-// static export from rendering WebGL at build, and the error boundary + CSS
-// fallback keep it safe on weak devices / no WebGL.
+// Dynamic wrapper for the Neural String scene: ssr:false keeps the static
+// export from rendering WebGL at build time, and the error boundary + CSS
+// fallback cover weak devices and missing WebGL.
 
 import { Component, type ReactNode } from "react";
 import dynamic from "next/dynamic";

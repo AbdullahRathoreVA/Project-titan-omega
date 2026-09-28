@@ -1,19 +1,15 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
-# The line above is not enough on its own. core.autocrlf=true checks these files
-# out with CRLF in the WORKING TREE, and anything that builds from the working
-# tree rather than from a fresh clone — `podman build`, `docker build`, `make`
-# under WSL — then sees carriage returns. career-mind lost an afternoon to
-# exactly this: its container entrypoint died with
-#   scripts/start_all.sh: line 4: set: - : invalid option
-# while the deployed Space was fine, because Hugging Face builds from a clean
-# checkout. A local build that fails in a way production never does is worse
-# than no local build, because it teaches you to distrust the reproduction.
+# The line above isn't enough on its own: with core.autocrlf=true these files
+# are checked out with CRLF, and anything that builds from the working tree
+# (`docker build`, `podman build`, `make` under WSL) then sees carriage returns.
+# A shell script with CRLF fails with errors like
+#   set: - : invalid option
+# even though the deployed Space, built from a clean checkout, works fine.
 #
 # Titan ships no .sh inside the image today (the Dockerfile CMD is inline), so
-# the Dockerfile and Makefile entries are preventive, and *.sh is a guard for
-# the first script anyone adds.
+# these entries are preventive.
 *.sh            text eol=lf
 Dockerfile      text eol=lf
 Makefile        text eol=lf

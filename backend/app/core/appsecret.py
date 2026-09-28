@@ -1,49 +1,25 @@
-"""The one door to the deployment secret.
+"""Access to the deployment secret (TITAN_SECRET).
 
-Before this module, ``TITAN_SECRET`` had **four different fallbacks in four
-files**:
+It signs session tokens and derives the key for the credential vault, which
+holds customers' site credentials. Two rules:
 
-===================  ==========================================================
-``auth.py``          ``"titan-omega-change-me"``
-``sessions.py``      ``"titan-omega-change-me"``
-``clients.py``       ``TITAN_TOKEN``, then ``"titan-dev-secret"`` — a different one
-``site_access.py``   ``"titan-omega-change-me"`` — the WordPress credential vault
-===================  ==========================================================
-
-Every one of those strings is in the public git history. On a deployment with
-``TITAN_SECRET`` unset that means session tokens — founder ones included — are
-signed with a key anybody can read on GitHub and therefore mint for themselves,
-and the credential vault is encrypted with a key derived from a published
-constant. The vault is the worst of the four: it holds *other people's* site
-credentials.
-
-Two rules:
-
-1. **A secret that is printed in the repository is not a secret.** Setting
-   ``TITAN_SECRET`` to one of the historical fallbacks counts as unconfigured,
-   because it is exactly as public as leaving it unset.
-2. **Production refuses to invent one.** Where authentication is enforced, a
-   missing secret raises at startup and the app serves nothing. Silently
-   falling back is how a deployment ends up signing real sessions with a
-   published key and nobody finds out.
+1. A value that appears in the repository isn't a secret. Every string that
+   was ever a fallback here is in the public git history, so setting
+   ``TITAN_SECRET`` to one of them counts as unconfigured.
+2. Production won't invent one. Where authentication is enforced, a missing
+   secret raises at startup and the app serves nothing, rather than quietly
+   signing real sessions with a published key.
 
 Local development is unaffected: authentication is off there, so a clearly
-labelled development secret is used and the dashboard still opens with no
-friction.
-
-Measured before this was written (2026-08-17): a guest token issued by the live
-Space does not verify against any published default, so ``TITAN_SECRET`` IS set
-in production and making it mandatory does not take the site down. That was
-checked rather than assumed, because the failure mode of assuming wrong is a
-dead product.
+labelled development secret is used.
 """
 
 from __future__ import annotations
 
 import os
 
-# Every string that has ever been a fallback in this repository. All of them are
-# readable in the git history, so a deployment using one is not configured.
+# Every string that has ever been a fallback in this repository. All are
+# readable in the git history, so a deployment using one isn't configured.
 PUBLISHED_DEFAULTS = frozenset({
     "titan-omega-change-me",
     "titan-dev-secret",
@@ -51,8 +27,8 @@ PUBLISHED_DEFAULTS = frozenset({
     "change-me",
 })
 
-# Used ONLY where authentication is off. Named so that anyone finding it in a
-# token dump knows immediately what they are looking at.
+# Used only where authentication is off. Named so anyone who finds it in a
+# token dump knows what it is.
 DEV_SECRET = "titan-local-development-only-not-a-production-secret"
 
 _MESSAGE = (
@@ -87,7 +63,8 @@ def enforced() -> bool:
 
 def value() -> str:
     """The secret, or a labelled development one. Never an invented production
-    secret."""
+    secret.
+    """
     if configured():
         return raw()
     if enforced():
@@ -100,9 +77,9 @@ def key() -> bytes:
 
 
 def status() -> dict:
-    """Founder-visible state. Reports *whether* there is a secret, never what
-    it is — a status endpoint that leaks the key it is describing would be a
-    remarkable own goal."""
+    """Founder-visible state. Reports whether there is a secret, never what it
+    is.
+    """
     current = raw()
     return {
         "configured": configured(),

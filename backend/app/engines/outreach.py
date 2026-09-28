@@ -1,30 +1,22 @@
-"""Research one lead, then draft outreach grounded in what was actually found.
+"""Research one lead, then draft outreach based on what was found.
 
-Titan already had two halves of this: `/api/leads/find` searches the web for
-prospects, and the agent layer can draft generic sales copy. Neither knew
-anything about the specific business being written to, so the output was the
-same paragraph every competent LLM produces and every recipient deletes.
+`/api/leads/find` finds prospects and the agent layer can draft sales copy,
+but neither knows anything about the specific business, so the result reads
+like every other cold email. This runs Titan's own audit against the lead's
+website and writes the outreach from the findings: "your site has no
+Impressum, which §5 DDG requires in Germany, and three pages are missing meta
+descriptions" is specific and checkable.
 
-This joins them. Given a lead with a website, it runs **Titan's own audit
-against that lead's site** and writes the outreach from the findings. The
-difference is the whole pitch: "I noticed your site has no Impressum, which
-§5 DDG requires in Germany, and three pages are missing meta descriptions" is
-checkable, specific and true. It is also the one thing Titan can say that a
-generic outreach tool cannot, because it had to crawl the site to say it.
+Rules:
 
-Three rules, all of them load-bearing:
-
-1. **Never invent a finding.** If no website can be found on the lead, or the
-   site cannot be reached, this says so and produces no audit-based claims.
-   Outreach citing a problem the recipient does not have is worse than no
-   outreach — it is a lie that costs the deal on the first reply.
-2. **Never send.** This returns a draft. Abdullah's standing rule is that
-   nothing reaches a real person without his approval, because a platform ban
-   or a spam complaint ends the service a client is paying for. There is a
-   test asserting this module has no send capability.
-3. **Works with no API key.** If no LLM is configured the draft is composed
-   deterministically from the real findings rather than failing. A $0 setup
-   still gets usable outreach; a key only makes the prose better.
+1. Never invent a finding. If the lead has no website or it can't be
+   reached, the draft says so and makes no audit-based claims. Citing a
+   problem the recipient doesn't have loses the deal on the first reply.
+2. Never send. This returns a draft; nothing reaches a real person without
+   the founder's approval, since a spam complaint or platform ban can end
+   the service a client pays for. A test checks this module can't send.
+3. Works without an API key. With no LLM configured the draft is composed
+   from the real findings; a key only improves the wording.
 """
 
 from __future__ import annotations
@@ -35,9 +27,9 @@ from typing import Optional
 from ..core import llm, model_router
 from . import client_seo
 
-# Severity order for picking what to lead with. Legal first, deliberately:
-# it is the sharpest and least arguable finding Titan produces, and it is the
-# one a business owner cannot dismiss as "SEO opinion".
+# Severity order for picking what to lead with. Legal comes first: it's the
+# clearest finding Titan produces and the hardest for an owner to dismiss as
+# "SEO opinion".
 _SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
 _URL_RE = re.compile(r"https?://[^\s,;<>\"')]+|(?:www\.)[^\s,;<>\"')]+", re.I)
@@ -47,11 +39,11 @@ _DOMAIN_RE = re.compile(
 
 
 def find_website(lead: dict) -> str:
-    """Pull a URL out of whatever the lead record happens to carry.
+    """Pull a URL out of whatever the lead record carries.
 
-    Leads arrive from search results, manual entry and imports, so the address
-    is as likely to be in the note as in a tidy field. Returning "" is a real
-    answer here — it means there is nothing to audit, not that we should guess.
+    Leads come from search results, manual entry and imports, so the address
+    may be in the note rather than a tidy field. "" means there's nothing to
+    audit - don't guess.
     """
     blob = " ".join(str(lead.get(k, "") or "") for k in
                     ("website", "contact", "note", "name", "source"))
@@ -76,7 +68,7 @@ def _top_findings(audit: dict, limit: int = 3) -> list[dict]:
 
 
 def research(lead: dict) -> dict:
-    """Audit the lead's own website. Never guesses, never invents."""
+    """Audit the lead's own website. Never guesses."""
     website = find_website(lead)
     if not website:
         return {
@@ -118,7 +110,7 @@ def research(lead: dict) -> dict:
 
 
 def _fallback_draft(lead: dict, res: dict, lang: str) -> str:
-    """A usable message with no LLM key at all, composed from real findings."""
+    """A usable message with no LLM key, composed from real findings."""
     name = lead.get("name", "there")
     bullets = "\n".join(f"  • {f['title']}" for f in res["findings"])
     plural = "issues" if len(res["findings"]) != 1 else "issue"
@@ -126,10 +118,8 @@ def _fallback_draft(lead: dict, res: dict, lang: str) -> str:
     if res.get("total_findings", 0) > len(res["findings"]):
         more = (f"\n\nThere were {res['total_findings']} in total — these are "
                 f"the {len(res['findings'])} worth fixing first.")
-    # The legal line is the strongest thing Titan can say — and it is only
-    # true when a legal finding is actually present. Printing it beside three
-    # technical findings would be inventing a claim in the very template
-    # written to prevent that.
+    # The legal line is only true when a legal finding is present; printing it
+    # next to purely technical findings would invent a claim.
     legal = any("legal" in str(f.get("id", "")).lower()
                 or "impressum" in str(f.get("id", "")).lower()
                 or "privacy" in str(f.get("id", "")).lower()
@@ -190,9 +180,8 @@ def draft(lead: dict, res: dict, lang: str = "en") -> dict:
         "message": message,
         "generated_by": "llm" if body else "template",
         "grounded_in": [f["id"] for f in res["findings"]],
-        # Stated in the payload, not just in a docstring: the UI shows this,
-        # and the rule is that a human approves before anything reaches a
-        # real person.
+        # In the payload, not just the docstring: the UI shows it, and a person must
+        # approve before anything reaches a real recipient.
         "sent": False,
         "note": ("Draft only — Titan has not contacted anyone. Review it, then "
                  "send it yourself from your own mailbox. Automated sending "

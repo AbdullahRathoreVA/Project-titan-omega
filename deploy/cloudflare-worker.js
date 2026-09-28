@@ -1,20 +1,14 @@
 /**
  * titanomega-ai.com  ->  the Hugging Face Space, on Cloudflare's free plan.
  *
- * WHY THIS EXISTS
- * Hugging Face supports custom domains natively, but only on PRO / Team /
- * Enterprise (docs: "This feature is part of PRO or Team & Enterprise plans").
- * PRO is $9/month, roughly 30,000 PKR a year — about twice the entire project
- * budget. This Worker does the same job on the free plan: 100,000 requests/day,
- * free SSL, no HF upgrade.
+ * Hugging Face only supports custom domains on its paid plans. This Worker
+ * does the same job on Cloudflare's free plan (100,000 requests/day, free SSL).
  *
- * WHAT IT DOES
- * Reverse-proxies every request to the Space and streams the response straight
- * back. It is deliberately a proxy, not a redirect: a 301 to *.hf.space would
- * show visitors the Hugging Face URL in the address bar, which defeats the
- * point of buying a domain.
+ * It reverse-proxies every request to the Space and streams the response
+ * straight back. A proxy, not a redirect: a 301 to *.hf.space would put the
+ * Hugging Face URL in the visitor's address bar.
  *
- * THINGS THAT WOULD BREAK IF DONE NAIVELY, AND ARE HANDLED HERE
+ * Things a naive proxy would break, handled here:
  *
  *  - Server-Sent Events. Titan's live dashboard uses /api/stream via
  *    EventSource. Buffering it would make the feed arrive in one lump when the
@@ -45,62 +39,50 @@ const UPSTREAM = "careermind2026-project-titan-omega.hf.space";
 /**
  * Security headers.
  *
- * Titan is sold on legal compliance. A padlock-less address bar on the product
- * that tells other businesses to fix their security is not survivable, and
- * before this the site served real content over plain HTTP with none of these
- * headers set.
+ * A product that tells other businesses to fix their security has to get its
+ * own right, so every response gets HSTS, a CSP and the usual hardening
+ * headers.
  *
- * The CSP is only this strict because the app was measured to be entirely
- * same-origin: no CDN, no external script, no eval, no WebAssembly.
+ * The CSP can be this strict because the app is entirely same-origin: no CDN,
+ * no external script, no eval, no WebAssembly.
  *
- * Two allowances are deliberate, not laziness:
+ * Two deliberate allowances:
  *
  *  - 'unsafe-inline' for script/style. Next.js static export inlines its
- *    hydration payload, and Tailwind injects styles at runtime. Nonces would be
- *    the correct fix, but issuing one requires rewriting the HTML body in this
- *    Worker — and rewriting the body breaks the streaming pass-through that
- *    keeps Server-Sent Events working. Blocking EXTERNAL script injection is
- *    the majority of the value and costs nothing.
+ *    hydration payload, and Tailwind injects styles at runtime. Nonces would
+ *    be better, but issuing one means rewriting the HTML body here, which
+ *    breaks the streaming pass-through that Server-Sent Events rely on.
+ *    Blocking external script injection is most of the value anyway.
  *
- *  - frame-ancestors permits huggingface.co. The Space is legitimately viewed
- *    inside HF's iframe; 'none' would have broken the existing deployment while
- *    looking like a security win.
+ *  - frame-ancestors permits huggingface.co, since the Space is also viewed
+ *    inside HF's iframe.
  *
  * img-src allows any https origin because client logos are supplied by the
  * clients themselves and live on their own domains.
  */
-// Paddle's own domain, allowed by wildcard rather than by guessing subdomain
-// names. Paddle documents loading Paddle.js from cdn.paddle.com and does not
-// publish a CSP allowlist, so naming exact checkout hosts here would be an
-// invention that fails silently the day they change one.
+// Paddle's domain, allowed by wildcard. Paddle loads Paddle.js from
+// cdn.paddle.com but doesn't publish a CSP allowlist, so exact checkout hosts
+// would be guesses that break silently if they change.
 //
-// This is the narrowest thing that can work: one third-party domain, and only
-// because it is the payment processor. Nothing else is added.
+// The only third-party domain allowed, because it's the payment processor.
 const PADDLE = "https://*.paddle.com";
 
 const CSP = [
   "default-src 'self'",
   // cdn.paddle.com serves Paddle.js. Without this the checkout script never
-  // loads and the Upgrade button does nothing, silently.
+  // loads and the Upgrade button silently does nothing.
   `script-src 'self' 'unsafe-inline' ${PADDLE}`,
   "style-src 'self' 'unsafe-inline'",
-  // Paddle's checkout is an IFRAME. frame-src was absent entirely, so it fell
-  // back to default-src 'self' and the overlay would have been blocked — the
-  // same shape as the media-src bug below, which also went unnoticed because
-  // a blocked load fails quietly.
+  // Paddle's checkout is an iframe; without frame-src it would fall back to
+  // default-src 'self' and the overlay would be blocked.
   `frame-src 'self' ${PADDLE}`,
   // Paddle.js talks to Paddle's API from the browser.
   `connect-src 'self' ${PADDLE}`,
   "img-src 'self' data: blob: https:",
-  // Audio was blocked in production and nobody noticed, because a blocked
-  // media load fails silently — the boot chime, speak(), speakPremium() and
-  // the Urdu voice assistant all went quiet. `media-src` was simply absent, so
-  // it fell back to `default-src 'self'`, and Titan generates its audio as
-  // `data:audio/wav` (browser speech) and `blob:` (fetched TTS) — neither of
-  // which is 'self'. Same two schemes img-src already allows, and for the same
-  // reason: the bytes are produced by this page, not fetched from a stranger.
-  // Found in the browser console, not by a test: no test can see a CSP header
-  // that the Worker adds in front of the app.
+  // Titan generates its audio as `data:audio/wav` (browser speech) and `blob:`
+  // (fetched TTS), neither of which is 'self'. Without media-src the boot
+  // chime and every voice would be silently blocked. Same two schemes as
+  // img-src, for the same reason: the bytes are produced by this page.
   "media-src 'self' data: blob:",
   "font-src 'self' data:",
   "worker-src 'self'",
@@ -112,24 +94,19 @@ const CSP = [
 ].join("; ");
 
 const SECURITY_HEADERS = {
-  // One year. No `preload` on purpose: preloading is a one-way door that
-  // requires a browser-vendor submission to undo, and this domain is days old.
+  // One year. No `preload` on purpose: preloading is hard to undo (it needs a
+  // browser-vendor submission), and the domain is new.
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
-  // Microphone stays enabled for same-origin: the Urdu voice assistant needs
-  // it. Everything else is switched off.
+  // Microphone and payment stay enabled for same-origin (the voice assistant
+  // and the Payment Request API). Everything else is switched off.
   //
-  // `payment` was `()` — switched off entirely — on a product whose whole
-  // problem is that it cannot take money. It is (self) now, which re-enables
-  // the Payment Request API for this origin.
-  //
-  // NOT VERIFIED: card wallets (Apple Pay, Google Pay) run inside PADDLE's
-  // cross-origin iframe, and Permissions-Policy origin lists do not accept
-  // wildcards, so delegating to Paddle would mean naming an exact checkout
-  // host. That host is not documented and guessing it would be an invention.
-  // Card payments work without this; if a wallet button is missing, read the
-  // browser console and add the origin it names.
+  // Not verified: card wallets (Apple Pay, Google Pay) run inside Paddle's
+  // cross-origin iframe, and Permissions-Policy origin lists don't accept
+  // wildcards, so delegating to Paddle would need its exact (undocumented)
+  // checkout host. Card payments work without it; if a wallet button is
+  // missing, check the browser console and add the origin it names.
   "Permissions-Policy":
     "camera=(), geolocation=(), payment=(self), usb=(), microphone=(self)",
   "Content-Security-Policy": CSP,

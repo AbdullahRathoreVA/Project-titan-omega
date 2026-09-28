@@ -1,29 +1,22 @@
 """Find real businesses to sell to, as CRM records rather than prose.
 
-`/api/leads/find` already searched the web, but it handed the results to an LLM
-and returned a paragraph. A paragraph cannot be audited, cannot be deduped, and
-cannot be worked through — it has to be re-read and re-typed by hand every time.
-This turns the same search into structured leads that the existing pipeline can
-act on: discover → audit their site → draft outreach citing what was found.
+`/api/leads/find` returns a paragraph from an LLM, which can't be deduped or
+worked through. This turns the same search into structured leads for the
+existing pipeline: discover -> audit their site -> draft outreach citing what
+was found.
 
-The whole value is in what gets thrown away.
+Most of the value is in what gets filtered out:
 
-**Directories are not leads.** Searching "leather manufacturers Sialkot" returns
-Alibaba, Yellow Pages, TripAdvisor, Facebook and Wikipedia long before it
-returns a manufacturer. Those are listings *about* businesses, not businesses.
-Filing them as leads produces a CRM full of entries nobody can sell to, and
-worse, Titan would then audit `alibaba.com` and draft outreach about Alibaba's
-SEO. The blocklist below is the difference between a useful pipeline and junk.
-
-**Deduplication is by registrable domain, not by URL.** The same company
-appears as `example.com`, `www.example.com/about` and `example.com/contact`
-across one search. Three leads for one business wastes the audit quota and
-makes the funnel lie about how many prospects exist.
-
-**Nothing here invents a business.** Every candidate comes from a search result
-that was actually returned. With no `TAVILY_API_KEY` this reports that plainly
-and returns nothing, rather than asking an LLM to imagine plausible companies —
-a hallucinated prospect wastes a real crawl and an hour of Abdullah's day.
+- Directories aren't leads. "leather manufacturers Sialkot" returns Alibaba,
+  Yellow Pages, TripAdvisor, Facebook and Wikipedia before any manufacturer.
+  Filing those would fill the CRM with entries nobody can sell to, and Titan
+  would end up auditing alibaba.com. The blocklist below prevents that.
+- Deduplication is by registrable domain, not URL. One company shows up as
+  `example.com`, `www.example.com/about` and `example.com/contact` in a single
+  search; three leads for it would waste audit quota and inflate the funnel.
+- Nothing is invented. Every candidate comes from a real search result. With
+  no `TAVILY_API_KEY` this says so and returns nothing, rather than asking an
+  LLM to imagine plausible companies.
 """
 
 from __future__ import annotations
@@ -33,8 +26,8 @@ from typing import Optional
 
 from . import research
 
-# Hosts that are directories, marketplaces, social networks or reference sites.
-# A hit here is never the business being searched for.
+# Directories, marketplaces, social networks and reference sites. A hit here is
+# never the business being searched for.
 BLOCKED_HOSTS = frozenset({
     "alibaba.com", "aliexpress.com", "amazon.com", "ebay.com", "etsy.com",
     "indiamart.com", "made-in-china.com", "tradeindia.com", "exportersindia.com",
@@ -50,13 +43,10 @@ BLOCKED_HOSTS = frozenset({
 
 # Path fragments that mark a listing page even on an allowed host.
 #
-# The second group is the subtle one, and it was found by running a real
-# search: leatherworkinggroup.com/get-involved/our-community/certified-
-# suppliers/sheikh-of-sialkot is a certification body's profile page ABOUT a
-# manufacturer. The title is the manufacturer, the domain is the certifier.
-# Filed as a lead it would make Titan audit the certifier's website and email
-# them about somebody else's business. Any path that names a third party is
-# a page about a company, not the company.
+# The second group covers pages that are about a company on someone else's
+# site - e.g. a certification body's supplier profile, where the title is the
+# manufacturer but the domain is the certifier. Filing it would make Titan
+# audit and email the certifier about somebody else's business.
 BLOCKED_PATH_HINTS = (
     "/search", "/directory", "/listing", "/category",
     "/tag/", "/blog/", "/news/", "/article",
@@ -69,16 +59,15 @@ _WWW = re.compile(r"^www\d*\.", re.I)
 _TITLE_NOISE = re.compile(
     r"\s*[|\-–—:·]\s*(home|official site|official website|welcome.*|"
     r"best .*|top \d+.*|contact us|about us|shop online.*)\s*$", re.I)
-# A listicle headline is never a company name. "Top 5 Best Leather Goods
-# Manufacturers in Sialkot" is an article title that happened to rank.
+# A listicle headline is never a company name ("Top 5 Best Leather Goods
+# Manufacturers in Sialkot").
 _LISTICLE = re.compile(r"^\s*(top|best|the)\s+(\d+|best|top)\b", re.I)
-# Keyword-stuffed titles separated by a lowercase L standing in for a pipe —
-# "Manufacturer l Leather Jackets l Leather Goods l Promotional". Real, and
-# common enough on export-trade sites that it survived the pipe rule.
+# Keyword-stuffed titles using a lowercase L as a separator ("Manufacturer l
+# Leather Jackets l Leather Goods l Promotional"), common on export-trade
+# sites.
 _L_SEPARATED = re.compile(r"\s+l\s+")
-# Category words that survive splitting a keyword-stuffed title and leave a
-# name nobody can be greeted by. "Hi Manufacturer," is no better than the
-# stuffed title it came from.
+# Category words left over from splitting a keyword-stuffed title. "Hi
+# Manufacturer," is no better than the stuffed title.
 _GENERIC_NAMES = frozenset({
     "manufacturer", "manufacturers", "supplier", "suppliers", "exporter",
     "exporters", "home", "welcome", "products", "product", "shop", "store",
@@ -113,8 +102,9 @@ def is_blocked(url: str) -> bool:
 
 
 def _from_domain(host: str) -> str:
-    """"triad-thread.pk" → "Triad Thread". Beats a 90-character SEO title and
-    beats greeting nobody."""
+    """"triad-thread.pk" -> "Triad Thread". Better than a 90-character SEO title
+    or greeting nobody.
+    """
     stem = host.split(".")[0] if host else ""
     return stem.replace("-", " ").replace("_", " ").title() or "Unknown business"
 
@@ -122,10 +112,8 @@ def _from_domain(host: str) -> str:
 def clean_name(title: str, host: str) -> str:
     """A name that can open an email without sounding like a search result.
 
-    The bar is deliberately "would Abdullah send this?" — a greeting reading
-    "Hi Manufacturer l Leather Jackets l Leather Goods l Promotional ...,"
-    loses the deal in the first line, so anything that fails falls back to the
-    domain, which is always at least plausible.
+    Anything that would read badly in a greeting ("Hi Manufacturer l Leather
+    Jackets l ...") falls back to the domain, which is always plausible.
     """
     raw = (title or "").strip()
     if _LISTICLE.match(raw):

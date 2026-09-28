@@ -1,9 +1,9 @@
 "use client";
 
-// Knowledge Graph (Vision X slice 5) — an animated force-directed map of the
-// empire: Executive core ↔ 12 divisions ↔ agents, with workflow hand-off
-// lanes drawn as flowing links. Pure canvas: no new dependencies, capped DPR,
-// hover to inspect, click a division to focus it.
+// Knowledge Graph - an animated force-directed map: executive core <-> 12
+// divisions <-> agents, with workflow hand-off lanes drawn as flowing links.
+// Plain canvas: no extra dependencies, capped DPR, hover to inspect, click a
+// division to focus it.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Network } from "lucide-react";

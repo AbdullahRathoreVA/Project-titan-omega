@@ -1,7 +1,7 @@
 "use client";
 
-// AI "thinking" visualization — replaces generic spinners with a staged
-// reasoning trace so the user always sees what the AI is doing.
+// "Thinking" indicator: a staged reasoning trace instead of a generic spinner,
+// so the user can see what the AI is doing.
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";

@@ -1,36 +1,19 @@
-"""Model metadata from OpenRouter — the honest route out of `cost: null`.
+"""Model metadata from OpenRouter, used to turn token counts into costs.
 
-Every cost figure in Titan is `null`, correctly, because nothing has ever
-measured one. That is defensible but it is not free: a founder cannot see what
-the product costs to run, and a plan cannot be priced against a cost nobody
-knows.
+OpenRouter's `/api/v1/models` lists each model's context length, modalities
+and per-token price. Multiplied by a token count from a real completion, that
+gives a real cost instead of `cost: null`.
 
-OpenRouter publishes a `/api/v1/models` endpoint carrying, per model, the
-context length, the modalities, and **the per-token price**. That is the
-missing input. With it, a token count from a real completion becomes a real
-cost, arrived at by multiplying two measured numbers rather than by guessing.
-
-Deliberate decisions:
-
-**No SDK.** OpenRouter ships an official Apache-2.0 Python SDK, and adding it
-would be a new dependency for HTTP calls Titan already makes with `httpx`. The
-research artifact (`repository_research/openrouter.md`) records this as ADAPT,
-not ADOPT, for exactly that reason.
-
-**The catalogue is a cache, not a source of truth about Titan.** It says what a
-model costs per token. It does not say what Titan spent. `estimate_cost()`
-returns `None` — never `0.0` — when the model is unknown, when the price is
-absent, or when no token count was actually reported by the provider. An
-estimate is labelled an estimate everywhere it surfaces.
-
-**It degrades to nothing.** No key, no network, stale cache: every function
-returns empty or `None` and says why. Nothing in Titan depends on this being
-reachable, and no request path blocks on it.
-
-**Free models are marked.** OpenRouter's catalogue includes genuinely free
-models (`:free` suffix, zero price). Titan runs on no budget, so "which
-capable models cost nothing" is a first-class question this answers from data
-rather than from a hardcoded list that rots.
+- No SDK: OpenRouter has an official Python SDK, but it would be a new
+  dependency for HTTP calls Titan already makes with `httpx`.
+- The catalogue says what a model costs per token, not what Titan spent.
+  `estimate_cost()` returns None, never 0.0, when the model or price is
+  unknown or the provider reported no token count. Estimates are labelled as
+  estimates wherever they appear.
+- It degrades to nothing: with no key, no network or a stale cache, functions
+  return empty or None and say why. No request path depends on it.
+- Free models (`:free` suffix, zero price) are marked, so "which capable
+  models cost nothing" is answered from data rather than a hand-kept list.
 """
 
 from __future__ import annotations
@@ -41,8 +24,8 @@ import time
 from typing import Optional
 
 CATALOG_URL = "https://openrouter.ai/api/v1/models"
-# Model metadata changes on the order of days. Six hours keeps it fresh without
-# making Titan a nuisance to a free endpoint.
+# Model metadata changes over days. Six hours keeps it fresh without hammering
+# a free endpoint.
 TTL = float(os.getenv("TITAN_MODEL_CATALOG_TTL", str(6 * 3600)))
 TIMEOUT = 20.0
 
@@ -62,20 +45,12 @@ def _parse(rows: list) -> dict[str, dict]:
         def _price(key: str) -> Optional[float]:
             """Price per token as a float, or None. Never 0.0 by accident.
 
-            Three distinct facts that a naive float() collapses into one:
-
-            * OpenRouter returns prices as STRINGS ("0.0000007").
-            * A genuinely free model returns "0" — a measured zero.
-            * A MISSING field means the price is unknown, which is not free.
-
-            And one sentinel, found by running this against the live endpoint
-            rather than a fixture: the router models (`openrouter/auto`,
-            `openrouter/fusion`, …) publish **"-1"**, meaning "priced
-            dynamically, we cannot tell you in advance". Taken literally that
-            made them sort as the cheapest models available and would have
-            produced a NEGATIVE cost on the founder's screen. A negative cost
-            is worse than a null one: null is honest about not knowing, and
-            -$0.0004 is a confident lie. Any negative price is unknown.
+            * OpenRouter returns prices as strings ("0.0000007").
+            * A free model returns "0", a measured zero.
+            * A missing field means the price is unknown, which isn't free.
+            * Router models (`openrouter/auto`, `openrouter/fusion`, ...) publish "-1",
+              meaning priced dynamically. Taken literally they'd sort as cheapest and
+              produce a negative cost, so any negative price counts as unknown.
             """
             raw = pricing.get(key)
             if raw is None or raw == "":
@@ -95,8 +70,8 @@ def _parse(rows: list) -> dict[str, dict]:
             "context_length": row.get("context_length"),
             "prompt_price_per_token": prompt_price,
             "completion_price_per_token": completion_price,
-            # True only when BOTH prices are known AND both are zero. Unknown
-            # pricing is not free, it is unknown.
+            # True only when both prices are known and both are zero. Unknown pricing
+            # isn't free.
             "is_free": (prompt_price == 0.0 and completion_price == 0.0
                         if prompt_price is not None
                         and completion_price is not None else None),
@@ -156,12 +131,10 @@ def get(model_id: str) -> Optional[dict]:
 
 def estimate_cost(model_id: str, *, prompt_tokens: Optional[int] = None,
                   completion_tokens: Optional[int] = None) -> dict:
-    """Cost of one call, or `None` with the reason. NEVER 0.0 as a stand-in.
+    """Cost of one call, or None with the reason. Never 0.0 as a stand-in.
 
-    Two measured numbers multiplied together is a measurement. Either one
-    missing makes the answer unknown, and unknown is `None` — a `0.00` on a
-    founder's screen reads as "this was free", which is a different and false
-    claim.
+    Two measured numbers multiplied together is a measurement. If either is
+    missing the answer is unknown, and a 0.00 on screen would read as "free".
     """
     model = get(model_id)
     if model is None:
@@ -196,8 +169,7 @@ def estimate_cost(model_id: str, *, prompt_tokens: Optional[int] = None,
 def free_models(*, min_context: int = 0, vision: bool = False) -> list[dict]:
     """Capable models that cost nothing, from the catalogue rather than a list.
 
-    Titan runs on no budget, so this is a first-class question. A hardcoded
-    list of free models rots within weeks; this is answered from data.
+    A hand-kept list of free models goes stale within weeks.
     """
     with _lock:
         rows = list(_models.values())
@@ -212,9 +184,8 @@ def candidates(*, needs_vision: bool = False, min_context: int = 0,
                max_cost_per_1k: Optional[float] = None) -> list[dict]:
     """Models meeting a capability requirement, cheapest first.
 
-    Capability comes from the catalogue, not from a name. Selecting a model by
-    popularity is how a router ends up sending a vision task to a text-only
-    model and reporting the refusal as a failure.
+    Capability comes from the catalogue, not the name, so a vision task never
+    gets routed to a text-only model.
     """
     with _lock:
         rows = list(_models.values())
@@ -229,14 +200,14 @@ def candidates(*, needs_vision: bool = False, min_context: int = 0,
             if rate is None or rate * 1000 > max_cost_per_1k:
                 continue
         out.append(m)
-    # Unknown price sorts last: it is not free, it is unpriced.
+    # Unknown price sorts last: it isn't free, it's unpriced.
     return sorted(out, key=lambda m: (
         m["completion_price_per_token"] is None,
         m["completion_price_per_token"] or 0.0))
 
 
 def status() -> dict:
-    """What the catalogue knows, and how stale it is. Never a claim of fresh."""
+    """What the catalogue knows, and how old it is."""
     with _lock:
         count = len(_models)
         fetched = _fetched_at
@@ -248,7 +219,7 @@ def status() -> dict:
         "models": count,
         "free_models": free,
         "priced_models": priced,
-        # None, not 0 — "never fetched" is not "fetched a moment ago".
+        # None, not 0: "never fetched" isn't "fetched a moment ago".
         "age_seconds": round(time.time() - fetched, 1) if fetched else None,
         "fetched": fetched is not None,
         "ttl_seconds": TTL,

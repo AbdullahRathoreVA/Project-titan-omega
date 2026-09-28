@@ -1,22 +1,16 @@
-"""Local semantic embeddings — CPU only, no API key, no GPU, no per-call cost.
+"""Local semantic embeddings: CPU only, no API key, no per-call cost.
 
-Abdullah asked for the heavier retrieval stack from the reference repos even at
-the cost of space. This is that, done so it cannot take production down.
+`fastembed` runs a small ONNX sentence model on the CPU. The first load takes
+around 18 s (it downloads ~130 MB); after that a batch embeds in ~0.02 s.
 
-`fastembed` runs a small ONNX sentence model on the CPU. Measured on this
-machine: **18.2 s** for the first load (it downloads ~130 MB), then **0.02 s**
-to embed a batch. That first load is the entire reason for the design below.
+Because of that first load, the model is never loaded at import or at boot.
+Hugging Face Spaces health-check the container on startup, and an 18-second
+blocking download there would fail the check. It loads lazily on the first
+search that needs it, and if anything goes wrong (no disk, no network, package
+missing) retrieval falls back to BM25, which is always available.
 
-**It is never loaded at import, and never at boot.** Hugging Face Spaces health-
-check the container on startup; an 18-second blocking download there fails the
-check and the Space never comes up. reportlab already took production down once
-by being imported at module level. So the model loads lazily, on the first
-search that asks for it, in a background-safe way — and if it fails for any
-reason (no disk, no network, package missing) retrieval silently drops back to
-BM25, which is always present and needs nothing.
-
-That fallback is the point. Semantic search is an upgrade here, not a
-dependency: Titan must keep answering on a container where this never loads.
+Semantic search is an upgrade, not a dependency: Titan keeps answering on a
+container where this never loads.
 """
 
 from __future__ import annotations
@@ -31,8 +25,8 @@ from typing import Optional
 MODEL_NAME = os.getenv("TITAN_EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 DIMS = 384
 
-# Disabled by default is the wrong default here — Abdullah asked for it on.
-# Set TITAN_EMBEDDINGS=0 to force pure BM25 (useful if a Space is memory-tight).
+# On by default. Set TITAN_EMBEDDINGS=0 to force pure BM25 (useful if a Space
+# is short on memory).
 ENABLED = os.getenv("TITAN_EMBEDDINGS", "1") != "0"
 
 _lock = threading.RLock()
@@ -48,7 +42,7 @@ def available() -> bool:
 
 
 def status() -> dict:
-    """Shown on the dashboard: which retrieval is actually running, and why."""
+    """Shown on the dashboard: which retrieval is running, and why."""
     return {
         "enabled": ENABLED,
         "state": _state,
@@ -83,11 +77,11 @@ def _load() -> None:
         _state = "loading"
     started = time.time()
     try:
-        # Imported here, never at module level. See the docstring.
+        # Imported here, never at module level (see the module docstring).
         from fastembed import TextEmbedding
         model = TextEmbedding(model_name=MODEL_NAME)
-        # Prove it actually works before declaring ready — a model that
-        # imports but cannot embed would fail on every later query instead.
+        # Check it can actually embed before declaring it ready; a model that imports
+        # but can't embed would fail every later query instead.
         probe = list(model.embed(["titan omega readiness probe"]))
         if not probe or len(probe[0]) != DIMS:
             raise RuntimeError(f"unexpected embedding shape from {MODEL_NAME}")
@@ -108,8 +102,8 @@ def _load() -> None:
 def warm(background: bool = True) -> dict:
     """Start loading. Returns immediately when background=True.
 
-    Called after the first client is indexed so the model is usually ready
-    before anyone searches, without ever blocking a request.
+    Called after the first client is indexed, so the model is usually ready
+    before anyone searches, without blocking a request.
     """
     if not ENABLED:
         return status()
@@ -122,19 +116,18 @@ def warm(background: bool = True) -> dict:
     return status()
 
 
-# BGE retrieval models are trained asymmetrically: the QUERY carries an
-# instruction prefix, the documents do not. Embedding a question without it
-# leaves query and passage vectors in subtly different regions, and ranking
-# collapses — measured here as every test question missing its answer while
-# plain BM25 got them right. This prefix is required, not cosmetic.
+# BGE retrieval models are asymmetric: the query carries an instruction
+# prefix, the documents don't. Without it, query and passage vectors land in
+# different regions and ranking falls apart (every test question missed its
+# answer while plain BM25 found them). Required, not cosmetic.
 QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 
 def encode(texts: list[str], is_query: bool = False) -> Optional[list[list[float]]]:
-    """Embed texts, or None if semantic search is not available.
+    """Embed texts, or None if semantic search isn't available.
 
-    None is a real answer — the caller falls back to BM25 rather than failing.
-    Pass is_query=True for the search string; see QUERY_PREFIX.
+    On None the caller falls back to BM25. Pass is_query=True for the search
+    string; see QUERY_PREFIX.
     """
     if not ENABLED or not texts:
         return None
@@ -155,7 +148,8 @@ def encode(texts: list[str], is_query: bool = False) -> Optional[list[list[float
 
 def cosine(a: list[float], b: list[float]) -> float:
     """Both vectors come from the same normalised model, so a dot product is
-    the cosine. Guarded anyway — a zero vector would divide by zero."""
+    the cosine. Guarded anyway, since a zero vector would divide by zero.
+    """
     if not a or not b or len(a) != len(b):
         return 0.0
     dot = na = nb = 0.0

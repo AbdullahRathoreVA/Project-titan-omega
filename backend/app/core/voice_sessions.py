@@ -1,45 +1,36 @@
-"""Voice agent sessions — the record every dial on the Voice Agents screen reads.
+"""Voice agent sessions - the data the Voice Agents screen is drawn from.
 
-The brief for the 3D dashboard is explicit: *every visual state must map to a
-real backend event, every metric must come from actual data, no placeholder
-logic pretending to be live.* That constraint is why this module exists before
-any of the visuals do. A dashboard cannot honestly animate "thinking" unless
-something server-side actually recorded the agent entering that state, and a
-latency figure cannot be shown unless a clock was actually read.
+Every visual state on that screen must map to a real backend event and every
+metric to real data. The screen can only show "thinking" if the server
+recorded the agent entering that state, and a latency only if a clock was
+read.
 
 So this is the source of truth: a session store, a validated state machine, a
 turn-by-turn transcript, a tool-call timeline with an approval gate, and
-metrics derived only from timestamps that were genuinely taken.
+metrics derived only from recorded timestamps.
 
-Design decisions worth knowing:
+- The state machine refuses invalid transitions. `speaking -> thinking` is
+  allowed, `ended -> speaking` isn't, so the dashboard can never show a state
+  the agent wasn't in. Rejections name the allowed moves.
+- Latency is measured, never estimated. `thinking_ms` is the wall time spent
+  in `thinking`. A session that never passed through `thinking` has latency
+  None, not 0 (which would read as instant).
+- Cost is None unless a provider reported one. The voice stack (STT, LLM,
+  TTS, telephony) bills per minute or character, and none of it is currently
+  paid for, so $0.00 would suggest a measured zero. See `docs/VOICE_OS.md`
+  for what each tier would cost.
+- Sensitive tool calls wait for human approval. Booking, paying, emailing and
+  deleting are `requires_approval`: recorded as `pending` and not markable as
+  executed without an explicit approval. The store enforces this rather than
+  relying on convention.
 
-**The state machine refuses invalid transitions.** `speaking → thinking` is
-allowed; `ended → speaking` is not. A store that accepts any transition would
-let the dashboard display a state the agent was never in, which is the same
-class of lie as a fabricated metric. Rejections name the legal moves.
+Transcripts are personal data. `/api/voice` is in
+`demo_data._SENSITIVE_PREFIXES`, so public demo visitors are refused.
 
-**Latency is measured, never estimated.** `thinking_ms` is the wall time
-between entering `thinking` and leaving it. If a session never passed through
-`thinking`, latency is `None` — not `0`, which would read as "instant".
-
-**Cost is `None` unless a provider actually reported one.** Every voice stack
-worth using (STT, LLM, TTS, telephony) bills per minute or per character, and
-Titan currently runs none of them for money. Displaying `$0.00` would imply a
-measured zero. See `docs/VOICE_OS.md` for what each tier would actually cost.
-
-**Sensitive tool calls block on human approval.** Booking, paying, emailing and
-deleting are `requires_approval`; they are recorded as `pending` and cannot be
-marked executed without an explicit approval. This is Abdullah's standing rule
-— nothing reaches a real person or a real account without him — expressed as a
-state the store enforces rather than a convention someone has to remember.
-
-Transcripts are personal data. `/api/voice` is registered in
-`demo_data._SENSITIVE_PREFIXES` so a public demo visitor is refused outright.
-
-**Every session has an owner.** `account` is "" for the founder and the
-subscriber's email for a session started from their own cockpit (/api/me).
-Reads return only the caller's sessions, and a session someone else owns is
-reported exactly like one that does not exist, so ids cannot be probed.
+Every session has an owner. `account` is "" for the founder and the
+subscriber's email for sessions started from their own cockpit (/api/me).
+Reads return only the caller's sessions, and someone else's session looks
+exactly like one that doesn't exist, so ids can't be probed.
 """
 
 from __future__ import annotations
@@ -61,15 +52,14 @@ ENDED = "ended"
 
 STATES = (IDLE, LISTENING, THINKING, SPEAKING, INTERRUPTED, ESCALATED, ENDED)
 
-# A real barge-in conversation loops listening → thinking → speaking, and the
-# caller can interrupt mid-sentence. Escalation is terminal-ish: a human has
-# the call, so the agent may only end afterwards.
+# A real conversation loops listening -> thinking -> speaking, and the caller
+# can interrupt mid-sentence. Escalation is nearly terminal: a person has the
+# call, so the agent may only end afterwards.
 TRANSITIONS: dict[str, tuple[str, ...]] = {
     IDLE:        (LISTENING, THINKING, SPEAKING, ESCALATED, ENDED),
     LISTENING:   (THINKING, SPEAKING, INTERRUPTED, ESCALATED, ENDED, IDLE),
-    # thinking → idle is real: a text-only answer concludes the thought
-    # without ever speaking. Found by wiring the actual chat client, which
-    # 409'd whenever voice output was switched off.
+    # thinking -> idle happens when a text-only answer finishes without speaking
+    # (e.g. the chat client with voice output switched off).
     THINKING:    (SPEAKING, LISTENING, INTERRUPTED, ESCALATED, ENDED, IDLE),
     SPEAKING:    (LISTENING, THINKING, INTERRUPTED, ESCALATED, ENDED, IDLE),
     # An interrupted turn that simply stops settles back to idle.
@@ -80,17 +70,17 @@ TRANSITIONS: dict[str, tuple[str, ...]] = {
 
 CHANNELS = ("web", "browser", "phone", "whatsapp", "telegram", "email", "internal")
 
-# Actions that touch money, a calendar, or another human. Recorded as pending
-# and never executable without an explicit approval.
+# Actions that touch money, a calendar, or another person. Recorded as pending
+# and never executable without explicit approval.
 SENSITIVE_TOOLS = frozenset({
     "book_appointment", "cancel_appointment", "send_email", "send_whatsapp",
     "send_sms", "place_call", "transfer_call", "charge_card", "refund",
     "create_invoice", "delete_record", "update_crm_stage", "publish_post",
 })
 
-MAX_SESSIONS = 400          # bounded: free-tier container
+MAX_SESSIONS = 400          # bounded: small container
 MAX_TURNS = 300             # per session
-# One subscriber cannot fill the store and push everyone else's history out.
+# So one subscriber can't fill the store and push everyone else's history out.
 MAX_PER_ACCOUNT = 60
 
 FOUNDER = ""                # the owner of every session started at /api
@@ -126,9 +116,9 @@ def start(channel: str = "web", agent: str = "titan-voice",
           account: str = FOUNDER) -> dict:
     """Open a session. Returns the public record."""
     global _seq
-    # Raised rather than returned, matching the channel check below: this
-    # function's contract is already "raises on refusal", and a caller that
-    # gets a session object back has every right to assume it can speak.
+    # Raised rather than returned, like the channel check below: this function
+    # already raises on refusal, and a caller that gets a session back should be
+    # able to assume it can speak.
     from . import flags
     flags.require("voice")
     channel = (channel or "web").lower()
@@ -142,8 +132,8 @@ def start(channel: str = "web", agent: str = "titan-voice",
             "channel": channel,
             "agent": agent or "titan-voice",
             "language": language or "en",
-            # Free text the operator supplied (a number, an email, a handle).
-            # Never derived, never enriched — this is not a tracking system.
+            # Free text the operator supplied (a number, an email, a handle). Never
+            # derived or enriched - this isn't a tracking system.
             "caller": str(caller or "")[:120],
             "account": account,
             "state": IDLE,
@@ -176,7 +166,7 @@ def start(channel: str = "web", agent: str = "titan-voice",
 
 def set_state(sid: str, state: str, reason: str = "",
               account: str = FOUNDER) -> dict:
-    """Move the session. Refuses transitions the machine does not define."""
+    """Move the session. Refuses transitions the machine doesn't define."""
     state = (state or "").lower()
     if state not in STATES:
         raise ValueError(f"Unknown state: {state}. One of {list(STATES)}.")
@@ -193,8 +183,8 @@ def set_state(sid: str, state: str, reason: str = "",
                 f"{', '.join(allowed) if allowed else 'nowhere — the session has ended'}.")
 
         now = _now()
-        # Measured, not estimated: the clock is read on the way out of
-        # thinking, so a session that never thought reports no latency at all.
+        # Measured, not estimated: the clock is read on the way out of thinking, so a
+        # session that never thought reports no latency at all.
         if current == THINKING:
             s["thinking_ms"] += (now - s["state_changed_at"]) * 1000.0
             s["thinking_spans"] += 1
@@ -219,8 +209,8 @@ def add_turn(sid: str, role: str, text: str, language: str = "",
     """Append one transcript turn.
 
     `confidence` is whatever the recogniser reported, or None. Titan never
-    supplies a confidence of its own — a self-assigned score is not evidence,
-    which is the same rule the evidence ledger already enforces.
+    supplies its own - a self-assigned score isn't evidence (same rule as the
+    evidence ledger).
     """
     role = (role or "").lower()
     if role not in ("user", "agent", "human"):
@@ -238,7 +228,7 @@ def add_turn(sid: str, role: str, text: str, language: str = "",
         s["turns"].append(turn)
         if len(s["turns"]) > MAX_TURNS:
             del s["turns"][:len(s["turns"]) - MAX_TURNS]
-        # The recogniser is the authority on what language was actually spoken.
+        # The recogniser decides what language was actually spoken.
         if language and role == "user":
             s["language"] = language
         count = len(s["turns"])
@@ -274,7 +264,7 @@ def record_tool(sid: str, name: str, args_summary: str = "",
 
 def approve_tool(sid: str, call_id: str, approver: str,
                  account: str = FOUNDER) -> dict:
-    """A human authorises a sensitive call. Without this it cannot complete."""
+    """A person authorises a sensitive call. Without this it can't complete."""
     if not approver:
         raise ValueError("An approver is required — that is the whole point.")
     with _lock:
@@ -292,8 +282,9 @@ def approve_tool(sid: str, call_id: str, approver: str,
 
 def finish_tool(sid: str, call_id: str, ok: bool, error: str = "",
                 account: str = FOUNDER) -> dict:
-    """Close a tool call. A sensitive call still pending cannot be finished —
-    that would let an unapproved action be reported as done."""
+    """Close a tool call. A sensitive call still pending can't be finished,
+    or an unapproved action could be reported as done.
+    """
     with _lock:
         call = _find_tool(sid, call_id, account)
         if call["requires_approval"] and call["approved_by"] is None:
@@ -348,8 +339,8 @@ def _public_locked(s: dict) -> dict:
         "pending_approvals": sum(1 for c in s["tools"] if c["status"] == "pending"),
         "escalated": s["state"] == ESCALATED or s["escalation"] is not None,
         "escalation": s["escalation"],
-        # None, never 0: a session that never entered `thinking` has no
-        # latency to report, and a 0 there would read as instantaneous.
+        # None, never 0: a session that never entered `thinking` has no latency, and
+        # 0 would read as instant.
         "avg_thinking_ms": round(s["thinking_ms"] / spans, 1) if spans else None,
         "cost_usd": s["cost_usd"],
         "error": s["error"],
@@ -365,9 +356,9 @@ def public(sid: str) -> dict:
 def awaiting_approval(account: str = FOUNDER) -> list[dict]:
     """Every sensitive tool call sitting in `pending`, oldest first.
 
-    `live()` reports `tools` as a COUNT, which is right for the 3D screen and
-    useless for an approval queue — you cannot approve a number. This returns
-    the calls themselves, still without touching the transcript."""
+    `live()` reports `tools` as a count, which suits the 3D screen but not an
+    approval queue. This returns the calls themselves, without the transcript.
+    """
     out = []
     with _lock:
         for s in _mine(account):
@@ -402,10 +393,10 @@ def transcript(sid: str, account: str = FOUNDER) -> dict:
 
 
 def live(account: str = FOUNDER) -> dict:
-    """What is happening right now — the payload the 3D screen renders.
+    """What's happening right now - the payload the 3D screen renders.
 
-    Every field here is counted from stored sessions. Nothing is sampled,
-    smoothed or invented.
+    Every field is counted from stored sessions; nothing is sampled, smoothed
+    or made up.
     """
     with _lock:
         rows = [_public_locked(s) for s in _mine(account)]
@@ -415,10 +406,9 @@ def live(account: str = FOUNDER) -> dict:
 def summarise(rows: list) -> dict:
     """Turn session rows into the live payload.
 
-    Split out of `live()` so the public DEMO can render the same shape from
-    sample rows without a hand-written copy of this structure. A copy drifts:
-    the moment a field is added here the demo would render `undefined` for it,
-    and the demo is the screen prospects are actually shown.
+    Split out of `live()` so the public demo renders the same shape from sample
+    rows. A hand-written copy would drift: a new field here would show as
+    `undefined` in the demo.
     """
     active = [r for r in rows if r["state"] != ENDED]
     by_state = {st: sum(1 for r in rows if r["state"] == st) for st in STATES}
@@ -433,8 +423,8 @@ def summarise(rows: list) -> dict:
     pending = sum(r["pending_approvals"] for r in rows)
     escalated = [r for r in rows if r["escalated"]]
 
-    # Plain-language "what is happening now". The brief asked for it, and it
-    # is the line a non-engineer actually reads.
+    # Plain-language "what's happening now" - the line a non-engineer actually
+    # reads.
     if not rows:
         summary = "No voice sessions yet. Nothing is running."
     elif not active:
@@ -465,7 +455,7 @@ def summarise(rows: list) -> dict:
         "median_thinking_ms": (latencies[len(latencies) // 2]
                                if latencies else None),
         "measured_latency_sessions": len(latencies),
-        # Honest about the one number nobody is measuring yet.
+        # Nobody measures this yet.
         "cost_usd": None,
         "cost_note": ("No voice provider is billing yet, so there is no cost to "
                       "report. This is null rather than 0.00 because 0.00 would "
@@ -475,16 +465,12 @@ def summarise(rows: list) -> dict:
 
 
 def demo_rows() -> list:
-    """Sample sessions for the PUBLIC demo, in `_public_locked` shape.
+    """Sample sessions for the public demo, in `_public_locked` shape.
 
-    A prospect could not see Voice at all before this: `/api/voice` is
-    guest-blocked and, unlike `/api/admin/clients`, nobody had written it a
-    demo-safe substitute — so the tab was hidden rather than serving a wall of
-    403s. Voice is a headline feature, so hiding it lost the pitch.
-
-    Everything here is obviously sample data for a fictional shop. No real
-    caller number, no real transcript, no real client. It is fed through the
-    REAL `summarise()`, so it can never drift from the live shape.
+    `/api/voice` is blocked for guests, so without this the demo couldn't show
+    Voice at all. Everything here is obviously sample data for a fictional
+    shop - no real caller number, transcript or client - and it goes through
+    the real `summarise()`, so it can't drift from the live shape.
     """
     now = _now()
     return [

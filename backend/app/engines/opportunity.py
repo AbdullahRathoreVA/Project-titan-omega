@@ -1,12 +1,8 @@
-"""Global Opportunity Engine.
+"""Opportunity engine: surfaces growth opportunities (niches, products, markets,
+revenue streams, partnerships, automations) and scores them on one rubric.
 
-Continuously surfaces growth opportunities — new niches, products, markets,
-revenue streams, partnerships and automations — and scores each on a common
-rubric so the Executive Core can prioritize objectively.
-
-Priority is a transparent composite: reward (expected revenue) is discounted by
-difficulty, risk and time-to-value. The formula is deliberately simple and
-auditable rather than a black box.
+Priority is a simple, inspectable composite: expected revenue discounted by
+difficulty, risk and time to value.
 """
 
 from __future__ import annotations
@@ -18,9 +14,8 @@ from ..core import learning
 from ..domain.enums import OpportunityStatus
 from ..store import STORE, Store, now
 
-# Candidate opportunities the intelligence/innovation divisions can "discover".
-# In production these come from live research tools; here they are a believable
-# seed pool that the engine scores and ranks.
+# Candidate opportunities to "discover". In production these would come from
+# live research; here they are a seed pool the engine scores and ranks.
 _CANDIDATES = [
     {
         "title": "Career Mind AI: add resume-to-interview funnel",
@@ -129,9 +124,9 @@ _CANDIDATES = [
 def score(expected_revenue: float, difficulty: float, risk: float, time_days: float) -> float:
     """Composite priority score in [0, 100].
 
-    Reward is normalized against a $100k reference and discounted by difficulty,
-    risk and time-to-value. Weights are explicit so the ranking can be audited
-    and tuned by the Self-Evolution Engine over time.
+    Reward is normalised against a $100k reference and discounted by difficulty,
+    risk and time to value. The weights are explicit so they can be inspected and
+    tuned (engines/evolution.py).
     """
 
     reward = min(expected_revenue / 100_000, 1.0)          # 0..1
@@ -156,9 +151,9 @@ def discover(store: Store = STORE) -> List[dict]:
             cand["risk"],
             cand["time_estimate_days"],
         )
-        # Learned re-rank: the formula is fixed, but which KINDS of opportunity
-        # Abdullah actually pursues is not. Until enough decisions exist this
-        # returns the formula score unchanged and says so.
+        # Learned re-rank: the formula is fixed, but which kinds of opportunity get
+        # pursued is learned. Until there are enough decisions this returns the
+        # formula score unchanged and says so.
         text = f"{cand.get('title', '')} {cand.get('rationale', '')}"
         priority, why = learning.rerank(text, formula)
 

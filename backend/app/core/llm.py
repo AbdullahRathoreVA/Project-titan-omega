@@ -20,11 +20,11 @@ from typing import Optional
 
 _CLAUDE_MODEL = os.getenv("TITAN_MODEL",        "claude-opus-4-8")
 _GROQ_MODEL   = os.getenv("TITAN_GROQ_MODEL",   "openai/gpt-oss-120b")
-# Display label only — actual model is picked live from the free catalog.
+# Display label only; the actual model is picked from the live free catalogue.
 _HERMES_MODEL = os.getenv("TITAN_HERMES_MODEL", "auto (openrouter free catalog)")
 _OPENAI_MODEL = os.getenv("TITAN_OPENAI_MODEL",  "gpt-4o-mini")
-# Display label only — the actual Gemini model is discovered from Google's live
-# catalog (they retire model ids periodically, e.g. gemini-1.5-flash in 2026).
+# Display label only. The actual Gemini model is discovered from Google's live
+# catalogue, since they retire model ids (e.g. gemini-1.5-flash in 2026).
 _GEMINI_MODEL = os.getenv("TITAN_GEMINI_MODEL", "auto (google catalog)")
 
 MODEL: Optional[str] = _CLAUDE_MODEL
@@ -103,10 +103,10 @@ def _openai_client():
     return openai.OpenAI(**kwargs)
 
 
-# ── per-provider completion functions ──────────────────────────────
-# These RAISE on error; complete() catches, records the reason, and falls back
-# to the next configured provider. That way one provider deprecating a model
-# (e.g. Groq retiring llama-3.3-70b) can't silently kill every agent.
+# -- per-provider completion functions ------------------------------------
+# These raise on error; complete() catches, records the reason, and falls back
+# to the next configured provider, so one provider retiring a model can't take
+# down every agent.
 
 def _complete_claude(system: str, prompt: str, max_tokens: int) -> Optional[str]:
     resp = _anthropic_client().messages.create(
@@ -122,10 +122,10 @@ def _complete_claude(system: str, prompt: str, max_tokens: int) -> Optional[str]
 
 
 def _complete_groq(system: str, prompt: str, max_tokens: int) -> Optional[str]:
-    # Direct httpx call to Groq's OpenAI-compatible endpoint — the SDK's client
-    # hit connection errors from the HF container; plain HTTP/1.1 via httpx is
-    # the most compatible path. If Groq's edge blocks the host network entirely,
-    # this still fails and the chain moves on to Gemini.
+    # Plain httpx call to Groq's OpenAI-compatible endpoint: the SDK client had
+    # connection errors from the HF container, and HTTP/1.1 via httpx works. If
+    # Groq blocks the host network entirely this still fails and the chain moves
+    # on.
     import httpx
 
     payload = {
@@ -137,15 +137,15 @@ def _complete_groq(system: str, prompt: str, max_tokens: int) -> Optional[str]:
         ],
     }
     if _GROQ_MODEL.startswith("openai/gpt-oss"):
-        # gpt-oss is a reasoning model: hidden reasoning consumes completion
-        # tokens BEFORE any visible text, so a tiny budget (the health probe's
-        # max_tokens=10) yields content="" — keep effort low and floor the cap.
+        # gpt-oss is a reasoning model: hidden reasoning uses completion tokens before
+        # any visible text, so a tiny budget (the health probe's max_tokens=10) returns
+        # content="". Keep effort low and put a floor under the cap.
         payload["reasoning_effort"] = "low"
         payload["max_tokens"] = max(max_tokens, 256)
     resp = httpx.post(
         "https://api.groq.com/openai/v1/chat/completions",
-        # .strip() everywhere a key is used: a newline pasted into an HF secret
-        # becomes an illegal HTTP header and kills the provider silently.
+        # .strip() wherever a key is used: a newline pasted into an HF secret becomes
+        # an illegal HTTP header and silently breaks the provider.
         headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY', '').strip()}"},
         json=payload,
         timeout=20.0,
@@ -155,9 +155,9 @@ def _complete_groq(system: str, prompt: str, max_tokens: int) -> Optional[str]:
     return (resp.json()["choices"][0]["message"]["content"] or "").strip() or None
 
 
-# OpenRouter's free models churn constantly (rate limits, delistings), so we
-# discover what's ACTUALLY available from the live catalog instead of pinning
-# ids that go stale. Preferred families first; static list only as last resort.
+# OpenRouter's free models change constantly (rate limits, delistings), so the
+# available ones are read from the live catalogue instead of pinning ids that
+# go stale. Preferred families first; the static list is a last resort.
 _PREFERRED_FREE = (
     "openai/gpt-oss-120b",
     "meta-llama/llama-3.3-70b-instruct",
@@ -173,8 +173,9 @@ _free_models_cache: tuple = (0.0, [])  # (fetched_at_monotonic, [model ids])
 
 
 def _free_models() -> list:
-    """Currently-listed :free OpenRouter models, preferred families first.
-    Cached ~1h; falls back to a small static list if the catalog is unreachable."""
+    """Currently listed :free OpenRouter models, preferred families first.
+    Cached ~1h; falls back to a small static list if the catalogue is down.
+    """
     global _free_models_cache
     import time as _time
 
@@ -200,7 +201,7 @@ def _complete_hermes(system: str, prompt: str, max_tokens: int) -> Optional[str]
     forced = os.getenv("TITAN_HERMES_MODEL", "").strip()
     candidates = ([forced] if forced else []) + _free_models()
     last_exc: Optional[Exception] = None
-    for model in candidates[:5]:  # cap attempts — fail fast, fall through
+    for model in candidates[:5]:  # cap attempts - fail fast, fall through
         try:
             resp = _hermes_client().chat.completions.create(
                 model=model,
@@ -210,8 +211,8 @@ def _complete_hermes(system: str, prompt: str, max_tokens: int) -> Optional[str]
                     {"role": "user",   "content": prompt},
                 ],
             )
-            # OpenRouter surfaces provider errors as a 200 with choices=None —
-            # subscripting that raised TypeError and looked like a code crash.
+            # OpenRouter reports provider errors as a 200 with choices=None; subscripting
+            # that would raise TypeError.
             choices = getattr(resp, "choices", None)
             if not choices or choices[0].message is None:
                 last_exc = RuntimeError(f"{model}: provider returned no choices")
@@ -221,8 +222,8 @@ def _complete_hermes(system: str, prompt: str, max_tokens: int) -> Optional[str]
                 return text
         except Exception as exc:  # rate-limited/retired — try the next one
             last_exc = exc
-            # The free-models-per-DAY cap is account-wide on OpenRouter: once
-            # it's hit, every free model 429s — stop burning time on the rest.
+            # The free-models-per-day cap is account-wide on OpenRouter: once it's hit,
+            # every free model returns 429, so stop trying the rest.
             if "free-models-per-day" in str(exc):
                 break
     if last_exc is not None:
@@ -246,8 +247,9 @@ _gemini_model_cache: Optional[str] = None
 
 
 def _gemini_model_id() -> str:
-    """Pick a live Gemini model from Google's catalog (cached for the process).
-    Google retires ids (gemini-1.5-flash died in 2026), so never pin blindly."""
+    """Pick a live Gemini model from Google's catalogue (cached for the process).
+    Google retires ids, so never pin one blindly.
+    """
     global _gemini_model_cache
     forced = os.getenv("TITAN_GEMINI_MODEL", "").strip()
     if forced:
@@ -298,9 +300,9 @@ _LAST_ERROR: Optional[str] = None
 def _provider_chain() -> list:
     """Every configured provider, in failover order.
 
-    TITAN_PROVIDER moves that provider to the FRONT — it no longer disables the
-    rest. A pinned provider that breaks (rate limit, dead key, retired model)
-    must never silence the agents when other working keys exist.
+    TITAN_PROVIDER moves that provider to the front without disabling the
+    rest, so a pinned provider that breaks (rate limit, dead key, retired
+    model) can't silence the agents while other keys work.
     """
     # Order = free-tier daily quota: Groq (thousands/day) > Gemini (hundreds)
     # > OpenRouter free (~50/day without credits).
@@ -334,26 +336,21 @@ def complete(system: str, prompt: str, max_tokens: int = 1500,
              task=None) -> Optional[str]:
     """Ask the LLM for a completion, trying each configured provider in turn.
 
-    Returns the text, or None if every provider fails (never raises). The reason
-    for the last failure is recorded in ``last_error()`` for diagnostics.
+    Returns the text, or None if every provider fails (never raises). The last
+    failure reason is available from ``last_error()``.
 
     `task` is an optional `model_router.Task`. Without one the call is treated
-    as STANDARD work and behaves exactly as it always did — that default is
-    what lets 25 existing call sites keep working untouched while the ones that
-    matter opt into cheaper or stricter routing.
+    as STANDARD work, so untagged call sites behave as before while the ones
+    that matter opt into cheaper or stricter routing.
     """
     global _LAST_ERROR
 
-    # The plan limit, charged HERE rather than at the 36 call sites that reach
-    # this function. Every plan has declared ai_calls_per_month since billing
-    # was written and nothing ever consumed it, so a free signup could spend an
-    # unbounded amount of somebody else's API quota. A limit applied at 36 call
-    # sites is a limit missing from the 37th.
+    # The plan's AI-call limit is charged here, in the one function every model
+    # call goes through, so no call site can skip it.
     #
-    # Refused by returning None, which is this function's existing contract for
-    # "no answer" — every caller already falls back to deterministic logic on
-    # None, so a customer who runs out gets the non-AI behaviour rather than an
-    # exception from a code path nobody tested.
+    # Refused by returning None, this function's existing "no answer" result:
+    # every caller already falls back to deterministic logic on None, so a
+    # customer who runs out gets the non-AI behaviour instead of an exception.
     from . import quota
     verdict = quota.spend(quota.AI_CALLS)
     if not verdict["allowed"]:
@@ -365,9 +362,9 @@ def complete(system: str, prompt: str, max_tokens: int = 1500,
         _LAST_ERROR = "no LLM provider configured"
         return None
 
-    # Spec Part 6: route on measured performance, not on an assumption about
-    # free-tier quotas. Providers with too little evidence keep their configured
-    # position, and none is ever dropped — see routing.order().
+    # Route on measured performance rather than assumptions about free-tier
+    # quotas. Providers with too little evidence keep their configured position,
+    # and none is ever dropped - see routing.order().
     import time as _time
 
     from . import model_router, routing
@@ -375,9 +372,9 @@ def complete(system: str, prompt: str, max_tokens: int = 1500,
     chain = routing.order(chain)
 
     # Cost-aware layer on top of the health ordering: drop providers below the
-    # task's tier floor, then order what remains by price (cheap work) or by
-    # measured reliability (everything else). A task with no eligible provider
-    # is a refusal, not a silent downgrade to whatever is left.
+    # task's tier floor, then order the rest by price (cheap work) or measured
+    # reliability (everything else). A task with no eligible provider is refused,
+    # not silently downgraded.
     profile = task if isinstance(task, model_router.Task) else model_router.Task(
         name="unspecified", tier=model_router.STANDARD)
     decision = model_router.decide(
@@ -410,9 +407,8 @@ def complete(system: str, prompt: str, max_tokens: int = 1500,
                                     fallback=attempt > 1)
                 _LAST_ERROR = None
                 return text
-            # An empty response is a failure of this provider, not a success:
-            # counting it as OK would keep a silently-broken provider ranked
-            # first forever.
+            # An empty response is a failure of this provider; counting it as a success
+            # would keep a silently broken provider ranked first forever.
             routing.record(prov, ok=False, latency_ms=elapsed,
                            error="empty response")
             model_router.record(profile.name, prov, ok=False,

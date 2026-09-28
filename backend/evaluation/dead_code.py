@@ -1,40 +1,21 @@
-"""Find capabilities that are defined, tested, and called by nothing.
+"""Find functions that are defined (and maybe tested) but called by nothing.
 
-This repository's dominant defect class, found EIGHT times and every single
-time by accident:
+A function can look finished in the source, pass its tests and be documented,
+and still never run because nothing calls it - an endpoint that's never
+wired up, a backfill nothing triggers, a constant nobody compares against.
 
-    knowledge.backfill()          shipped, unit-tested, endpoint exposed, and
-                                  the semantic ranker was dead code in prod
-    params.apply_stored()         same shape
-    improve.check_active()        auto-rollback that never ran
-    core/identity.py              an entire module, the login, uncalled
-    clients.SESSION_TTL           a constant with a reason and no comparison
-    ratelimit.LIMITS["demo"]      a limit that limited nothing
-    ratelimit.LIMITS["discover"]  same
-    GET /api/client/social        served, and the page hardcoded its own answer
+This walks the AST of app/** and reports every public module-level function
+with no reference anywhere in the application, excluding the legitimate ways a
+function is reached without a literal call. Each exclusion is listed below
+with its reason.
 
-Every one of those read, in the source, exactly like working code. Tests
-passed. Documentation described them. Nothing invoked them.
-
-Finding the ninth by luck is not a strategy. This walks the AST of app/** and
-reports every public module-level function with no call site anywhere in the
-application — excluding the ways a function can legitimately be reached without
-a literal call, each of which is listed and justified below rather than being
-silently skipped.
-
-KNOWN LIMITATION — read before trusting a clean run.
-
-References are matched on the BARE NAME, not the qualified one, because
-resolving `from . import billing; billing.set_password(...)` back to a
-definition needs real import resolution. The consequence is concrete and was
-observed immediately: wiring up `billing.set_password()` made
-`clients.set_password()` disappear from this report, although nothing calls it
-and a business still cannot change its portal password.
-
-So a clean run means "no PUBLIC NAME is entirely unreferenced". It does not
-mean "no capability is unreachable". Matching qualified names would trade this
-false negative for a crop of false positives, and a detector people learn to
-skim is worth less than one with a limitation written on it.
+Known limitation: references are matched on the bare name, not the qualified
+one, because resolving `from . import billing; billing.set_password(...)` back
+to its definition needs real import resolution. So if two modules both define
+`set_password` and only one is called, neither is reported. A clean run means
+"no public name is entirely unreferenced", not "every capability is
+reachable". Matching qualified names would swap this for false positives, and
+a noisy detector gets ignored.
 
 Run:  python -m evaluation.dead_code
       python -m evaluation.dead_code --json
@@ -52,11 +33,10 @@ from collections import defaultdict
 APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "app")
 
-# Ways a function is genuinely reached without a literal `name(...)` in app/**.
-# Each entry is a REASON, not a mute button: if you add one, say why the caller
-# cannot be seen by a static walk.
+# Ways a function is reached without a literal `name(...)` in app/**. Each entry
+# needs a reason: if you add one, say why a static walk can't see the caller.
 EXEMPT_DECORATORS = {
-    # FastAPI calls these. The route decorator IS the call site.
+    # FastAPI calls these; the route decorator is the call site.
     "router.get", "router.post", "router.put", "router.patch", "router.delete",
     "app.get", "app.post", "app.put", "app.patch", "app.delete",
     "app.middleware", "app.on_event", "app.exception_handler",
@@ -67,16 +47,15 @@ EXEMPT_DECORATORS = {
 # Names whose caller is the language, the framework, or a test harness.
 EXEMPT_NAMES = {
     "main", "lifespan", "seed", "register_all",
-    # Test-isolation hooks. Their caller IS the test suite, by design: module
-    # level state has to be resettable between tests or one test poisons the
-    # next. Listing them is not a mute button — a reset() with no test calling
-    # it is dead, but that is the suite's problem to notice, not this tool's.
+    # Test-isolation hooks, called by the test suite by design: module-level state
+    # has to be reset between tests. A reset() no test calls is dead, but that's
+    # for the suite to notice.
     "reset",
 }
 
-# Prefixes that mark a deliberate public API surface consumed from OUTSIDE the
-# application process: adapters registered by string, engine entry points the
-# heartbeat resolves dynamically, and the tool registry.
+# Prefixes marking a public surface used from outside a literal call: adapters
+# registered by string, engine entry points the heartbeat resolves
+# dynamically, and the tool registry.
 DYNAMIC_HINTS = ("handler_", "adapter_", "tool_", "cmd_")
 
 
@@ -136,12 +115,10 @@ def collect() -> dict:
                     "line": node.lineno,
                 }
 
-            # Every call, attribute access and string literal ANYWHERE in the
-            # app. Attribute access counts because `mod.fn` passed as a value
-            # (a handler, a callback, a monkeypatch target) is a real caller.
-            # String literals count because a registry keyed by name is a real
-            # caller too, and pretending otherwise produces false alarms that
-            # teach people to ignore this tool.
+            # Every call, attribute access and string literal anywhere in the app.
+            # Attribute access counts because `mod.fn` passed as a value (a handler,
+            # callback or monkeypatch target) is a real caller. String literals count
+            # because a registry keyed by name is a real caller too.
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call):
                     fn = node.func
@@ -152,12 +129,8 @@ def collect() -> dict:
                 elif isinstance(node, ast.Attribute):
                     attribute_uses.add(node.attr)
                 elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                    # A bare name READ is a real reference. This tool's first
-                    # version missed it and reported fix_cycle.audit_and_propose
-                    # as uncalled, when it is handed to queue.register() as a
-                    # value one line below its own definition. A dead-code
-                    # detector that cries wolf is worse than none: it trains
-                    # people to skim its output.
+                    # A bare name read is a real reference - e.g. a handler passed to
+                    # queue.register() as a value right below its definition.
                     attribute_uses.add(node.id)
                 elif isinstance(node, ast.Constant) and isinstance(node.value, str):
                     string_literals.add(node.value)

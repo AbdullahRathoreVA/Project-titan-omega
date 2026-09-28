@@ -1,9 +1,9 @@
 "use client";
 
-// Boot sequence 3D scene: thousands of glowing particles fly in from a chaos
-// sphere and assemble into "TITAN Ω / HELLO ABDULLAH", then the camera
-// flies straight through the text into the dashboard. Text pixels are sampled
-// from an offscreen canvas so the letters literally form from light.
+// Boot sequence scene: thousands of glowing particles fly in from a chaos
+// sphere and assemble into "TITAN Ω" and the greeting, then the camera flies
+// through the text into the dashboard. Text pixels are sampled from an
+// offscreen canvas so the letters form out of light.
 
 import { useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -14,8 +14,10 @@ import { isCoarsePointer } from "@/lib/device";
 import { isGuest } from "@/lib/guest";
 import { displayName, isCustomer, isDemo } from "@/lib/session";
 
-/** The founder is greeted by name; a subscriber by theirs; a demo visitor
- *  by nobody's. (The demo used to be greeted as ABDULLAH too.) */
+/**
+ * The founder is greeted by name, a subscriber by theirs, and a demo visitor
+ * by nobody's.
+ */
 function greeting(): string {
   if (isGuest() || isDemo()) return "WELCOME";
   if (isCustomer()) return `HELLO ${displayName().toUpperCase()}`.slice(0, 22);
@@ -129,7 +131,7 @@ function EnergyRing() {
 }
 
 export default function BootScene3D() {
-  // Phones: fewer stars, no post-processing — keeps the boot smooth everywhere.
+  // Phones: fewer stars, no post-processing, so the boot stays smooth.
   const mobile = useMemo(() => isCoarsePointer(), []);
   return (
     <Canvas camera={{ position: [0, 0, 11], fov: 55 }} dpr={[1, mobile ? 1.2 : 1.5]} gl={{ antialias: !mobile }}>

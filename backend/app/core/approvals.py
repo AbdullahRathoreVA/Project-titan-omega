@@ -1,24 +1,17 @@
-"""One place to see everything waiting for a human decision.
+"""Everything waiting for a human decision, in one list.
 
-Brief §24. The gates already existed and were already enforced — a site fix
-needs a named approver and refuses a stale proposal, an improvement proposal
-refuses anything unmeasured or measured worse, a voice tool call is 403 without
-an approver, a social post queues as a draft and cannot auto-send. What did not
-exist was anywhere to SEE all of that at once, so the safety was real and
-invisible. An operator who cannot find the queue does not work the queue.
+Each gate is enforced where it lives: a site fix needs a named approver and
+refuses a stale proposal, an improvement refuses anything unmeasured or
+worse, a voice tool call needs an approver, a social post can only be queued.
+This collects them so the queue is visible in one place.
 
-**This module never approves anything.** It is a read-only aggregator, and that
-is a security property, not a limitation. Each surface's own `approve()` carries
-rules this list does not know: `site_fix.approve` refuses a proposal whose page
-changed since it was proposed, `improve.approve` refuses a regression. A
-central "approve everything" that shortcut those would quietly delete the very
-checks this screen exists to advertise. So the list points at the endpoint that
-WILL approve each item and stops there. There is a test asserting this module
-cannot approve, in the same spirit as the one asserting outreach cannot send.
+Read-only by design. Each surface's approve() has rules this list doesn't
+know (site_fix refuses a proposal whose page has changed, improve refuses a
+regression), so the list only points at the endpoint that approves each item.
+A test checks that this module can't approve anything.
 
-Sources are enumerated defensively. A surface that fails to report is listed as
-an ERROR with its reason — never silently omitted, because a queue that hides
-its own gaps is worse than no queue.
+A surface that fails to report is listed as an error with the reason rather
+than silently left out.
 """
 
 from __future__ import annotations
@@ -26,8 +19,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-# Risk is the operator's triage signal, so it describes the BLAST RADIUS if the
-# action is wrong, not how likely it is to be wrong.
+# Risk describes the blast radius if the action is wrong, not how likely it
+# is to be wrong.
 CLIENT_SITE = "writes to a client's live website"
 OWN_BEHAVIOUR = "changes how Titan itself behaves"
 LIVE_CALL = "acts during a live phone call"
@@ -35,10 +28,9 @@ PUBLIC = "publishes publicly under your name"
 
 
 def _age(ts: Any) -> float | None:
-    """Seconds since `ts`, or None when there is no usable timestamp.
-
-    None, not 0. A missing timestamp is unknown age, and "0 seconds old" would
-    be a number nobody measured."""
+    """Seconds since `ts`, or None when there's no usable timestamp (unknown age,
+    not zero).
+    """
     try:
         return round(max(0.0, time.time() - float(ts)), 1)
     except (TypeError, ValueError):
@@ -62,8 +54,7 @@ def _site_fixes() -> list[dict]:
                 "why": fix.get("why"),
                 "current": fix.get("current"),
                 "proposed": fix.get("proposed"),
-                # Titan's OWN audit weight. Never a traffic prediction —
-                # site_fix is explicit that it cannot measure a ranking change.
+                # Titan's own audit weight - not a traffic prediction.
                 "audit_weight": fix.get("audit_weight"),
             },
             "created_at": fix.get("created_at"),
@@ -79,8 +70,7 @@ def _improvements() -> list[dict]:
     from . import improve
     out = []
     for row in improve.listing(status=improve.EVALUATED):
-        # A measured regression is never offered for approval — approve()
-        # refuses it — so listing it here would be an invitation to a dead end.
+        # approve() refuses a measured regression, so don't list it.
         if row.get("regression"):
             continue
         out.append({
@@ -130,7 +120,7 @@ def _voice_tool_calls() -> list[dict]:
 
 
 def _posts(store) -> list[dict]:
-    """Drafts queued for publication. Titan never auto-posts; there is a test."""
+    """Drafts queued for publication. Titan never posts on its own (there's a test)."""
     out = []
     for post in list(getattr(store, "posts", []) or []):
         data = post if isinstance(post, dict) else getattr(post, "__dict__", {})
@@ -162,7 +152,7 @@ _SOURCES = (
 
 
 def pending(store=None) -> dict:
-    """Everything waiting, newest risk first. Never approves, never mutates."""
+    """Everything waiting, oldest first. Never approves or changes anything."""
     items: list[dict] = []
     errors: list[dict] = []
 
@@ -170,8 +160,7 @@ def pending(store=None) -> dict:
         try:
             items.extend(fn())
         except Exception as exc:
-            # Listed, not swallowed. A surface that cannot report its queue is
-            # itself something the operator needs to know about.
+            # Listed rather than swallowed: a surface that can't report is worth knowing about.
             errors.append({"surface": name,
                            "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
 
@@ -182,9 +171,8 @@ def pending(store=None) -> dict:
             errors.append({"surface": "publishing",
                            "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
 
-    # Oldest first: the thing that has been waiting longest is the thing most
-    # likely to be forgotten. Items with no timestamp sort last rather than
-    # being treated as infinitely old.
+    # Oldest first - the longest wait is the likeliest to be forgotten. Items
+    # without a timestamp go last.
     items.sort(key=lambda i: (i.get("age_seconds") is None,
                               -(i.get("age_seconds") or 0.0)))
 
@@ -197,7 +185,7 @@ def pending(store=None) -> dict:
         "items": items,
         "count": len(items),
         "by_surface": by_surface,
-        # None until something is actually waiting — not 0.
+        # None until something is waiting.
         "oldest_seconds": max(ages) if ages else None,
         "errors": errors,
         "note": ("Read-only. Approving happens on each item's own endpoint, "

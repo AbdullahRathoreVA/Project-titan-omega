@@ -1,32 +1,24 @@
-"""What external capabilities exist, and which provider to reach for.
+"""What external APIs exist, and which provider to reach for.
 
 Built from the public-apis catalogue (1,675 APIs, 52 categories), parsed by
-`evaluation/sync_public_apis.py` and committed as JSON so the product never
-needs GitHub reachable to answer "what APIs exist".
+`evaluation/sync_public_apis.py` and committed as JSON so the app never needs
+GitHub to answer "what APIs exist".
 
-**Read this before believing anything about integration status.**
+Every record here is catalogue metadata: an API was listed upstream with this
+name, URL, category and auth type. It says nothing about whether Titan can
+call it. An adapter needs the provider's docs read, auth wired, schema mapped
+and responses normalised, and that's per-provider work.
 
-Every record here is CATALOGUE METADATA. It is a true statement that an API
-was listed upstream with a given name, URL, category and auth type. It is NOT
-a statement that Titan can call it. Titan cannot: an adapter needs the
-provider's own documentation read, its auth wired, its schema mapped and its
-response normalised, and that is per-provider work.
-
-So every record starts at `METADATA_ONLY` and nothing promotes itself. A
+So every record starts as `METADATA_ONLY` and nothing promotes itself; a
 provider reaches `ADAPTER_READY` only when someone writes and tests an
-adapter. The status vocabulary comes from the brief, and the honest answer for
-1,675 of 1,675 today is METADATA_ONLY.
+adapter. Even so, Titan can answer "which providers serve weather, need no
+credential and support HTTPS" from real data, which is the hard half of
+routing.
 
-That is not a small thing. Titan can already answer "which providers serve
-weather, need no credential, and support HTTPS" from real data — which is the
-hard half of the routing problem — and it can do it without pretending to an
-integration it does not have.
-
-**Nothing here makes a network call.** Discovery is offline by construction.
-Executing against a provider goes through the existing hardened path
-(`safe_fetch` for SSRF, `ratelimit`, `untrusted` for responses), and is
-deliberately NOT wired up here: a registry that can also fire requests is one
-prompt-injection away from being an SSRF engine with 1,675 targets.
+Nothing here makes a network call. Calling a provider goes through the
+hardened path (`safe_fetch` for SSRF, `ratelimit`, `untrusted` for
+responses) and isn't wired up here: a registry that could also fire requests
+would be one prompt injection away from an SSRF engine with 1,675 targets.
 """
 
 from __future__ import annotations
@@ -37,7 +29,7 @@ import re
 import threading
 from typing import Optional
 
-# Status vocabulary from the brief. Ordered weakest to strongest.
+# Status values, weakest to strongest.
 METADATA_ONLY = "METADATA_ONLY"
 AUTH_REQUIRED = "AUTH_REQUIRED"
 ADAPTER_READY = "ADAPTER_READY"
@@ -55,7 +47,7 @@ _meta: dict = {}
 
 # Intent words -> upstream category names. The catalogue's categories are the
 # capability graph; this maps natural language onto them without inventing a
-# taxonomy that would drift from the source.
+# separate taxonomy.
 _INTENT: dict[str, tuple] = {
     "weather": ("Weather",),
     "forecast": ("Weather",),
@@ -118,8 +110,8 @@ def load(force: bool = False) -> dict:
         rows = payload.get("apis") or []
         for i, r in enumerate(rows):
             r.setdefault("id", f"pa-{i:05d}")
-            # Set here, not in the data file, so it can never be committed as
-            # anything stronger by accident.
+            # Set here, not in the data file, so it can never be committed as anything
+            # stronger by accident.
             r["status"] = METADATA_ONLY
             r["adapter"] = None
         _apis = rows
@@ -146,7 +138,7 @@ def categories() -> list[dict]:
 def search(query: str = "", *, category: str = "", auth: str = "",
            no_credential: bool = False, https_only: bool = False,
            limit: int = 25) -> dict:
-    """Find providers. Pure metadata filtering — no network, no execution."""
+    """Find providers. Metadata filtering only - no network, no execution."""
     load()
     q = (query or "").strip().lower()
     with _lock:
@@ -159,7 +151,7 @@ def search(query: str = "", *, category: str = "", auth: str = "",
     if no_credential:
         rows = [r for r in rows if r["auth"] == "none"]
     if https_only:
-        # `is True` on purpose: unknown must not pass an HTTPS-only filter.
+        # `is True` on purpose: unknown mustn't pass an HTTPS-only filter.
         rows = [r for r in rows if r["https"] is True]
 
     scored = []
@@ -184,15 +176,13 @@ def search(query: str = "", *, category: str = "", auth: str = "",
 
 def for_capability(intent: str, *, prefer_free: bool = True,
                    limit: int = 5) -> dict:
-    """Map an intent onto candidate providers, best-effort first.
+    """Map an intent onto candidate providers, best first.
 
-    This is the routing half the brief asks for, and it is real: the ranking
-    below is computed from catalogue facts (credential needed, HTTPS, CORS),
-    not from a quality score nobody measured.
+    The ranking uses catalogue facts (credential needed, HTTPS, CORS), not an
+    unmeasured quality score.
 
-    It returns CANDIDATES, not a connection. Every one is METADATA_ONLY, so
-    the honest output is "here is who serves this and what they would need",
-    not "here is your answer".
+    Returns candidates, not a connection. Every one is METADATA_ONLY, so the
+    output is "here's who serves this and what they'd need", not an answer.
     """
     load()
     text = (intent or "").strip().lower()
@@ -205,8 +195,8 @@ def for_capability(intent: str, *, prefer_free: bool = True,
         rows = search(text, limit=200)["results"]
 
     def rank(r: dict) -> tuple:
-        # No credential first (Titan runs on no budget), then HTTPS, then a
-        # known CORS answer. Every term is a fact from the catalogue.
+        # No credential first (Titan runs on no budget), then HTTPS, then a known CORS
+        # answer. Every term is a catalogue fact.
         return (
             0 if r["auth"] == "none" else 1,
             0 if r["https"] is True else 1,
@@ -232,7 +222,7 @@ def for_capability(intent: str, *, prefer_free: bool = True,
 
 
 def stats() -> dict:
-    """The integration audit the brief asks for. Counts, not claims."""
+    """Integration counts: catalogued vs actually integrated."""
     load()
     with _lock:
         rows = list(_apis)

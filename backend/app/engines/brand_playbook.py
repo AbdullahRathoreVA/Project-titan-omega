@@ -1,7 +1,6 @@
-"""Social strategy derived from measured luxury-brand behaviour, not folklore.
+"""Social media strategy based on how luxury brands actually post.
 
-Every number below was read directly off the live Instagram profiles on
-2026-07-26, not recalled or estimated:
+Figures read from the live Instagram profiles on 2026-07-26:
 
   brand            posts    followers   following
   CHANEL           7,446    59.0M       3
@@ -11,52 +10,40 @@ Every number below was read directly off the live Instagram profiles on
   Prada            9,906    33.5M       9
   Tommy Hilfiger   1,872    15.0M     347
   Jacquemus        8,120     6.8M    1,058
-  Bottega Veneta      —        —         —   (account deleted, 2021)
+  Bottega Veneta      -        -         -   (account deleted, 2021)
 
-What the data actually shows, and why it matters for a restaurant:
+What that means for a restaurant:
 
-1. FOLLOWING COUNT IS A POSITIONING SIGNAL. The five most prestigious brands
-   follow 3-9 accounts. Tommy Hilfiger (mass-market) follows 347. Jacquemus
-   (young, accessible) follows 1,058. Following few reads as self-sufficiency;
-   following many reads as needing attention. A restaurant that follows 3,000
-   accounts looks like it is chasing customers.
+1. Following count signals positioning. The most prestigious brands follow
+   3-9 accounts; Tommy Hilfiger (mass-market) follows 347, Jacquemus (young,
+   accessible) 1,058. Following few reads as self-sufficient; a restaurant
+   following 3,000 accounts looks like it's chasing customers.
+2. Gucci has 367 posts and 50.5M followers - they periodically clear the
+   grid, so it shows a deliberate current identity. Dior has 14,480. Both
+   work if the choice is deliberate.
+3. Bios are philosophy, not sales. Prada: "Thinking fashion since 1913." Dior
+   quotes Christian Dior. Nobody writes "Shop now" or lists prices.
+4. Dior puts a physical address in the bio ("30 avenue Montaigne, Paris").
+   For a local restaurant that's free local SEO, and few independents do it.
+5. Story highlights are named after collections in the brand's own language:
+   LV in French (Le Keepall, Le Noé, L'Alma), Gucci in Italian (Primavera,
+   La Famiglia), Dior by season code (Couture FW27, DiorSummer27). None use
+   "Menu" or "About us". For a restaurant: name highlights after dishes and
+   seasons in the cuisine's language.
+6. The bio link points at the current campaign, not the homepage (Chanel to
+   /-Connects-Season6, Gucci to a Monte Carlo campaign).
+7. Bottega Veneta deleted every social account in 2021 and still grew.
+   Presence is a choice; more posting isn't always better.
 
-2. GUCCI HAS 367 POSTS AND 50.5M FOLLOWERS. They periodically purge the grid.
-   Archive is a tool: a clean grid signals a deliberate current identity rather
-   than an accumulated diary. Contrast Dior at 14,480 posts — both work, but
-   only if the choice is deliberate.
-
-3. BIOS ARE PHILOSOPHY, NOT SALES. Prada: "Thinking fashion since 1913." Dior
-   quotes Christian Dior himself. Nobody writes "Shop now" or lists prices.
-
-4. DIOR PUTS A PHYSICAL ADDRESS IN THE BIO ("30 avenue Montaigne, Paris").
-   For a local restaurant this is free, high-value local SEO and almost nobody
-   independent does it.
-
-5. STORY HIGHLIGHTS ARE NAMED AFTER COLLECTIONS IN THE BRAND'S OWN LANGUAGE.
-   LV uses French (Le Keepall, Le Noé, L'Alma); Gucci Italian (Primavera,
-   La Famiglia); Dior season codes (Couture FW27, DiorSummer27). None use
-   generic labels like "Menu" or "About us". For a restaurant this translates
-   directly: name highlights after dishes and seasons in the cuisine's language.
-
-6. LINK-IN-BIO POINTS AT THE CURRENT CAMPAIGN, NOT THE HOMEPAGE. Chanel links
-   to /-Connects-Season6, Gucci to a Monte Carlo campaign. One live thing, not
-   a generic front door.
-
-7. BOTTEGA VENETA DELETED EVERY SOCIAL ACCOUNT IN 2021 AND THE BRAND GREW.
-   Presence is a choice, not an obligation. Worth knowing before promising a
-   client that more posting is always better.
-
-The cross-cutting rule confirmed by research: over-posting destroys luxury
-positioning. Posting 3-5x daily signals accessibility. High-craft sub-frequency
-posts earn saves and shares instead. Discount- and urgency-driven content is
-the fastest way to damage brand equity — scarcity framing ("limited", "while
-it lasts") works where "50% OFF" does not.
+Overall: over-posting hurts premium positioning. Posting 3-5x a day signals
+accessibility; fewer, well-made posts earn saves and shares. Discount and
+urgency content damages brand equity fastest - scarcity ("limited", "while
+it lasts") works where "50% OFF" doesn't.
 """
 
 from __future__ import annotations
 
-# Measured 2026-07-26 from live profiles.
+# Read from live profiles on 2026-07-26.
 BENCHMARKS = {
     "chanelofficial": {"posts": 7446, "followers": 59_000_000, "following": 3},
     "louisvuitton": {"posts": 9381, "followers": 55_100_000, "following": 7},
@@ -67,8 +54,8 @@ BENCHMARKS = {
     "jacquemus": {"posts": 8120, "followers": 6_800_000, "following": 1058},
 }
 
-# Restaurant-specific pillars. Luxury principles adapted — a restaurant is a
-# local business, so provenance and people replace runway and celebrity.
+# Restaurant-specific pillars. The luxury principles adapted for a local
+# business: provenance and people instead of runway and celebrity.
 PILLARS = [
     {
         "key": "craft",
@@ -174,7 +161,7 @@ def highlights_plan(cuisine: str, language: str = "en") -> list[str]:
 
 
 def audit_profile(posts: int, followers: int, following: int) -> dict:
-    """Compare a client's account against measured luxury behaviour."""
+    """Compare a client's account against how the luxury brands operate."""
     findings = []
 
     if following > 500:
@@ -215,25 +202,20 @@ def audit_profile(posts: int, followers: int, following: int) -> dict:
     }
 
 
-# Which industries this playbook was actually researched for.
+# Industries this playbook was researched for.
 #
-# The research above is real and specific: seven luxury profiles read directly
-# off Instagram, translated into pillars for a HOSPITALITY business. The
-# pillars are the dish, the chef, the room, the guest and the season. There is
-# nothing measured here about a wholesaler, a law firm or a software company,
-# and handing one of them "Hero dish, close and clean" is advice with no
-# evidence behind it dressed as advice with evidence behind it.
+# The pillars (the dish, the chef, the room, the guest, the season) were built
+# for hospitality. Nothing here was researched for a wholesaler, a law firm or
+# a software company, so they don't get "hero dish, close and clean".
 #
-# Keys match core verticals. The generic halves — CADENCE, FORBIDDEN,
-# BENCHMARKS and audit_profile() — are NOT gated: following count, post-to-
-# follower ratio and discount-led posting apply to any brand on Instagram, and
-# those are measured across the seven profiles rather than derived for food.
+# Keys match core verticals. The generic parts - CADENCE, FORBIDDEN,
+# BENCHMARKS and audit_profile() - aren't gated: following count,
+# post-to-follower ratio and discount-led posting apply to any brand.
 COVERED_INDUSTRIES = ("restaurant", "cafe", "bar", "bakery", "hotel")
 
-# What people actually type into a free-text industry box, mapped onto the
-# keys above. Deliberately short: a guess that maps a business into coverage it
-# does not have is worse than one that leaves it out, because being left out
-# is visible and being wrongly included is not.
+# What people actually type into a free-text industry box, mapped to the keys
+# above. Kept short on purpose: wrongly including a business is worse than
+# leaving it out, because being left out is visible.
 _ALIASES = {
     "restaurants": "restaurant", "dining": "restaurant", "bistro": "restaurant",
     "pizzeria": "restaurant", "food": "restaurant", "catering": "restaurant",
@@ -245,7 +227,7 @@ _ALIASES = {
 
 
 def normalise_industry(industry: str) -> str:
-    """A free-text industry reduced to a covered key, or "" if it is not one."""
+    """A free-text industry reduced to a covered key, or "" if it isn't one."""
     key = (industry or "").strip().lower()
     if not key:
         return ""
@@ -257,9 +239,8 @@ def normalise_industry(industry: str) -> str:
 def coverage(industry: str) -> dict:
     """Whether the weekly plan applies here, and if not, why not.
 
-    Returns the reason rather than a bare False so the screen showing it can
-    say something true and specific instead of going blank. A blank panel and a
-    broken panel look identical.
+    Returns the reason rather than False, so the screen can say something
+    specific instead of going blank (a blank panel looks broken).
     """
     key = normalise_industry(industry)
     if key:

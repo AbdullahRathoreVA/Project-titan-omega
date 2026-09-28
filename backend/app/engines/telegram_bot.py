@@ -1,16 +1,17 @@
-"""Telegram Command Center — command Titan from your phone, 100% free.
+"""Telegram bot: run Titan commands from your phone.
 
-Uses the official (free) Telegram Bot API via long-polling on the heartbeat, so
-it works on HF Spaces with no webhook/public-URL setup. Configure with:
+Uses the Telegram Bot API with long-polling on the heartbeat, so no webhook
+or public URL is needed where Telegram is reachable. (On HF Spaces it isn't;
+see TELEGRAM_SETUP.md for the Cloudflare relay.) Configure:
 
-  TELEGRAM_BOT_TOKEN  — from @BotFather (free, 2 minutes)
-  TELEGRAM_CHAT_ID    — your chat id; when set, ONLY that chat can command
-                        Titan (strongly recommended). Send /start to the bot
-                        and the id shows up in the dashboard log.
+  TELEGRAM_BOT_TOKEN  from @BotFather
+  TELEGRAM_CHAT_ID    your chat id; when set, only that chat can run
+                      commands (recommended). Send /start to the bot and the
+                      id appears in the dashboard log.
 
 Commands: /status /revenue /agents /opportunities /report /news /search <q>
-/ask <q> /nextpost /approve /help. Unknown text is treated as /ask.
-Every command + reply is logged to STORE.telegram_log for the dashboard page.
+/ask <q> /nextpost /approve /help. Anything else is treated as /ask.
+Every command and reply is logged to STORE.telegram_log.
 """
 
 from __future__ import annotations
@@ -28,8 +29,9 @@ MAX_LEN = 3900  # Telegram hard limit is 4096; leave headroom.
 
 
 def _token() -> str:
-    """Bot token with whitespace stripped — a newline pasted into the HF secret
-    otherwise lands inside the request URL and breaks every API call silently."""
+    """Bot token with whitespace stripped - a newline pasted into the secret would
+    otherwise end up in the request URL and break every call.
+    """
     return os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
 
@@ -38,7 +40,7 @@ def configured() -> bool:
 
 
 def send_to_founder(text: str, store: Store = STORE) -> bool:
-    """Push a message to Abdullah's own chat (needs TELEGRAM_CHAT_ID). Never raises."""
+    """Send a message to the founder's own chat (needs TELEGRAM_CHAT_ID). Never raises."""
     token = _token()
     chat = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not (token and chat):
@@ -304,8 +306,8 @@ def poll_once(store: Store = STORE) -> int:
         if chat_id is None or not text:
             continue
 
-        # A subscriber's link attempt or linked chat never reaches the
-        # founder's handler below - it is answered from their own workspace.
+        # Subscriber link attempts and linked chats are answered from their own
+        # workspace, never by the founder's handler below.
         from . import telegram_subscribers
         theirs = telegram_subscribers.handle(chat_id, text, sender)
         if theirs is not None:

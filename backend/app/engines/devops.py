@@ -1,10 +1,9 @@
-"""Autonomous code edits via REAL pull requests (never direct pushes).
+"""Code changes through pull requests, never direct pushes.
 
-The honest, safe way for an AI to "edit your app": it proposes an improvement to
-a watched repo (default: Career Mind) by opening a PR you review and merge. It
-touches a SINGLE text/markdown file by default so it can't break a build, and it
-never merges anything itself. Requires GITHUB_TOKEN with repo (write) scope; with
-no token or a read-only token it returns an honest error and changes nothing.
+Drafts an improvement to one text/markdown file in a watched repo (Career Mind
+by default) and opens a PR for a human to review and merge. Never merges
+itself. Needs GITHUB_TOKEN with repo write scope; without it, returns an error
+and changes nothing.
 """
 
 from __future__ import annotations
@@ -131,5 +130,5 @@ def open_improvement_pr(
                        f"Opened a pull request on {owner}/{repo}: improve {path}.", "success")
             return {"ok": True, "pr_url": url, "repo": f"{owner}/{repo}", "path": path, "branch": branch}
 
-    except Exception as exc:  # network / API failure — honest, never crash
+    except Exception as exc:  # network or API failure - report it, don't crash
         return {"ok": False, "pr_url": None, "error": f"{type(exc).__name__}: {exc}"}

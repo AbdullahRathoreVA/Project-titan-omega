@@ -1,10 +1,9 @@
 "use client";
 
-// The 3D centerpiece: a wireframe core globe with an orbiting agent-network of
-// nodes, drifting in a starfield. Rotation speed + glow scale with the live
-// activity "intensity" pushed by the SSE stream — so the empire visibly speeds
-// up as agents work and money lands. Loaded via next/dynamic (ssr:false) by
-// TitanCore.tsx so the static export never tries to render WebGL at build time.
+// The 3D centrepiece: a wireframe core globe with an orbiting network of agent
+// nodes in a starfield. Rotation speed and glow scale with the live activity
+// "intensity" from the SSE stream. Loaded via next/dynamic (ssr:false) by
+// TitanCore.tsx so the static export never renders WebGL at build time.
 
 import { useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";

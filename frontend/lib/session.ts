@@ -1,12 +1,13 @@
 // Who is using the cockpit: the founder, a demo visitor, or a subscriber.
 //
 // A subscriber's cockpit reads /api/me/* with their account token and must
-// never see the founder's name, his businesses or the sample data the founder
-// cockpit falls back to. Everything that differs by audience asks this module.
+// never see the founder's name, the founder's businesses, or the sample data
+// the founder cockpit falls back to. Everything that differs by audience
+// asks this module.
 
 const CUSTOMER_KEY = "titan_customer";
 const PROFILE_KEY = "titan_customer_profile";
-// /join reads this one, so a subscriber moving between the two pages is not
+// /join reads this one, so a subscriber moving between the two pages isn't
 // asked for their password twice.
 const JOIN_KEY = "titan_account";
 
@@ -36,8 +37,8 @@ export function setCustomerToken(token: string | null, mirrorToJoin = true): voi
   safe(() => {
     if (token) {
       window.localStorage.setItem(CUSTOMER_KEY, token);
-      // The demo's token is not mirrored: a visitor who then signs up on
-      // /join must do it as themselves, not inside the demo account.
+      // The demo's token isn't mirrored: a visitor who then signs up on /join
+      // must do it as themselves, not inside the demo account.
       if (mirrorToJoin) window.sessionStorage.setItem(JOIN_KEY, token);
       else window.sessionStorage.removeItem(JOIN_KEY);
     } else {

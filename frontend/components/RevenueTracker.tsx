@@ -7,8 +7,8 @@ import type { RevenueEntry } from "@/lib/types";
 
 type Source = string;
 
-// The founder's income streams. A subscriber's business is not his, so
-// their ledger offers general sources instead.
+// The founder's income streams. A subscriber's ledger offers general sources
+// instead.
 const SOURCES: { id: Source; label: string }[] = [
   { id: "fiverr", label: "Fiverr" },
   { id: "career_mind", label: "Career Mind" },

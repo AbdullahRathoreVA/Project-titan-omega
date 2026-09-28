@@ -1,17 +1,15 @@
 "use client";
 
 /**
- * API Command Center — what Titan has catalogued vs what it can actually call.
+ * API Command Center: what Titan has catalogued vs what it can actually call.
  *
- * The distinction is the whole point of this screen. 1,675 providers are
- * catalogued; 4 capabilities are integrated. A dashboard that showed only the
- * big number would be the fabrication the rest of this product refuses, so
- * both numbers sit side by side and the smaller one is the honest headline.
+ * 1,675 providers are catalogued and a handful of capabilities are
+ * integrated. Both numbers are shown side by side, with the integrated count
+ * as the headline.
  *
- * Mobile first, because the earlier dashboard work established that this app
- * is operated from a phone: results are cards that stack, the catalogue is
- * server-side searched and capped (never 1,675 rows shipped to a handset),
- * and every control clears a 44px touch target.
+ * Mobile first: results are stacking cards, the catalogue is searched and
+ * capped server-side (never 1,675 rows sent to a phone), and every control is
+ * at least a 44px touch target.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -72,7 +70,7 @@ export default function ApiCommand() {
 
   return (
     <div className="space-y-4">
-      {/* The honest headline: catalogued is big, callable is small. */}
+      {/* Headline: catalogued is big, callable is small. */}
       <section className="panel p-3">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Catalogued" value={meta ? String(meta.catalogued) : "—"} tone="mut" />

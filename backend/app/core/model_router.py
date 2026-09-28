@@ -1,42 +1,33 @@
-"""Cost-aware model routing: the cheapest provider that still clears the bar.
+"""Cost-aware model routing: the cheapest provider that still meets the bar.
 
-`llm.complete()` is the one place every model call in Titan goes through — 25
-call sites, one function — so this is the one place routing has to live. Before
-this, `complete()` picked a provider chain from which API keys happened to be
-set, reordered it by measured health, and had no idea what the task was or what
-it cost. Extraction and a strategic decision got the same treatment.
+Every model call goes through `llm.complete()`, so routing lives there. The
+provider chain comes from which API keys are set and is ordered by measured
+health; this adds what the task is and what it costs.
 
-**What is measured and what is declared, kept apart deliberately:**
+Measured vs declared, kept apart:
 
   MEASURED  Per-provider success rate and latency, from `core/routing.py`.
             Published per-token prices, from `core/model_catalog.py` (which
             reads OpenRouter's live `/models`).
-  DECLARED  Which tier a provider is trusted for. Titan has no per-model
-            quality benchmark, so any "this model is smarter" ranking would be
-            an invention. It is therefore CONFIGURATION with a conservative
-            default, overridable per provider, and it says so on the tin.
+  DECLARED  Which tier a provider is trusted for. There's no per-model
+            quality benchmark, so this is configuration with a conservative
+            default, overridable per provider.
 
-Reading a declared policy as if it were a measurement is how a router starts
-lying, so `explain()` labels every factor with which of the two it is.
+`explain()` labels every factor as measured or declared.
 
-**Cost is estimated, never claimed as actual.** None of the five provider paths
-returns token usage through `llm.complete`, so Titan cannot know what a call
-actually cost. It can estimate from the prompt it sent and the published price.
-Every figure this module produces is therefore `estimated_cost_usd`, and
-`actual_cost_usd` is `None` with a stated reason. Reporting an estimate as an
-actual would be exactly the fabrication the rest of this codebase refuses.
+Cost is estimated, never reported as actual. None of the provider paths return
+token usage through `llm.complete`, so Titan can only estimate from the prompt
+and the published price. Every figure is `estimated_cost_usd`, and
+`actual_cost_usd` is None with a reason.
 
-**A missing price is not a free price.** A provider the catalogue does not know
-gets `None`, and `None` sorts LAST on cost rather than first. The `-1`
-"priced dynamically" sentinel already taught this repo that reading an unknown
-price as a number yields a negative cost; unknown has to stay unknown.
+A missing price isn't a free price. A provider the catalogue doesn't know gets
+None, which sorts last on cost, not first.
 
-**Routing never touches permission.** Choosing a provider is not choosing
-whether an action is allowed. Approval gates, tool permissions and tenant
-checks all live elsewhere and are unreachable from here — there is a test that
-parses this module's AST and fails on any attempt to reach them. A high-risk
-task is additionally floor-limited: it cannot be dropped to a provider trusted
-only for FAST work merely because that provider is cheaper.
+Routing never touches permissions. Choosing a provider isn't choosing whether
+an action is allowed; approval gates, tool permissions and tenant checks live
+elsewhere, and a test parses this module's AST to make sure it can't reach
+them. High-risk tasks also have a floor: they can't be moved to a provider
+trusted only for FAST work because it's cheaper.
 """
 
 from __future__ import annotations
@@ -50,26 +41,25 @@ from typing import Optional
 FAST, STANDARD, PREMIUM = "fast", "standard", "premium"
 TIER_ORDER = (FAST, STANDARD, PREMIUM)
 
-# DECLARED, not measured. The default reflects what each provider is configured
-# to run in this deployment, and is deliberately conservative: a provider is
-# trusted for the tier it can plausibly serve, and anything Abdullah disagrees
-# with is one env var away (TITAN_TIER_GROQ=premium, etc).
+# Declared, not measured. Conservative defaults: each provider is trusted for
+# the tier it can plausibly serve, and each can be overridden with an env var
+# (TITAN_TIER_GROQ=premium, etc).
 _DEFAULT_TIERS = {
     "claude": PREMIUM,
     "openai": PREMIUM,
     "groq": STANDARD,
     "gemini": STANDARD,
-    # OpenRouter's free catalogue rotates and is whatever is free today, so it
-    # is trusted for the cheap end only until something measures otherwise.
+    # OpenRouter's free catalogue is whatever is free today, so it's trusted for
+    # the cheap end only until something measures otherwise.
     "hermes": FAST,
 }
 
-# Rough, and honest about it: ~4 characters per token holds well enough for
-# English prose to size a call, and it is only ever used for an ESTIMATE.
+# Rough on purpose: ~4 characters per token is close enough for English prose,
+# and it's only used for estimates.
 _CHARS_PER_TOKEN = 4
 
 _lock = threading.RLock()
-# task -> provider -> counters. Everything here is counted, never sampled.
+# task -> provider -> counters. Everything is counted, never sampled.
 _stats: dict[str, dict[str, dict]] = {}
 _decisions: list[dict] = []
 MAX_DECISIONS = 200
@@ -79,8 +69,8 @@ MAX_DECISIONS = 200
 class Task:
     """The smallest metadata that changes a routing decision.
 
-    Deliberately four fields. Every extra field is one more thing a caller has
-    to get right, and none of the others would change what gets chosen.
+    Four fields: every extra one is something else a caller has to get right,
+    and none would change what gets chosen.
     """
     name: str                              # telemetry key, e.g. "voice_answer"
     tier: str = STANDARD
@@ -94,9 +84,9 @@ class Task:
         return self.tier
 
 
-# Named profiles, so a call site declares WHAT IT IS rather than repeating a
-# policy. Anything not listed here is STANDARD — which is the old behaviour
-# exactly, so an untagged call site is unchanged rather than degraded.
+# Named profiles, so a call site declares what it is instead of repeating a
+# policy. Anything not listed is STANDARD, which is the old behaviour, so an
+# untagged call site is unchanged.
 PROFILES: dict[str, "Task"] = {}
 
 
@@ -122,8 +112,8 @@ def _model_id(provider: str) -> Optional[str]:
         "claude": os.getenv("TITAN_MODEL", "claude-opus-4-8"),
         "groq": os.getenv("TITAN_GROQ_MODEL", "openai/gpt-oss-120b"),
         "openai": os.getenv("TITAN_OPENAI_MODEL", "gpt-4o-mini"),
-        # These two resolve a model at call time from a live catalogue, so
-        # there is no fixed id to price. Unknown, not guessed.
+        # These resolve a model at call time from a live catalogue, so there's no
+        # fixed id to price. Unknown, not guessed.
         "gemini": None,
         "hermes": None,
     }.get(provider, getattr(llm, "MODEL", None))
@@ -144,14 +134,14 @@ def estimated_cost(provider: str, prompt_chars: int,
             completion_tokens=int(max_tokens))
     except Exception:
         return None
-    # `measured` is the catalogue's own flag for "this is a real published
-    # price", and it is False for an unknown model, a missing price, or absent
-    # token counts. Trusting `usd` without it would read None as free.
+    # `measured` is the catalogue's flag for a real published price; it's False for
+    # an unknown model, a missing price, or no token counts. Using `usd` without it
+    # would read None as free.
     if not isinstance(out, dict) or not out.get("measured"):
         return None
     cost = out.get("usd")
-    # A negative cost means the catalogue handed back the "priced dynamically"
-    # sentinel and something read it as a price. Unknown, never negative.
+    # A negative cost means the "priced dynamically" sentinel was read as a price.
+    # Unknown, never negative.
     if not isinstance(cost, (int, float)) or cost < 0:
         return None
     return float(cost)
@@ -167,8 +157,8 @@ def _reliability(provider: str) -> Optional[float]:
     for row in rows:
         if row.get("provider") != provider:
             continue
-        # `routable` is routing.py's own "enough evidence to rank on" flag
-        # (calls >= MIN_CALLS). Below it there is no rate to claim.
+        # `routable` is routing.py's "enough evidence to rank on" flag
+        # (calls >= MIN_CALLS). Below it there's no rate to report.
         if not row.get("routable"):
             return None
         # routing.report() publishes success_rate as a PERCENTAGE (0-100).
@@ -190,8 +180,8 @@ def decide(task: Task, chain: list, *, prompt_chars: int = 0,
            max_tokens: int = 1500) -> dict:
     """Choose an order of providers to try. Deterministic and explainable.
 
-    Never calls a model to decide which model to call — that would cost more
-    than it saves. Everything here is a dict lookup and a sort.
+    Never asks a model which model to use - that would cost more than it
+    saves. Everything here is a dict lookup and a sort.
     """
     allowed = eligible(task, chain)
     dropped = [p for p in chain if p not in allowed]
@@ -207,10 +197,10 @@ def decide(task: Task, chain: list, *, prompt_chars: int = 0,
             "position": chain.index(provider),
         })
 
-    # The whole policy, in one comparison. FAST work is a cost decision, so
-    # price leads. Anything above FAST is a reliability decision first, because
-    # a cheap answer that fails costs a retry AND the original call. Unknown
-    # cost sorts last rather than first: it is not free, it is unmeasured.
+    # The whole policy in one comparison. FAST work is a cost decision, so price
+    # leads. Anything above FAST is a reliability decision first, because a cheap
+    # answer that fails costs a retry on top of the original call. Unknown cost
+    # sorts last: it isn't free, it's unmeasured.
     cost_first = task.floor() == FAST
 
     def key(r):
@@ -224,9 +214,9 @@ def decide(task: Task, chain: list, *, prompt_chars: int = 0,
 
     rows.sort(key=key)
 
-    # A task with a ceiling refuses providers estimated above it. An UNKNOWN
-    # estimate is not silently allowed through a cost ceiling — the caller
-    # asked for a guarantee this module cannot give.
+    # A task with a cost ceiling refuses providers estimated above it. An unknown
+    # estimate isn't let through either - the caller asked for a guarantee this
+    # can't give.
     over_budget = []
     if task.max_cost_usd is not None:
         keep = []
@@ -249,7 +239,7 @@ def decide(task: Task, chain: list, *, prompt_chars: int = 0,
         "dropped_below_tier": dropped,
         "dropped_over_budget": over_budget,
         "policy": "cost-first" if cost_first else "reliability-first",
-        # Stated every time so nobody reads an estimate as a bill.
+        # Stated every time so nobody mistakes an estimate for a bill.
         "estimated_cost_usd": rows[0]["estimated_cost_usd"] if rows else None,
         "actual_cost_usd": None,
         "actual_cost_note": (
@@ -326,12 +316,11 @@ def _summarise(row: dict) -> dict:
         "ok": row["ok"],
         "failed": row["failed"],
         "fallbacks": row["fallbacks"],
-        # None until something happened. A 0% success rate on zero calls is a
-        # claim about a provider nobody tried.
+        # None until something happened; a 0% success rate on zero calls says nothing.
         "success_rate": round(row["ok"] / calls, 3) if calls else None,
         "avg_latency_ms": round(row["latency_ms_total"] / calls, 1) if calls else None,
-        # Sums only the calls whose price was actually known, and says how many
-        # that was — otherwise an unpriced provider looks free.
+        # Sums only the calls whose price was known, and says how many that was, so an
+        # unpriced provider doesn't look free.
         "estimated_cost_usd": (round(row["estimated_cost_usd"], 6)
                                if row["priced_calls"] else None),
         "priced_calls": row["priced_calls"],
@@ -381,7 +370,7 @@ def economics() -> dict:
 
 
 def budget_status() -> dict:
-    """The configured ceiling, or an honest absence of one."""
+    """The configured ceiling, or None if there isn't one."""
     raw = os.getenv("TITAN_AI_DAILY_BUDGET_USD", "").strip()
     if not raw:
         return {"configured": False, "limit_usd": None,
@@ -404,12 +393,12 @@ def reset() -> None:
 
 
 # --- the declared profiles --------------------------------------------------
-# Tagged where the tier genuinely differs from STANDARD. A call site left
-# untagged is STANDARD by design, not by omission, and behaves as it always
-# has — which is why this could be rolled out without touching every caller.
+# Tagged only where the tier differs from STANDARD. An untagged call site is
+# STANDARD by design and behaves as before, so this could roll out without
+# touching every caller.
 
-# Cheap, frequent, structurally simple. This is where the money comes off the
-# bill: short transformations that a premium model adds nothing to.
+# Cheap, frequent, simple transformations where a premium model adds nothing.
+# This is where most of the savings come from.
 KEYWORDS = _profile("keywords", FAST)
 CAPTION = _profile("caption", FAST)
 FORMAT_REPORT = _profile("format_report", FAST)
@@ -417,17 +406,17 @@ FORMAT_ANSWER = _profile("format_answer", FAST)
 SCORE_LEADS = _profile("score_leads", FAST)
 REPURPOSE = _profile("repurpose", FAST)
 
-# Normal agent work. Explicit rather than defaulted, so the intent is readable.
+# Normal agent work. Explicit rather than defaulted, so the intent is clear.
 OUTREACH_DRAFT = _profile("outreach_draft", STANDARD)
 JOB_PROPOSAL = _profile("job_proposal", STANDARD)
 
-# Spoken to a client's own callers. The verification layer already refuses an
-# invented figure here; high_risk stops the ROUTER from ever serving it off the
-# cheap tier to save a fraction of a cent. A wrong closing time sends a
-# customer to a locked door.
+# Spoken to a client's own callers. The verification layer already rejects
+# invented figures here; high_risk stops the router from moving it to the cheap
+# tier to save a fraction of a cent. A wrong closing time sends a customer to a
+# locked door.
 VOICE_ANSWER = _profile("voice_answer", STANDARD, high_risk=True)
 
-# Abdullah's own business intelligence and the client-facing SEO report. Worth
-# the strongest model configured; both are read and acted on.
+# The founder's business intelligence and the client-facing SEO report. Both
+# get read and acted on, so they get the strongest configured model.
 EXECUTIVE = _profile("executive_command", PREMIUM)
 SEO_REPORT = _profile("seo_report", PREMIUM)

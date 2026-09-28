@@ -1,24 +1,13 @@
-"""How far through setup an account actually is, measured from real state.
+"""How far through setup an account is, detected from its actual data.
 
-The brief asks for a completion score and "a prioritised list of the next best
-actions". Both are easy to fake and the fake version is worse than nothing: a
-progress bar that moves because somebody clicked "skip" teaches a customer that
-the number means nothing.
+- A step is done because the thing it describes exists, not because a wizard
+  was clicked through.
+- A check that can't run returns None (unknown), not False.
+- Unknown steps are left out of the denominator, so an account isn't scored
+  down for a failure on our side.
 
-So every step here is **detected**, never remembered:
-
-* No step is marked done because a wizard was completed. It is marked done
-  because the thing it describes is present in the data.
-* A check that cannot run answers ``None`` — *unknown* — not ``False``. Those
-  are different: "we looked and it is not connected" and "we could not look"
-  lead to different next actions, and collapsing them into a red cross sends
-  people to fix something that may not be broken.
-* Unknown steps are excluded from the denominator. Scoring an account down for
-  a check that failed on Titan's side would be blaming the customer for our
-  outage.
-
-The score is therefore *completed / checkable*, and the payload says how many
-were unknown so the number can be read honestly.
+The score is completed / checkable, and the payload says how many steps
+were unknown.
 """
 
 from __future__ import annotations
@@ -27,8 +16,7 @@ import time
 from typing import Optional
 
 # (key, label, why it matters, optional)
-# `optional` steps are shown and are NOT counted in the score — an account can
-# be fully set up without them.
+# Optional steps are shown but not counted in the score.
 STEPS = (
     ("account", "Account created", "You are here.", False),
     ("business", "Business added",
@@ -56,9 +44,9 @@ def _done(done: bool, source: str) -> dict:
 def for_account(email: str) -> dict:
     """Detected setup state for one subscriber.
 
-    Reads through `analytics.accounts_snapshot()` so this and the customers
-    screen cannot disagree about which businesses an account really has — that
-    snapshot already drops stale client ids and seeded demo records.
+    Reads through analytics.accounts_snapshot() so this and the customers screen
+    agree on which businesses an account has (the snapshot already drops stale
+    client ids and demo records).
     """
     from . import analytics
 
@@ -86,8 +74,7 @@ def for_account(email: str) -> dict:
         bool(row.get("actions", {}).get(analytics.DOWNLOADED_REPORT)),
         "activity log")
 
-    # The one check that can genuinely fail on Titan's side, so it is the one
-    # that has to be able to say "unknown".
+    # The one check that can fail on our side, so it can return "unknown".
     try:
         from . import site_access
         connected = any(
@@ -114,8 +101,7 @@ def for_account(email: str) -> dict:
     return {
         "email": email,
         "steps": steps,
-        # completed / CHECKABLE. An unknown is not a failure, and counting it
-        # as one would score the customer down for our outage.
+        # completed / checkable - an unknown step isn't counted against the account.
         "score_pct": round(100.0 * done_n / checkable, 1) if checkable else None,
         "completed": done_n,
         "checkable": checkable,
@@ -130,8 +116,9 @@ def for_account(email: str) -> dict:
 
 
 def summary() -> dict:
-    """Across every account. Averages only over accounts that could be scored,
-    and says how many could not."""
+    """Across all accounts. Averages only over accounts that could be scored and
+    says how many couldn't.
+    """
     from . import analytics
     try:
         snap = analytics.accounts_snapshot()

@@ -1,28 +1,16 @@
-"""24/7 news watch, per client.
+"""Per-client news watch, on the heartbeat.
 
-Titan already fetched news, but only when somebody pressed a button in the
-Growth Studio. This watches continuously, per client, on the existing
-heartbeat — which is the difference between a feature and a service.
+Uses Google News RSS: no key, no quota, no cost. (GNews, Currents and
+MarketAux all need a key and cap the free tier; GNews is wired as an
+optional extra for sentiment tagging.)
 
-Deliberately built on Google News RSS, which the codebase already uses: no API
-key, no signup, no quota, no monthly bill. The public-apis catalogue lists
-GNews, Currents and MarketAux as alternatives, and all three want a key and cap
-the free tier. RSS costs nothing and covers the same ground, so a key-based
-provider would be a bill in exchange for nothing. GNews is wired as an optional
-upgrade for anyone who wants sentiment tagging, and its absence removes a
-capability rather than breaking anything.
+Three watches per client:
 
-Three watches per client, because they answer different questions:
-
-  brand       Is anyone talking about this business? Reputation, and the
-              single most time-critical thing an agency can catch.
+  brand       Is anyone talking about this business? The most time-critical.
   industry    What happened in their trade today that they could post about?
-  local       Industry news in their city, which is what actually converts for
-              a business that serves an area.
+  local       Industry news in their city - what converts for a local business.
 
-What this does NOT do is post anything. Abdullah's standing rule is that
-drafts queue for approval, because an auto-posted mistake or a platform ban
-ends the service a client is paying for. This produces angles; a human sends
+Nothing is posted. This produces post angles; a person approves and sends
 them.
 """
 
@@ -35,10 +23,10 @@ from typing import Optional
 from ..core import events
 from . import news
 
-# Three hours. News that is a day old is not an angle, and every client costs
-# three cheap RSS requests per cycle.
+# Every three hours: day-old news isn't worth posting about, and each client
+# costs three cheap RSS requests per cycle.
 INTERVAL = 3 * 3600
-# Per cycle, so a large portfolio does not stall the heartbeat.
+# Per cycle, so a large portfolio doesn't stall the heartbeat.
 MAX_CLIENTS_PER_CYCLE = 4
 MAX_STORED = 12
 
@@ -48,8 +36,9 @@ _cursor = 0
 
 
 def _queries(rec: dict) -> list:
-    """(kind, query) pairs. Empty fields are skipped rather than searched for
-    an empty string, which returns the whole world."""
+    """(kind, query) pairs. Empty fields are skipped - searching for an empty
+    string returns everything.
+    """
     name = (rec.get("business_name") or "").strip()
     industry = (rec.get("industry") or "").strip()
     city = (rec.get("city") or "").strip()
@@ -64,12 +53,10 @@ def _queries(rec: dict) -> list:
 
 
 def _angle(kind: str, title: str, business: str) -> str:
-    """Why this headline matters to THIS business, in one line.
+    """Why this headline matters to this business, in one line.
 
-    Deterministic on purpose. An LLM would write prettier angles, but this has
-    to keep working when no provider is configured, and a template that states
-    the reason plainly beats a generated sentence that might be wrong about a
-    client's own trade.
+    Template-based so it works without an LLM, and so it never gets the client's
+    own trade wrong.
     """
     if kind == "brand":
         return (f"Direct mention of {business}. Read it before the client does "
@@ -108,9 +95,9 @@ def check_client(client_id: str, rec: Optional[dict] = None) -> dict:
                     "angle": _angle(kind, title, business),
                 })
         except Exception:
-            continue          # one dead query must not lose the others
+            continue          # one failed query shouldn't lose the others
 
-    # Brand mentions first: they are the time-critical ones.
+    # Brand mentions first - they're the time-critical ones.
     order = {"brand": 0, "local": 1, "industry": 2}
     items.sort(key=lambda i: order.get(i["kind"], 9))
     items = items[:MAX_STORED]
@@ -129,7 +116,7 @@ def check_client(client_id: str, rec: Optional[dict] = None) -> dict:
 
 
 def cycle() -> int:
-    """Heartbeat entry point. Round-robins so every client is reached."""
+    """Heartbeat entry point. Round-robin, so every client gets reached."""
     global _cursor
     from ..core import clients
 
@@ -147,8 +134,8 @@ def cycle() -> int:
     if not due:
         return 0
 
-    # Round-robin rather than always starting at the top, or a portfolio larger
-    # than MAX_CLIENTS_PER_CYCLE would leave the tail permanently unchecked.
+    # Round-robin rather than always starting at the top, or clients past
+    # MAX_CLIENTS_PER_CYCLE would never be checked.
     _cursor = _cursor % len(due)
     batch = (due + due)[_cursor:_cursor + MAX_CLIENTS_PER_CYCLE]
     _cursor = (_cursor + len(batch)) % max(1, len(due))

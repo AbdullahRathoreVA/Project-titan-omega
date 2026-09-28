@@ -1,24 +1,19 @@
 "use client";
 
 /**
- * ExecutiveOperations — the operator's daily surface.
+ * ExecutiveOperations - the operator's daily screen.
  *
- * Four panels that existed only as API responses: what needs attention now,
- * what the business actually measures, what is connected, and a box that finds
- * a customer from anything you can remember about them.
+ * Four panels: what needs attention now, what the business actually measures,
+ * what's connected, and a box that finds a customer from anything you
+ * remember about them.
  *
- * Two rules, both inherited from the backend rather than invented here:
- *
- * 1. **A null is not a zero.** Every metric arrives as
- *    `{value, measured, reason}`. When `measured` is false the value is `null`
- *    and this renders the REASON, never a `0`. With no payment processor
- *    connected, "$0 MRR" reads as a business result and the truth is that
- *    nobody could pay.
- * 2. **Empty is not broken.** `lib/api.ts`'s `get()` swallows failures into a
- *    fallback, which is right for a dashboard tile and wrong here — a panel
- *    that renders "nothing to show" when the request 500'd is the same lie in
- *    the other direction. So these fetch through a local helper that keeps the
- *    error and says so.
+ * 1. A null isn't a zero. Every metric arrives as `{value, measured, reason}`.
+ *    When `measured` is false the value is `null` and this shows the reason,
+ *    never a `0` - with no payment processor connected, "$0 MRR" would read
+ *    as a business result.
+ * 2. Empty isn't broken. `lib/api.ts`'s `get()` turns failures into a
+ *    fallback, which suits a dashboard tile but not these panels, so they
+ *    fetch through a local helper that keeps the error and shows it.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -314,8 +309,7 @@ export default function ExecutiveOperations() {
               </p>
             )}
 
-            {/* The honest footnote. These are things the brief asks for that
-                Titan cannot know yet, listed rather than faked. */}
+            {/* Things Titan can't know yet, listed rather than faked. */}
             {notes.data.not_emitted.length > 0 && (
               <details className="mt-3">
                 <summary className="cursor-pointer text-[10.5px] text-slate-500">

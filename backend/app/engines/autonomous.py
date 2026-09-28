@@ -1,20 +1,19 @@
-"""Autonomous Growth Engine — real 24/7 research + a marketing "war room".
+"""Growth engine: live research, a marketing "war room" and an SEO co-pilot.
 
-Three honest capabilities, all degrade gracefully (never raise, never fake):
+- growth_cycle: web and news research for opportunities, competitors and SEO
+  keywords, summarised by the LLM. Runs on the heartbeat.
+- marketing_debate: marketing agents each pitch, a finance and a risk agent
+  critique, and a head picks or combines them into a plan.
+- seo_report: looks at who ranks for a keyword and returns a prioritised
+  action list. It never promises a #1 ranking.
 
-* ``growth_cycle`` — live web + news research for earning opportunities,
-  competitors, and SEO keywords, synthesised by the LLM. Runs on the heartbeat.
-* ``marketing_debate`` — a team of marketing agents each pitch, then a head
-  picks/combines and gives an executable plan. Real LLM multi-agent.
-* ``seo_report`` — analyses the live ranking landscape for a keyword and returns
-  a prioritised action list. Honest: it never promises a guaranteed #1.
+Without TAVILY_API_KEY the web search returns [] and the LLM brainstorms
+instead; without an LLM key the text says which key to set. Nothing here
+raises.
 
-With no ``TAVILY_API_KEY`` the web search returns [] and we fall back to an LLM
-brainstorm; with no LLM key the text falls back to a clear "set a key" note.
-
-From a subscriber's cockpit (/api/me) all three work on the subscriber's own
-businesses instead of the founder's (see engines/owner.py), and a debate is
-never pushed to the founder's Telegram.
+From a subscriber's cockpit (/api/me) all three work on the subscriber's
+businesses (engines/owner.py), and a debate is never sent to the founder's
+Telegram.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ def _empty() -> dict:
 
 
 def state(store: Store = STORE) -> dict:
-    """Latest research, or an empty shell so the dashboard always has shape."""
+    """Latest research, or an empty shell so the dashboard always has a shape."""
     return store.intel or _empty()
 
 
@@ -84,7 +83,7 @@ def _save_intel(store: Store, opp, comp, heads, summary, kw_raw, live, label) ->
 
 
 def growth_cycle(store: Store = STORE) -> dict:
-    """One full research pass. Safe to call repeatedly (heartbeat or on demand)."""
+    """One full research pass. Safe to call repeatedly."""
     businesses = owner.subscriber_businesses()
     if businesses is not None:
         return _subscriber_growth_cycle(businesses, store)
@@ -133,8 +132,9 @@ def growth_cycle(store: Store = STORE) -> dict:
 def _subscriber_growth_cycle(businesses: list, store: Store) -> dict:
     """The same research pass, about the subscriber's own market.
 
-    With no business on file there is nothing to research, so it says so and
-    spends none of their AI calls or the platform's search quota."""
+    With no business on file there's nothing to research, so it says so without
+    spending AI calls or search quota.
+    """
     if not businesses:
         intel = {**_empty(), "last_run": now().isoformat(), "summary": (
             "Add your business in the Clients tab first. The War Room "
@@ -177,7 +177,7 @@ def _subscriber_growth_cycle(businesses: list, store: Store) -> dict:
                        f"Growth research for {main.get('business_name') or 'your business'}")
 
 
-# --- marketing war room (debate -> decide -> execute) ----------------------
+# --- marketing war room (debate -> decide -> execute) -----------------------
 
 _TEAM = [
     ("Aisha — Brand Strategist", "bold brand-building, storytelling, long-term positioning"),
@@ -218,7 +218,7 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
 
     debate = "\n".join(f"{p['name']}: {p['proposal']}" for p in proposals)
 
-    # Council critiques: finance and risk challenge the pitches before the call.
+    # Finance and risk critique the pitches before the decision.
     critiques = []
     for name, role in (
         ("Yusuf — CFO", "evaluate the pitches for cost, cash-flow impact, and feasibility on a $0 budget"),
@@ -253,7 +253,7 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
     m = _re.search(r"CONFIDENCE[:\s]+(\d{1,3})", decision)
     confidence = max(0, min(100, int(m.group(1)))) if m else 70
 
-    # Decision history (persisted) — every council call is auditable later.
+    # Decision history, persisted so every call can be reviewed later.
     store.decisions.append({
         "goal": goal,
         "decision": decision,
@@ -274,8 +274,8 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
         "Marketing war room debated and locked this week's growth play.", "success",
     )
 
-    # Push the decision to Abdullah's phone for approval (no-op without
-    # Telegram). Never a subscriber's: their plan is theirs, not his to approve.
+    # Send the decision to the founder's phone for approval (no-op without
+    # Telegram). Never done for a subscriber's decision.
     if not subscriber:
         store.pending_decision = {"goal": goal, "decision": decision, "time": now().isoformat()}
         try:
@@ -302,7 +302,7 @@ def marketing_debate(topic: str = "", store: Store = STORE) -> dict:
 # --- SEO co-pilot ----------------------------------------------------------
 
 def seo_report(keyword: str = "", store: Store = STORE) -> dict:
-    """Analyse the live ranking landscape for a keyword + an action list to climb."""
+    """Who ranks for a keyword, plus an action list to climb."""
     businesses = owner.subscriber_businesses()
     if businesses is not None:
         main = businesses[0] if businesses else {}

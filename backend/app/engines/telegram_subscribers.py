@@ -1,14 +1,12 @@
-"""Telegram messages from subscribers, before the founder's handler sees them.
+"""Telegram messages from subscribers, handled before the founder's commands.
 
-Titan's bot answers two kinds of chat: the founder's, from his data, and a
-subscriber's linked chat, from their workspace (core/telegram_links.py). Both
-ways a message arrives - the Cloudflare relay (/api/telegram/handle) and
-direct polling (telegram_bot.poll_once, where Telegram is reachable) - call
-`handle` first, so a subscriber's chat can never fall through to the
-founder's handler and his data.
+The bot serves two kinds of chat: the founder's, answered from the founder's
+data, and a subscriber's linked chat, answered from their workspace
+(core/telegram_links.py). Both entry points - the Cloudflare relay
+(/api/telegram/handle) and direct polling (telegram_bot.poll_once) - call
+handle() first, so a subscriber's chat never reaches the founder's handler.
 
-Every answer here is deterministic: a chat cannot spend a subscriber's AI
-answers.
+Replies are deterministic, so chatting never spends a subscriber's AI calls.
 """
 
 from __future__ import annotations
@@ -29,13 +27,16 @@ HELP = (
 
 
 def handle(chat_id, text: str, sender: str = "") -> Optional[str]:
-    """The reply for a link attempt or a linked subscriber's chat, or None
-    when the message is not theirs and the founder's handler should run."""
+    """Reply to a link attempt or a linked subscriber's message.
+
+    Returns None when the chat isn't a subscriber's, so the founder's handler
+    runs instead.
+    """
     chat = str(chat_id)
     parts = (text or "").strip().split()
 
-    # "/start <code>" from the t.me link in their cockpit, or "/link <code>"
-    # typed by hand. Attempts are limited per chat, so codes cannot be guessed.
+    # "/start <code>" comes from the t.me link in their cockpit; "/link <code>" is
+    # the typed form. Attempts are rate limited per chat.
     if (len(parts) == 2 and parts[1].isdigit()
             and parts[0].lower().split("@")[0] in ("/start", "/link")):
         limited = ratelimit.check("login", f"telegram:{chat}")
@@ -59,7 +60,7 @@ def handle(chat_id, text: str, sender: str = "") -> Optional[str]:
 
 
 def _save() -> None:
-    """A link must survive a restart the moment it is made."""
+    """Save straight away so a new link survives a restart."""
     from .. import persistence
     persistence.save()
 
@@ -71,7 +72,7 @@ def _log(email: str, chat: str, sender: str, command: str, reply: str) -> None:
 
 
 def _answer(email: str, text: str) -> str:
-    """A linked subscriber's command, from their own workspace."""
+    """Answer a linked subscriber's command from their own workspace."""
     from ..core import billing, clients, crm, workspaces
     from ..store import founder_store
 

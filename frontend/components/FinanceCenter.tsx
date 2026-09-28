@@ -6,8 +6,8 @@ import { api } from "@/lib/api";
 import type { FinanceState, Performance } from "@/lib/types";
 import { money } from "@/lib/format";
 
-// Financial Center: real revenue (from the ledger) vs real expenses; profit and
-// an honest run-rate forecast (last 30 days projected forward — no fake curves).
+// Financial Center: revenue from the ledger vs recorded expenses, profit, and a
+// run-rate forecast (last 30 days projected forward).
 export function FinanceCenter() {
   const [state, setState] = useState<FinanceState | null>(null);
   const [perf, setPerf] = useState<Performance | null>(null);

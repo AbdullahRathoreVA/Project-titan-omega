@@ -1,11 +1,11 @@
-"""Financial Center + CRM-lite APIs.
+"""Financial Center and CRM-lite APIs.
 
-Finance: real expense ledger next to the real revenue ledger; profit is simply
-revenue - expenses, and the forecast is an honest run-rate projection from the
-last 30 days (labelled as such — no invented growth curves).
+Finance: an expense ledger next to the revenue ledger. Profit is revenue minus
+expenses, and the forecast is a plain run-rate projection from the last 30
+days, labelled as such.
 
-CRM-lite: a leads pipeline (new → contacted → replied → won/lost) so outreach
-from the lead-finder / Job Radar has somewhere real to live.
+CRM-lite: a leads pipeline (new -> contacted -> replied -> won/lost) so leads
+from the lead finder and Job Radar have somewhere to go.
 """
 
 from __future__ import annotations
@@ -22,22 +22,24 @@ router = APIRouter(prefix="/api")
 
 LEAD_STATUSES = ["new", "contacted", "replied", "won", "lost"]
 
-# The ordered progress path. "lost" is a terminal outcome, not a stage — a lead
-# can be lost from anywhere, so it never appears here.
+# The ordered progress path. "lost" is an outcome, not a stage - a lead can be
+# lost from anywhere, so it never appears here.
 LEAD_STAGES = ["new", "contacted", "replied", "won"]
 
 
 def _owner() -> str:
     """Whose pipeline this request works on: the subscriber served through
-    /api/me, or the founder. Always from the session, never from the body."""
+    /api/me, or the founder. Always from the session, never from the body.
+    """
     from ..core import cockpit_scope, crm
     return cockpit_scope.customer_email() or crm.FOUNDER
 
 
 def _leads() -> dict:
-    """The one owner-tagged leads table. Customers' leads have always lived
-    here (see /api/account/leads), so a subscriber's cockpit reads it too -
-    filtered to their own - rather than the copy in their workspace."""
+    """The one owner-tagged leads table. Customers' leads already live here (see
+    /api/account/leads), so a subscriber's cockpit reads it too, filtered to
+    their own, rather than a copy in their workspace.
+    """
     from ..store import founder_store
     return founder_store().leads
 
@@ -45,10 +47,9 @@ def _leads() -> dict:
 def _stage_reached(lead: dict) -> int:
     """Furthest stage index this lead ever reached.
 
-    Stored on the lead from now on. Derived for leads created before the field
-    existed: their current status is the best evidence available. A legacy lead
-    already marked 'lost' genuinely cannot be placed — nothing recorded how far
-    it got — so it counts only at 'new' rather than inventing a stage for it.
+    Stored on the lead now; for older leads it's derived from the current
+    status. An older lead already marked 'lost' can't be placed (nothing
+    recorded how far it got), so it only counts at 'new'.
     """
     stored = lead.get("stage_reached")
     if isinstance(stored, int):
@@ -60,9 +61,9 @@ def _stage_reached(lead: dict) -> int:
 def _funnel(items: list) -> dict:
     """How many leads ever reached each stage, newest stage last.
 
-    Deliberately NOT built from `counts`: counts say where leads are sitting
-    right now, so a lead that reached 'won' has already left 'contacted' and a
-    counts-based chart shows conversion increasing down the funnel.
+    Not built from `counts`: counts say where leads are right now, so a lead
+    that reached 'won' has already left 'contacted', and a counts-based chart
+    would show conversion increasing down the funnel.
     """
     top = len(items)
     rows = []
@@ -111,7 +112,7 @@ def finance_state() -> dict:
         "profit": revenue_total - expenses_total,
         "revenue_30d": rev_30,
         "expenses_30d": exp_30,
-        # Honest run-rate: last-30-days pace projected forward one month.
+        # Run-rate: last-30-days pace projected one month forward.
         "forecast_monthly_revenue": rev_30,
         "forecast_monthly_profit": rev_30 - exp_30,
         "expenses": list(reversed(STORE.expenses))[:100],
@@ -155,13 +156,11 @@ def delete_expense(expense_id: str) -> dict:
 
 @router.get("/leads", tags=["crm"])
 def list_leads() -> dict:
-    """The FOUNDER's pipeline.
+    """The founder's pipeline.
 
-    Filtered through crm.visible_to() like every other read, rather than
-    listing the table. Leads are no longer one flat set: customers own theirs
-    now, and a founder screen that read the table directly would show a
-    paying customer's prospects to Abdullah — the same leak in the other
-    direction, and just as much of a breach.
+    Filtered through crm.visible_to() like every other read. Customers own
+    their leads, so reading the table directly would show a paying customer's
+    prospects on the founder screen.
     """
     from ..core import crm
     items = sorted(crm.visible_to(_leads(), _owner()),
@@ -201,15 +200,15 @@ def set_lead_status(lead_id: str, req: LeadStatus) -> dict:
     try:
         lead = crm.require_owned(_leads(), lead_id, _owner())
     except crm.NotYours:
-        # The same 404 whether it does not exist or belongs to a customer.
-        # Two different answers enumerate other people's records.
+        # Same 404 whether it doesn't exist or belongs to a customer; two different
+        # answers would reveal other people's records.
         raise HTTPException(status_code=404, detail="Lead not found")
     status = req.status.lower()
     if status not in LEAD_STATUSES:
         raise HTTPException(status_code=400, detail=f"Status must be one of {LEAD_STATUSES}")
-    # Record the high-water mark BEFORE overwriting status, and never lower it:
-    # marking a lead lost must not erase how far it got, and correcting a
-    # mis-click (won → contacted) must not un-count stages it genuinely reached.
+    # Record the high-water mark before overwriting status, and never lower it:
+    # marking a lead lost mustn't erase how far it got, and correcting a mis-click
+    # (won -> contacted) mustn't un-count stages it really reached.
     if status in LEAD_STAGES:
         lead["stage_reached"] = max(_stage_reached(lead), LEAD_STAGES.index(status))
     else:
@@ -225,9 +224,8 @@ def set_lead_status(lead_id: str, req: LeadStatus) -> dict:
 class LeadDiscover(BaseModel):
     query: str = Field(..., min_length=3)
     limit: int = Field(default=6, ge=1, le=15)
-    # Auditing a prospect's site is a real HTTP crawl of someone else's server.
-    # Off by default, and hard-capped below, because firing fifteen at once is
-    # both slow and rude.
+    # Auditing a prospect's site is a real crawl of someone else's server, so it's
+    # hard-capped below - fifteen at once would be slow and rude.
     research: bool = Field(default=True)
     research_limit: int = Field(default=3, ge=0, le=6)
     lang: str = Field(default="en")
@@ -237,25 +235,20 @@ class LeadDiscover(BaseModel):
 def discover_leads(req: LeadDiscover, request: Request) -> dict:
     """Find real businesses, file them as leads, and prepare the approach.
 
-    The whole pipeline in one call: search → drop directories and duplicates →
-    create CRM records → audit the first few sites → draft outreach citing what
-    was actually found. Nothing is sent to anyone.
+    The whole pipeline in one call: search -> drop directories and duplicates
+    -> create CRM records -> audit the first few sites -> draft outreach citing
+    what was found. Nothing is sent to anyone.
     """
     from ..core import crm, ratelimit
     from ..engines import outreach, prospecting
 
-    # LIMITS declared a "discover" bucket, with "lead discovery burns Tavily
-    # quota" written next to it, and nothing ever called it. Founder-only, so
-    # the exposure was a compromised token rather than the open internet — but
-    # an unmetered call that spends a third party's quota is unmetered either
-    # way. Keyed on the caller.
+    # Lead discovery spends Tavily quota, so it's rate-limited per caller.
     verdict = ratelimit.check("discover", _owner() or ratelimit.identity_for(request))
     if not verdict["allowed"]:
         raise HTTPException(status_code=429, detail=verdict)
 
-    # Never re-file a business already in the pipeline. Scoped to the caller's
-    # own, because reading every customer's leads to decide what one has
-    # already seen would let one pipeline suppress a lead from another.
+    # Don't re-file a business already in the pipeline. Scoped to the caller's own
+    # leads, so one pipeline can't suppress a lead in another.
     known = set()
     for lead in crm.visible_to(_leads(), _owner()):
         site = outreach.find_website(lead)
@@ -278,8 +271,8 @@ def discover_leads(req: LeadDiscover, request: Request) -> dict:
         _leads()[lead["id"]] = lead
         created.append(lead)
 
-    # Audit the first few and draft from the findings. Bounded deliberately:
-    # each one crawls a stranger's website.
+    # Audit the first few and draft from the findings. Bounded, since each one
+    # crawls someone's website.
     researched = 0
     if req.research:
         for lead in created[:req.research_limit]:
@@ -311,13 +304,11 @@ class LeadResearch(BaseModel):
 def research_lead(lead_id: str, req: LeadResearch | None = None) -> dict:
     """Audit this lead's own website, then draft outreach from what was found.
 
-    This is the pitch Titan can make that a generic outreach tool cannot: it
-    had to crawl the site to say anything, so every claim is checkable. If
-    there is no website, or the site cannot be read, it says so and writes
-    nothing — outreach citing a problem the recipient does not have loses the
-    deal on the first reply.
+    Every claim comes from crawling the site, so it can be checked. With no
+    website, or one that can't be read, it says so and writes nothing -
+    outreach citing a problem the recipient doesn't have loses the deal.
 
-    Returns a DRAFT. Nothing is sent to anyone.
+    Returns a draft. Nothing is sent to anyone.
     """
     from ..core import crm
     from ..engines import outreach
@@ -331,7 +322,7 @@ def research_lead(lead_id: str, req: LeadResearch | None = None) -> dict:
     res = outreach.research(lead)
     msg = outreach.draft(lead, res, lang)
 
-    # File it on the lead so the research is not lost when the tab closes.
+    # Store it on the lead so the research isn't lost when the tab closes.
     lead["research"] = res
     lead["draft"] = msg
     lead["updated_at"] = now().isoformat()

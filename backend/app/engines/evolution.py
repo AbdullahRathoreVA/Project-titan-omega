@@ -1,12 +1,9 @@
-"""Self-Evolution Engine.
+"""Tunes opportunity scoring from real outcomes.
 
-Closes the feedback loop: when an execution completes successfully or is
-reverted/failed, this engine nudges the opportunity scoring weights so future
-scores reflect real-world results rather than hand-tuned priors.
-
-Weights live in ``STORE.metrics`` under ``weight_*`` keys so the dashboard and
-Opportunity Engine can read them without import cycles. All adjustments are
-small and bounded to keep scoring stable over time.
+When an execution succeeds, fails or is reverted, the scoring weights are
+nudged so future scores reflect results rather than hand-set priors. Weights
+live in STORE.metrics under weight_* keys (no import cycles with the
+opportunity engine). Each adjustment is small and bounded.
 """
 
 from __future__ import annotations
@@ -15,21 +12,21 @@ from typing import Optional
 
 from ..store import STORE, Store
 
-# Keys used in STORE.metrics — match the penalty terms in opportunity.score().
+# Keys in STORE.metrics; they match the penalty terms in opportunity.score().
 _W_DIFFICULTY = "weight_difficulty"
 _W_RISK       = "weight_risk"
 _W_TIME       = "weight_time"
 
-# Priors — must match the hard-coded defaults in opportunity.score().
+# Priors; must match the defaults in opportunity.score().
 _DEFAULTS = {
     _W_DIFFICULTY: 0.35,
     _W_RISK:       0.25,
     _W_TIME:       0.15,
 }
 
-_STEP = 0.005   # max nudge per event — keeps weights stable
-_MIN  = 0.05    # floor — penalties never vanish
-_MAX  = 0.60    # ceiling — penalties never dominate
+_STEP = 0.005   # max nudge per event
+_MIN  = 0.05    # floor: a penalty never disappears
+_MAX  = 0.60    # ceiling: a penalty never dominates
 
 
 def ensure_weights(store: Store = STORE) -> None:
@@ -43,10 +40,10 @@ def record_outcome(
     success: bool,
     store: Store = STORE,
 ) -> None:
-    """Adjust scoring weights based on a real execution outcome.
+    """Adjust scoring weights after a real execution outcome.
 
-    success=True  → we were overly cautious; nudge dominant penalty down.
-    success=False → the risk/difficulty was real; nudge dominant penalty up.
+    success=True  -> we were too cautious; nudge the dominant penalty down.
+    success=False -> the risk or difficulty was real; nudge it up.
     """
     ensure_weights(store)
     opp = store.opportunities.get(opportunity_id)

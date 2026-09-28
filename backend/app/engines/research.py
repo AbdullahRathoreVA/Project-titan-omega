@@ -1,8 +1,7 @@
-"""Live web research via Tavily (free tier: ~1,000 searches/month).
+"""Live web search via Tavily (free tier is about 1,000 searches a month).
 
-Powers real lead-finding and market intelligence. Set ``TAVILY_API_KEY`` (free
-at tavily.com) to enable. With no key it returns [] and callers fall back to an
-LLM brainstorm, so the app never breaks.
+Used for lead finding and market research. Needs TAVILY_API_KEY; without it
+search() returns [] and callers fall back to an LLM brainstorm.
 """
 
 from __future__ import annotations

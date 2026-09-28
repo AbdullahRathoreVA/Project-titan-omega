@@ -1,27 +1,22 @@
-"""Server-rendered landing pages, built from data Titan already relies on.
+"""Server-rendered landing pages, built from the data the audit engine uses.
 
-Titan scores 100/100 on its own technical audit and ranks for essentially
-nothing, because a perfect score on four pages is a perfect score on four
-pages. Search needs something to match a query against.
+A perfect score on four pages still ranks for almost nothing; search needs
+content to match queries against. These pages are generated, but not thin:
+every fact on them (statute, fine range, Abmahnung exposure, schema type,
+ranking signals) comes from the same data the audit uses. The Impressum page
+for Germany cites §5 DDG and the real penalty range because that's what
+`compliance.JURISDICTIONS['DE']` contains, so the audit and the pages change
+together.
 
-The pages here are generated, but they are **not** thin. Every fact on them —
-the statute, the fine range, the Abmahnung exposure, the schema type, the
-ranking signals — is the same data the audit engine uses to charge clients. A
-page about Impressum requirements in Germany cites §5 DDG and the real penalty
-range because that is what `compliance.JURISDICTIONS['DE']` actually contains.
-If the law changes, the audit and the landing page change together; they cannot
-drift, because there is one source.
+Two limits to avoid thin content:
 
-Two deliberate limits, both to stay on the right side of thin-content:
-
-* **Only two page families**, one per jurisdiction and one per vertical — 25
-  pages, not the 144 that 16 × 9 would produce. A restaurant-in-Austria page
-  and a bakery-in-Austria page would repeat the same statute with a different
-  noun, which is exactly the pattern Titan's own audit flags on client sites.
-  Selling an SEO product while spamming an index would be indefensible.
-* **Server-rendered HTML**, like /pricing. The dashboard is a client-rendered
-  SPA, so a crawler sees an empty shell — Titan's own audit caught that on the
-  homepage. These pages must be readable with JavaScript disabled.
+* Only two page families, one per jurisdiction and one per vertical: 25
+  pages, not the 144 that 16 x 9 would give. A restaurant-in-Austria page and
+  a bakery-in-Austria page would repeat the same statute with a different
+  noun, which is exactly what Titan's audit flags on client sites.
+* Server-rendered HTML, like /pricing. The dashboard is a client-rendered SPA,
+  so a crawler sees an empty shell; these pages must read fine with
+  JavaScript disabled.
 """
 
 from __future__ import annotations
@@ -72,9 +67,8 @@ def _e(s) -> str:
     return _html.escape(str(s or ""))
 
 
-# The audit's own limit. A title outside this range is a finding Titan raises
-# against paying clients, so shipping one on its own pages is indefensible —
-# and it is exactly what /compliance/{code} did at 70 characters.
+# The audit's own title limit. Titan flags longer titles on client sites, so
+# its own pages must stay under it too.
 TITLE_MAX = 65
 TITLE_MIN = 15
 
@@ -82,14 +76,12 @@ TITLE_MIN = 15
 def _fit_title(base: str, suffixes: tuple[str, ...]) -> str:
     """The longest suffix that still fits inside the audit's own limit.
 
-    Truncating mid-word would produce a title Titan would flag, so the
-    alternatives are written out and the best one that fits is used.
+    Truncating mid-word would produce a title Titan would flag, so the options
+    are written out and the best one that fits is used.
 
-    **Measured on the ESCAPED string**, because that is what the audit reads.
-    An "&" is one character here and five (`&amp;`) in the HTML the crawler
-    parses, which is how "…Switzerland — Impressum & GDPR rules" measured 64
-    in Python and 68 to Titan's own engine. Written suffixes therefore avoid
-    ampersands, and the check no longer trusts the unescaped length.
+    Measured on the escaped string, because that's what the audit reads: "&"
+    is one character here but five (`&amp;`) in the HTML. Suffixes avoid
+    ampersands for that reason.
     """
     for suffix in suffixes:
         if len(_e(base + suffix)) <= TITLE_MAX:
@@ -99,26 +91,15 @@ def _fit_title(base: str, suffixes: tuple[str, ...]) -> str:
 
 def _schema_graph(title: str, desc: str, canonical: str,
                   breadcrumb: list[tuple[str, str]]) -> str:
-    """JSON-LD for a landing page. One source of truth with the product schema.
-
-    Titan's audit tells clients that only ~17% of sites publish schema and that
-    it is how AI answer engines decide what to quote. These 25 pages published
-    none and scored 60-70/C against Titan's own engine — the single loudest
-    "physician, heal thyself" left in the product.
+    """JSON-LD for a landing page, sharing its source with the product schema.
 
     The SoftwareApplication and Organization nodes come from
-    `self_seo.structured_data()` rather than being written again here, so the
-    marked-up price can never drift from the price actually charged. The
-    `Article` node describes this page.
+    `self_seo.structured_data()`, so the marked-up price can't drift from the
+    price actually charged. The `Article` node describes this page.
 
-    **No datePublished or dateModified.** Google's Article guidance asks for
-    them and every SEO checklist says to add them, but these pages are rendered
-    from live data and nothing records when their content last changed. A
-    plausible date would be a fabricated fact published as structured data,
-    which is the one thing this codebase does not do. Omitted rather than
-    invented.
-
-    **No aggregateRating.** There are no reviews.
+    No datePublished or dateModified: these pages render from live data and
+    nothing records when their content last changed, so any date would be made
+    up. No aggregateRating either - there are no reviews.
     """
     import json
 
@@ -129,8 +110,8 @@ def _schema_graph(title: str, desc: str, canonical: str,
         graph.extend(n for n in product.get("@graph", [])
                      if isinstance(n, dict))
     except Exception:
-        # A landing page must still render if the plan table is unavailable.
-        # Fewer nodes is a smaller claim, not a false one.
+        # A landing page must still render if the plan table is unavailable. Fewer
+        # nodes is a smaller claim, not a false one.
         pass
 
     graph.append({
@@ -155,21 +136,19 @@ def _schema_graph(title: str, desc: str, canonical: str,
     })
     blob = json.dumps({"@context": "https://schema.org", "@graph": graph},
                       ensure_ascii=False, indent=1)
-    # The page is server-rendered and every value is either escaped text or a
-    # value Titan generated, but "</script" inside a JSON string would still
-    # end the block early. Escaping the slash is the standard defence and stays
-    # valid JSON.
+    # Every value is escaped text or generated by Titan, but "</script" inside a
+    # JSON string would still end the block early. Escaping the slash is the
+    # standard fix and stays valid JSON.
     return ('<script type="application/ld+json">'
             + blob.replace("</", "<\\/") + "</script>")
 
 
 def _contact_block() -> str:
-    """Titan's own phone and postal address, when it has any to publish.
+    """Titan's own phone and postal address, when there are any to publish.
 
-    This is the last failing check on all 25 of these pages and the only thing
-    holding them at 89/B. It is empty until `TITAN_PHONE` and the four address
-    variables are set — see `core/contact.py` for why a partial address is
-    published as nothing rather than as something."""
+    Empty until `TITAN_PHONE` and the four address variables are set; see
+    `core/contact.py` for why a partial address isn't published.
+    """
     from ..core import contact
     return contact.html_block()
 
@@ -220,9 +199,7 @@ def compliance_page(code: str) -> str | None:
         return None
     name = j["name"]
     canonical = f"{SITE}/compliance/{code.lower()}"
-    # Was "…— what regulators actually require": 70 characters for Germany,
-    # which Titan's own audit fails as a critical finding. Measured at 60/C on
-    # the live page before this.
+    # Kept short enough to pass the audit's title-length check.
     title = _fit_title(f"Website legal compliance in {name}", (
         " — Impressum, GDPR and cookie rules",
         " — Impressum and GDPR rules",

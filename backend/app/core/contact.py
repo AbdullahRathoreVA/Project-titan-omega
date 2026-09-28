@@ -1,29 +1,24 @@
-"""Titan's own published contact details — the single place they come from.
+"""Titan's own published contact details, all from one place.
 
-The 25 landing pages cap at **89/B** on Titan's own audit for exactly one
-reason: no phone number and no postal address. That check fails HONESTLY. The
-pages carry no contact block because there were no details to carry, and a
-plausible-looking one would be the precise failure the rest of this codebase
-exists to prevent — Titan sells the finding that a missing Impressum is worth
-a fine, so a fabricated address on its own site is not a cosmetic lie.
+Titan's landing pages lose points on its own audit for having no phone number
+or postal address. That's correct: there were no details to publish, and a
+made-up address would be exactly what Titan warns clients about (a missing
+Impressum can mean a fine).
 
-So: everything here is read from the environment, and **nothing is published
-unless it is complete.**
+So everything comes from the environment, and nothing is published unless
+it's complete. A partial address isn't published at all:
 
-A partial address is not published at all. That is deliberate and it is not
-pedantry:
+  - `client_seo._has_address` needs a postcode next to a place name
+    ("52200 Sialkot") or a street number next to a street word. A bare
+    postcode matches neither, so it would leave the check failing while
+    looking addressed.
+  - §5 DDG and similar Impressum rules need a postal address a letter can
+    reach. A postcode alone isn't one.
 
-  - Titan's own `client_seo._has_address` needs a postcode standing next to a
-    place name ("52200 Sialkot") or a street number next to a street word.
-    A bare postcode matches neither, so publishing one would leave the check
-    failing while making the page *look* like it had been addressed.
-  - §5 DDG and every equivalent Impressum rule require a postal address a
-    letter can actually reach. A postcode alone is not one.
+The phone is independent of the address; they cover different parts of the
+NAP check.
 
-The phone is independent of the address — one can publish without the other,
-because they satisfy different halves of the NAP check.
-
-Set, all of them, to publish an address:
+Set all of these to publish an address:
 
     TITAN_PHONE       e.g. +92 321 8811027
     TITAN_STREET      street and building number
@@ -31,8 +26,8 @@ Set, all of them, to publish an address:
     TITAN_POSTCODE    postal code
     TITAN_COUNTRY     country name
 
-`status()` names exactly which of those are missing, so the dashboard can say
-what is absent rather than reporting a silent zero.
+`status()` names the ones that are missing, so the dashboard can say what's
+absent.
 """
 
 from __future__ import annotations
@@ -55,15 +50,15 @@ def _env(key: str) -> str:
 def phone() -> Optional[str]:
     """The published number, exactly as supplied. None when unset.
 
-    Deliberately not reformatted. Turning "03218811027" into "+92 321 8811027"
-    means asserting the country, and a wrong country code on a published
-    number is a number that does not ring.
+    Not reformatted: turning "03218811027" into "+92 321 8811027" means
+    assuming the country, and a wrong country code is a number that doesn't
+    ring.
     """
     return _env("TITAN_PHONE") or None
 
 
 def address() -> Optional[dict]:
-    """The published postal address, or None unless EVERY part is present."""
+    """The published postal address, or None unless every part is present."""
     parts = {name: _env(key) for key, name in _ADDRESS_FIELDS}
     if not all(parts.values()):
         return None
@@ -79,13 +74,12 @@ def missing() -> list:
 
 
 def status() -> dict:
-    """What is actually published, and what is not. Never guesses."""
+    """What's published and what isn't. Never guesses."""
     p, a = phone(), address()
     notes = []
     if p and not p.lstrip().startswith("+"):
-        # Not an error and not corrected here — a local-format number is
-        # correct for local callers and unusable for everyone else, and only
-        # Abdullah can say which audience the published number is for.
+        # Not an error and not corrected here: a local-format number works for local
+        # callers only, and only the founder knows which audience it's for.
         notes.append("The number has no country code, so it is dialable only "
                      "from inside its own country.")
     if not a and any(_env(k) for k, _ in _ADDRESS_FIELDS):
@@ -120,13 +114,12 @@ def schema_fragment() -> dict:
 
 
 def html_block() -> str:
-    """A visible contact block, or "" when there is nothing to publish.
+    """A visible contact block, or "" when there's nothing to publish.
 
-    Visible text on purpose. `client_seo._visible_text` strips script, style,
-    comments and attributes before looking for a phone or an address, which is
-    what closed the false pass where a Cloudflare beacon URL counted as a phone
-    number. Contact details that exist only in JSON-LD would not be seen by
-    Titan's own check — nor by a human.
+    Visible text on purpose. `client_seo._visible_text` strips scripts,
+    styles, comments and attributes before looking for a phone or address, so
+    details that only exist in JSON-LD wouldn't be found by Titan's own check,
+    or by a person.
     """
     import html as _html
 
@@ -142,11 +135,9 @@ def html_block() -> str:
         rows.append(_html.escape(
             f'{a["street"]}, {a["postcode"]} {a["locality"]}, {a["country"]}'))
 
-    # The <address> ELEMENT is emitted only when there is a postal address in
-    # it. `client_seo._has_address` returns True for any `<address\b` it finds,
-    # so wrapping a phone-only block in one would make Titan's own audit report
-    # a postal address on a page that has none. That is Titan gaming its own
-    # check, and it is the same shape as the Cloudflare-beacon false pass that
-    # had it reporting a phone number for every site behind Cloudflare.
+    # The <address> element is only used when there's a postal address in it.
+    # `client_seo._has_address` returns True for any `<address\b`, so wrapping a
+    # phone-only block in one would make Titan's own audit report a postal
+    # address that isn't there.
     tag = "address" if a else "p"
     return f"<{tag}>" + " · ".join(rows) + f"</{tag}>"

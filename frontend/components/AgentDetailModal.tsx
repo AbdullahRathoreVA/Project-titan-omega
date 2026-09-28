@@ -31,7 +31,7 @@ type ChatTurn = { role: "you" | "agent"; text: string };
 
 export function AgentDetailModal({ agent, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  // Portal target only exists in the browser — guard for the static export build.
+  // The portal target only exists in the browser - guard for the static export.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 

@@ -1,9 +1,9 @@
-// Static fallback data so the command center renders without a live core.
+// Static fallback data so the command center renders without a live backend.
 // Shapes match lib/types.ts exactly.
 //
-// IMPORTANT: all financial figures are ZERO. This is a real startup — the
-// dashboard must never display fake earnings. When the live core is reachable
-// these are replaced by real numbers; offline, the truth (zero) is shown.
+// All financial figures are zero: offline, the dashboard shows zero rather
+// than made-up earnings. With the backend reachable these are replaced by
+// real numbers.
 
 import type {
   AgentView,
@@ -70,8 +70,8 @@ const agents: AgentView[] = DIVS.map(({ d, head }) => ({
   last_active: nowIso(),
 }));
 
-// Opportunities are PROJECTIONS (not earned money) — kept as suggestions but
-// with modest, honest estimates so nothing looks like real revenue.
+// Opportunities are projections, not earned money - kept as suggestions with
+// modest estimates so nothing looks like real revenue.
 const opportunities: Opportunity[] = [
   {
     id: "opp-1", title: "Promote your Fiverr AI gig in student communities",

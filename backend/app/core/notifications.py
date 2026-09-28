@@ -1,28 +1,15 @@
-"""Things that are actually true right now and worth acting on.
+"""Notifications derived from current state.
 
-The brief lists the notifications it wants: trial ending, integration failed,
-payment failed, audit completed, security warning, onboarding incomplete. Every
-one of those is easy to emit and most of them are, today, unknowable — Titan
-has no customers, no processor and no per-account trial state. Emitting them
-anyway would produce a notification centre full of things that never happened,
-which is the fastest way to teach somebody to ignore it.
+Each notification is a condition checked at read time and carries the source
+that produced it. Nothing is stored or queued, so a notification disappears
+as soon as its condition is fixed.
 
-So this derives notifications from state that is **checked at read time**, and
-each one carries the source that produced it. There is no notification table
-and nothing is queued: a notification here is a *current condition*, so it
-disappears when the condition does rather than sitting unread describing
-something that has since been fixed.
+Not emitted yet, because the data doesn't exist:
 
-**What is deliberately NOT emitted, and why:**
+- Trial ending: billing has no per-account trial end date to count down to.
+- Payment failed: needs payment history from the processor.
 
-* *Trial ending* — `billing` has no per-account ``trial_ends_at``. There is
-  nothing to count down. Emitting a guess from signup date plus the plan's
-  trial length would notify people about a deadline that does not exist.
-* *Payment failed* — no processor is connected, so no payment has ever been
-  attempted, so none has failed.
-
-Both reappear on their own the moment the underlying data exists, because they
-are computed rather than stored. That is the point of doing it this way.
+Both can be added here once that data exists.
 """
 
 from __future__ import annotations
@@ -42,7 +29,7 @@ def _note(key, severity, title, detail, source, action="") -> dict:
 
 
 def current() -> dict:
-    """Every condition that is true right now, worst first."""
+    """Every condition that's true right now, worst first."""
     out: list[dict] = []
     checked: list[str] = []
     failed: list[dict] = []
@@ -98,7 +85,7 @@ def current() -> dict:
     except Exception as exc:                                   # noqa: BLE001
         failed.append({"check": "identity", "error": str(exc)[:120]})
 
-    # --- integrations that are unhealthy rather than merely optional ------
+    # --- integrations that are unhealthy, not just optional ---------------
     try:
         from . import integrations
         for row in integrations.all_integrations():
@@ -123,10 +110,7 @@ def current() -> dict:
     # --- work that failed -------------------------------------------------
     try:
         from . import queue
-        # NOTE: the counts are nested under "counts", not top level. Reading
-        # stats.get("failed") returns None, which is falsy, so this
-        # notification would never have fired and the absence would have
-        # looked exactly like "no jobs failed".
+        # The counts are nested under "counts", not at the top level.
         counts = queue.stats().get("counts", {})
         failed_jobs = int(counts.get(queue.FAILED) or 0)
         dead_jobs = int(counts.get(queue.DEAD) or 0)
@@ -167,7 +151,7 @@ def current() -> dict:
             INFO: sum(1 for n in out if n["severity"] == INFO),
         },
         "checked": checked,
-        # A check that could not run is NOT an absence of a problem.
+        # A check that couldn't run is not the same as no problem.
         "checks_failed": failed,
         "not_emitted": [
             {"key": "trial_ending",

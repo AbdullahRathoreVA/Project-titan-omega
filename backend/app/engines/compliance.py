@@ -1,27 +1,22 @@
-"""Jurisdiction-aware website compliance — the check nobody else runs.
+"""Jurisdiction-aware website compliance checks.
 
-Clients are worldwide, and the first one is a restaurant in Germany. That single
-fact changes what a "website audit" has to mean, because in Germany a missing
-Impressum is not an SEO weakness — it is a legal liability:
+For a German business a missing Impressum is a legal liability, not an SEO
+weakness:
 
-  - The Impressum duty now sits in §5 Digitale-Dienste-Gesetz (DDG), which
-    replaced the Telemediengesetz (TMG) in May 2024. Most checklists online are
-    still out of date and cite TMG.
-  - An incomplete or missing Impressum can draw administrative fines up to
-    €50,000; first offences with minor defects typically land at €500-1,500.
-  - Uniquely to Germany, ANY COMPETITOR can serve an Abmahnung (formal
-    cease-and-desist) over a deficient Impressum, demanding correction, a signed
-    undertaking, and their legal costs — commonly €500-1,000+.
-  - A Datenschutzerklärung (GDPR privacy notice) is separately required, and
+  - The Impressum duty is in §5 Digitale-Dienste-Gesetz (DDG), which replaced
+    the Telemediengesetz (TMG) in May 2024. Many online checklists still cite
+    TMG.
+  - A missing or incomplete Impressum can draw fines up to €50,000; first
+    offences with minor defects typically land at €500-1,500.
+  - Any competitor can send an Abmahnung (formal cease-and-desist) over a
+    deficient Impressum, demanding correction, a signed undertaking and their
+    legal costs, commonly €500-1,000+.
+  - A Datenschutzerklärung (GDPR privacy notice) is required separately, and
     GDPR penalties reach €20m or 4% of global turnover.
 
-So this module reports legal exposure in currency, not in points. Telling a
-restaurant owner "your Impressum link is missing, that is a €500-1,500 fine and
-an open invitation for a competitor Abmahnung" is worth more than any keyword
-report — and it is the reason a client keeps paying after the free trial.
-
-Everything is evidence-based: we report what is actually absent from the served
-HTML. We do not give legal advice, and we say so.
+So legal exposure is reported in money, not points. Findings are based only
+on what's missing from the served HTML. This isn't legal advice, and the
+report says so.
 """
 
 from __future__ import annotations
@@ -30,7 +25,7 @@ import re
 from typing import Optional
 
 # ---------------------------------------------------------------- profiles --
-# What each jurisdiction actually requires on a commercial website.
+# What each jurisdiction requires on a commercial website.
 JURISDICTIONS = {
     "DE": {
         "name": "Germany",
@@ -127,11 +122,10 @@ CONSENT_MARKERS = [
 ]
 
 
-# The onboarding form and the client record store a country NAME ("Germany"),
-# never a code. Without this map the declared value failed the `in JURISDICTIONS`
-# test and was silently discarded, so jurisdiction fell back to the TLD — and a
-# German business on a .com domain was audited as United States, which skips the
-# Impressum check entirely. Aliases cover what a client would actually type.
+# The onboarding form and client record store a country name ("Germany"), not
+# a code. Without this map the value wouldn't match JURISDICTIONS and we'd fall
+# back to the TLD - a German business on a .com would be audited as US and skip
+# the Impressum check. Aliases cover what a client would actually type.
 COUNTRY_NAMES = {
     "germany": "DE", "deutschland": "DE",
     "austria": "AT", "österreich": "AT", "oesterreich": "AT",
@@ -158,10 +152,10 @@ def code_for(declared: str) -> str:
 
 
 def detect_country(html: str, tld: str = "", declared: str = "") -> str:
-    """Best-effort jurisdiction. Declared value always wins.
+    """Best-effort jurisdiction. A declared value always wins.
 
-    A declared value we do not recognise falls through to the TLD and lang
-    evidence rather than asserting a jurisdiction we cannot support.
+    An unrecognised declared value falls through to TLD and lang evidence
+    instead of asserting a jurisdiction we can't support.
     """
     named = code_for(declared)
     if named:
@@ -245,8 +239,8 @@ def check(html: str, *, country: str = "", tld: str = "",
         low = (html or "").lower()
         has_cmp = any(m in low for m in CONSENT_MARKERS)
         trackers = []
-        # Note: these are regexes, so literal parentheses must be escaped.
-        # An unescaped "gtag(" raises PatternError and killed the whole audit.
+        # These are regexes, so literal parentheses must be escaped - an unescaped
+        # "gtag(" raises PatternError and fails the whole audit.
         for name, sig in (
             ("Google Analytics", r"gtag\(|google-analytics|googletagmanager"),
             ("Meta Pixel", r"connect\.facebook\.net|fbq\("),

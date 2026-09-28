@@ -1,34 +1,23 @@
-"""Tool layer — one interface for every external capability.
+"""Tool layer: one interface for every external capability.
 
-Spec Part 2 Layer 4: "Every external capability becomes a Tool. Every Tool
-follows one common interface. Never special-case tools."
-Spec Part 8: "Never expose third-party projects directly to the rest of the
-system. Instead: create internal adapters... allow future replacement without
-changing unrelated modules."
+Every external capability is a Tool with the same interface, and third-party
+projects are only reached through these adapters, so they can be replaced
+without touching the rest of the system.
 
-Why this exists rather than importing each library where it is needed:
+1. Licence containment. Firecrawl is AGPL-3.0 and Titan is a commercial
+   service. Linking AGPL code into this process would mean publishing Titan's
+   source to every user of the hosted Space; calling a separate Firecrawl
+   process over HTTP doesn't. That only holds if there's exactly one place
+   the call is made, so each tool declares its licence and integration mode,
+   and ``licence_blocked`` tools refuse to run.
+2. Clear readiness. Most of these need a key, a URL or a paid account. A tool
+   that isn't configured reports ``not_configured`` and a result saying
+   exactly what's missing, instead of crashing the caller.
+3. Replaceability. The rest of Titan asks for a capability ("crawl this
+   page"), never a vendor, so swapping one is a change in this file only.
 
-1. **Licence containment.** Firecrawl is AGPL-3.0 and Titan is sold to clients.
-   Linking AGPL code into this process would oblige Abdullah to publish Titan's
-   source to every user of the hosted Space. Calling a separate Firecrawl
-   process over HTTP does not. That distinction is only enforceable if there is
-   exactly one place where the call is made — this file's adapters. Each tool
-   therefore declares its licence and its integration mode, and
-   ``licence_blocked`` tools refuse to run at all.
-
-2. **Honest readiness.** Every one of these needs a key, a URL, or a paid
-   account that Abdullah does not yet have. A tool that is not configured
-   reports ``not_configured`` and returns a result explaining exactly what is
-   missing. Nothing pretends to work, and nothing crashes the caller.
-
-3. **Replaceability.** The rest of Titan asks for a capability
-   ("crawl this page"), never for a vendor. Swapping Firecrawl for something
-   else later is a change in this file only.
-
-No tool here performs an irreversible or outbound action without an explicit
-per-call opt-in — sending WhatsApp messages, placing calls and publishing are
-all gated, per spec Part 6 ("Require explicit user approval before: ...
-Publishing Content, ... Sending Communications on the user's behalf").
+No tool does anything irreversible or outbound (sending WhatsApp messages,
+placing calls, publishing) without an explicit per-call opt-in from the user.
 """
 
 from __future__ import annotations
@@ -41,14 +30,13 @@ from typing import Callable, Optional
 from . import events
 
 # --------------------------------------------------------------- licensing --
-# Measured from the GitHub API on 2026-08-05, not assumed.
+# Checked against the GitHub API on 2026-08-05.
 #
-# EMBED   — code may be vendored into Titan (permissive licence).
-# WRAP    — may only be called as a separate process/service over a network API.
-#           Embedding would impose the upstream copyleft on Titan itself.
-# REFER   — documentation/list only; content may be read by a human but not
-#           redistributed. No licence grant to copy.
-# BLOCKED — licence unclear. No integration until upstream clarifies.
+# EMBED   - code may be vendored into Titan (permissive licence).
+# WRAP    - may only be called as a separate process/service over a network API;
+#           embedding would put the upstream copyleft on Titan.
+# REFER   - documentation/list only; can be read but not redistributed.
+# BLOCKED - licence unclear. No integration until upstream clarifies.
 EMBED, WRAP, REFER, BLOCKED = "embed", "wrap", "refer", "blocked"
 
 
@@ -138,9 +126,8 @@ class Tool:
     def missing_packages(self) -> list:
         """Optional packages that are declared but not installed.
 
-        Checked with find_spec rather than a real import: importing a heavy
-        agent framework just to render a status page would cost seconds of boot
-        time for information we can get for free.
+        Checked with find_spec rather than importing: importing a heavy framework
+        just for a status page would add seconds to boot.
         """
         import importlib.util
         missing = []
@@ -155,8 +142,8 @@ class Tool:
     def status(self) -> str:
         if self.licence_blocked():
             return "licence_blocked"
-        # "ready" has to mean it actually runs. Reporting ready for a tool whose
-        # package is absent moves the failure from this screen to the caller.
+        # "ready" has to mean it actually runs; otherwise the failure just moves from
+        # this screen to the caller.
         if self.missing_env() or self.missing_packages():
             return "not_configured"
         return "ready"
@@ -178,11 +165,10 @@ class Tool:
 
     # -- invocation --------------------------------------------------------
     def invoke(self, **kwargs) -> ToolResult:
-        """Run the tool. Never raises — a failing tool returns a failed result.
+        """Run the tool. Never raises - a failing tool returns a failed result.
 
-        Refuses before doing anything if the licence is unresolved or the
-        configuration is missing, so the caller gets a precise reason instead of
-        a network error twenty seconds later.
+        Refuses up front if the licence is unresolved or configuration is missing,
+        so the caller gets a precise reason instead of a network error later.
         """
         started = time.monotonic()
 
@@ -218,7 +204,7 @@ class Tool:
                       f"requirements.txt yet; benchmark it before adopting."))
 
         if self.outbound and not kwargs.get("approved"):
-            # Spec Part 6: never send on the user's behalf without approval.
+            # Never send on the user's behalf without approval.
             return _finish(ToolResult(
                 False, self.name,
                 error="Refused: this tool acts outside Titan.",
@@ -232,14 +218,10 @@ class Tool:
                 False, self.name,
                 error=f"{type(exc).__name__}: {str(exc)[:200]}"))
 
-        # An adapter that reports its OWN failure is a failure. This used to
-        # treat "did not raise" as success, which is fine while every adapter
-        # signals by raising — but the API capabilities do not. A provider
-        # being down is a normal outcome for them, not an exception, so they
-        # return {"ok": False, "error": ...}. Under the old rule a weather
-        # lookup that reached nobody came back as a successful tool run whose
-        # data happened to say otherwise, and the failure counters in
-        # reflection.py would never have seen it.
+        # An adapter that reports its own failure is a failure. API capabilities
+        # treat a provider being down as a normal outcome and return
+        # {"ok": False, "error": ...} instead of raising; counting that as success
+        # would hide it from the failure counters in reflection.py.
         if isinstance(payload, dict) and payload.get("ok") is False:
             return _finish(ToolResult(
                 False, self.name, data=payload,

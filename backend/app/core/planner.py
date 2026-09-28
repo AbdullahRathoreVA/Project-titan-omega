@@ -1,25 +1,17 @@
-"""Planning engine — decide before doing.
+"""Planner: work out what will happen before anything runs.
 
-Spec Part 2: "Every request must go through planning. The planner must:
-understand the goal, estimate complexity, break into subtasks, assign
-specialists, estimate cost, estimate runtime, estimate confidence, choose
-models, choose tools, generate execution graph — BEFORE execution begins."
+Given a goal it produces a reviewable plan: complexity, subtasks, the agent
+and tool for each, estimated cost, runtime and confidence, and the order the
+steps depend on each other. /api/agent/act runs instructions directly; this
+lets a plan be read or refused first.
 
-The important word is *before*. Titan already executes: `/api/agent/act` routes
-an instruction straight to an agent and runs it. Nothing states what it intends
-to do, what it will cost, or how sure it is, so nothing can be reviewed or
-refused first. This produces that statement.
+Deterministic on purpose, so it still works when the LLM provider is what's
+broken. Decomposition is rule-based over the tools Titan actually has; the
+LLM only enriches an existing plan.
 
-Deliberately deterministic. An LLM could write prettier plans, but a planner
-that needs a working API key cannot plan the recovery when the API key is what
-broke — and Titan's whole design is that it degrades to real work with no
-provider configured. The decomposition here is rule-based over the capabilities
-Titan actually has; `llm` is used only to enrich a plan that already exists.
-
-Estimates are honest about being estimates. Runtime comes from measured tool
-latency where routing has data, and is labelled a guess where it does not.
-Confidence falls when a step depends on a tool that is not configured, because
-a plan whose third step needs a key nobody has set is not a 90%-confidence plan.
+Runtime uses measured tool latency where routing has data and is labelled a
+default where it doesn't. Confidence drops when a step needs a tool that
+isn't configured.
 """
 
 from __future__ import annotations
@@ -31,8 +23,7 @@ from typing import Optional
 
 from . import events, tools
 
-# Complexity bands, in the only unit that matters here: how many steps and how
-# much of it touches the network.
+# Complexity bands: how many steps, and how much touches the network.
 TRIVIAL, SIMPLE, MODERATE, COMPLEX = "trivial", "simple", "moderate", "complex"
 
 
@@ -73,7 +64,7 @@ class Plan:
 
     @property
     def est_seconds(self) -> float:
-        """Critical path, not the sum: independent steps can run together."""
+        """Critical path, not the sum: independent steps can run in parallel."""
         if not self.steps:
             return 0.0
         by_id = {s.id: s for s in self.steps}
@@ -111,9 +102,9 @@ class Plan:
         }
 
 
-# ------------------------------------------------------------- decomposition --
-# Intent -> the sequence of things Titan can actually do. Ordered: the first
-# match wins, so put the specific patterns first.
+# ------------------------------------------------------------ decomposition --
+# Intent -> the steps Titan can actually take. First match wins, so specific
+# patterns go first.
 _INTENTS = (
     ("audit", r"\b(audit|seo|rank|ranking|compliance|impressum|legal)\b"),
     ("content", r"\b(post|caption|content|write|draft|social)\b"),
@@ -132,7 +123,7 @@ def classify(goal: str) -> str:
 
 
 def _measured_seconds(tool_name: str) -> tuple:
-    """(seconds, basis). Uses the tool layer's own recorded latency if present."""
+    """(seconds, basis), using the tool layer's recorded latency when there is one."""
     from . import events as bus
     samples = [
         e["payload"].get("elapsed_ms", 0)
@@ -219,11 +210,11 @@ def _complexity(steps: list) -> str:
 
 
 def _confidence(steps: list, intent: str) -> float:
-    """Start from how well the goal was understood, then subtract for reality."""
+    """Start from how well the goal was understood, then subtract for what can't run."""
     score = 0.85 if intent != "general" else 0.45
     blocked = sum(1 for s in steps if s.blocked_reason)
     if blocked:
-        # A plan whose steps cannot run is not a confident plan, however tidy.
+        # Steps that can't run lower the confidence.
         score -= min(0.6, 0.25 * blocked)
     guessed = sum(1 for s in steps if s.est_basis == "default" and s.tool)
     score -= 0.05 * guessed
@@ -231,15 +222,13 @@ def _confidence(steps: list, intent: str) -> float:
 
 
 def plan(goal: str) -> Plan:
-    """Produce a reviewable plan. Never raises, never executes anything."""
+    """Produce a reviewable plan. Never raises and never executes anything."""
     goal = (goal or "").strip()
     intent = classify(goal)
     steps = _RECIPES[intent]()
 
-    # Close the reflection loop. Reflection measures how far past estimates
-    # missed and returns a correction; applying it here is the only thing that
-    # makes reflection a feedback loop rather than a diary. The factor is
-    # exactly 1.0 until there is enough evidence, so early plans are untouched.
+    # Apply the reflection correction: how far past estimates were off. It is
+    # exactly 1.0 until there is enough evidence, so early plans are unchanged.
     from . import reflection
     factor = reflection.calibration()
     if factor != 1.0:

@@ -1,28 +1,23 @@
 """Encrypted storage for a client's website credentials.
 
-The moment Titan stops auditing and starts fixing, it has to hold a key to
-somebody else's business. That is a different kind of responsibility from
-everything else in this codebase, so the rules are stricter:
+Once Titan starts fixing sites rather than just auditing them, it holds a key
+to someone else's business, so the rules here are stricter:
 
-* **Encrypted at rest.** A credential is never written to the database in
-  plaintext. The key comes from ``TITAN_CREDENTIAL_KEY`` (or is derived from
-  ``TITAN_SECRET``), so a leaked state file is not a leaked password.
-* **Never returned.** No endpoint, log line, error message or debug payload
-  ever emits the secret back — not even to Abdullah. Once stored it can be
-  used, tested and deleted, but not read.
-* **WordPress Application Passwords, not the real password.** WordPress has
-  issued these since 5.6 precisely for this: a scoped credential the owner can
-  revoke from their profile without changing their login. Asking for someone's
-  actual admin password would be indefensible, and this asks for the right
-  thing instead.
-* **Revocable from both ends.** The client revokes in WordPress; Abdullah
-  disconnects here. Either alone is enough to end access.
+* Encrypted at rest. A credential is never written in plaintext. The key comes
+  from ``TITAN_CREDENTIAL_KEY`` (or is derived from ``TITAN_SECRET``), so a
+  leaked state file isn't a leaked password.
+* Never returned. No endpoint, log line, error or debug payload emits the
+  secret, not even to the founder. Once stored it can be used, tested and
+  deleted, but not read.
+* WordPress Application Passwords, not the real password. WordPress has had
+  these since 5.6 for exactly this: a scoped credential the owner can revoke
+  from their profile without changing their login.
+* Revocable from both ends: the client revokes it in WordPress, or the
+  founder disconnects here. Either is enough to end access.
 
-**Nothing is changed automatically yet.** Connecting proves Titan *can* write
-and reports what it would be allowed to do. Applying a fix is a separate,
-approved action — auto-editing a stranger's live site the moment they sign up
-is how a product destroys a customer's business and its own reputation in one
-step.
+Connecting proves Titan can write and reports what it would be allowed to do.
+Applying a fix is a separate, approved action; nothing is changed
+automatically.
 """
 
 from __future__ import annotations
@@ -45,9 +40,9 @@ _store: dict[str, dict] = {}
 def _key() -> bytes:
     """A 32-byte urlsafe-base64 key for Fernet.
 
-    Derived from TITAN_SECRET when no dedicated key is set, so this works out
-    of the box — but a dedicated TITAN_CREDENTIAL_KEY means rotating the
-    session secret does not lock every client's site out.
+    Derived from TITAN_SECRET when no dedicated key is set, so it works out of
+    the box. A dedicated TITAN_CREDENTIAL_KEY means rotating the session secret
+    doesn't lock every client's site out.
     """
     raw = os.getenv("TITAN_CREDENTIAL_KEY", "").strip()
     if raw:
@@ -57,11 +52,9 @@ def _key() -> bytes:
         except Exception:
             pass
         return base64.urlsafe_b64encode(hashlib.sha256(raw.encode()).digest())
-    # Through the one door. The fallback that used to sit here meant that on a
-    # deployment with TITAN_SECRET unset, the vault holding OTHER PEOPLE'S
-    # WordPress credentials was encrypted with a key derived from a string in
-    # the public repository. The derivation is unchanged, so a deployment that
-    # already sets TITAN_SECRET keeps decrypting everything it stored before.
+    # Goes through appsecret so a deployment without TITAN_SECRET never derives
+    # the vault key from a published default. The derivation itself is unchanged,
+    # so existing stored credentials still decrypt.
     from . import appsecret
     seed = appsecret.value()
     return base64.urlsafe_b64encode(hashlib.sha256(
@@ -77,11 +70,11 @@ def encryption_available() -> bool:
 
 
 def _encrypt(secret: str) -> Optional[str]:
-    """Encrypt, or None if it cannot be done safely.
+    """Encrypt, or None if it can't be done safely.
 
     Returning None rather than falling back to plaintext is deliberate: a
-    credential stored in the clear because a package was missing is worse than
-    a connection that refuses to complete and says why.
+    connection that refuses and says why beats a credential stored in the
+    clear because a package was missing.
     """
     try:
         from cryptography.fernet import Fernet
@@ -99,11 +92,10 @@ def _decrypt(blob: str) -> Optional[str]:
 
 
 def setup_guide(provider: str = "wordpress") -> dict:
-    """Exactly how a non-technical owner produces the credential.
+    """Step-by-step instructions for a non-technical owner to create the credential.
 
-    Written for the client, not for a developer. "Application password" means
-    nothing to a restaurant owner, so the steps name what they will actually
-    see on screen.
+    Written for the client, not a developer: the steps name what they'll
+    actually see on screen.
     """
     if provider != "wordpress":
         return {"provider": provider, "supported": False,
@@ -117,11 +109,9 @@ def setup_guide(provider: str = "wordpress") -> dict:
             "password is a separate key you can cancel at any time without "
             "changing your login, and it can be revoked the second you want "
             "Titan to stop."),
-        # The step that actually blocks people. "Sign in to your WordPress
-        # admin" assumes they can, and the common real situation is that the
-        # site was built by somebody else and the owner only ever had the
-        # HOSTING login. That is not a dead end: every major host can open
-        # wp-admin without the WordPress password.
+        # The step that usually blocks people: the site was built by someone else and
+        # the owner only has the hosting login. That's not a dead end - every major
+        # host can open wp-admin without the WordPress password.
         "if_you_cannot_sign_in_to_wordpress": {
             "note": (
                 "You do not need the WordPress password. If you can reach the "
@@ -199,7 +189,7 @@ def setup_guide(provider: str = "wordpress") -> dict:
 
 def connect(client_id: str, provider: str, site_url: str, username: str,
             secret: str) -> dict:
-    """Store a credential after proving it works. Never stores plaintext."""
+    """Store a credential after checking it works. Never stores plaintext."""
     if provider not in PROVIDERS:
         return {"ok": False, "error": f"Unsupported provider: {provider}."}
     site_url = (site_url or "").strip().rstrip("/")
@@ -245,7 +235,7 @@ def connect(client_id: str, provider: str, site_url: str, username: str,
 
 def verify(provider: str, site_url: str, username: str,
            secret: str) -> dict:
-    """Prove a credential works, and report what it is allowed to do."""
+    """Check a credential works, and report what it's allowed to do."""
     if provider != "wordpress":
         return {"ok": False, "error": f"Unsupported provider: {provider}."}
     try:
@@ -304,7 +294,7 @@ def credential(client_id: str) -> Optional[dict]:
 
 
 def status(client_id: str) -> dict:
-    """Safe to send over the wire. The secret is never part of this."""
+    """Safe to send over the wire. Never includes the secret."""
     with _lock:
         rec = _store.get(client_id)
     if not rec:
@@ -326,8 +316,8 @@ def status(client_id: str) -> dict:
 def connected_ids() -> list[str]:
     """Clients whose site Titan currently holds a key to.
 
-    The 24/7 cycle needs this to know what it is responsible for. It returns
-    ids only — never the record, and never the secret.
+    The 24/7 fix cycle uses this to know what it's responsible for. Ids only,
+    never the record or the secret.
     """
     with _lock:
         return sorted(_store)

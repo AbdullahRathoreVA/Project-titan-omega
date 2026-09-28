@@ -1,39 +1,32 @@
-"""Three real, tested integrations — the ones Titan actually needs.
+"""Tested integrations for the few public APIs Titan actually calls.
 
-The catalogue knows 1,675 providers. This module can CALL three capabilities,
-and the difference between those two sentences is the whole point of the
-`METADATA_ONLY` status in `api_registry`.
+The catalogue lists 1,675 providers; this module calls a handful of
+capabilities. That gap is what the `METADATA_ONLY` status in `api_registry`
+means.
 
-Every endpoint here was verified by hand against the live service before the
-code was written, because the catalogue lists homepages rather than API paths
-and guessing an endpoint produces an adapter that has never worked.
+Every endpoint here was checked by hand against the live service first,
+because the catalogue lists homepages rather than API paths.
 
-**Provider choices, and the evidence for them**
+Providers:
 
-`currency` — primary is open.er-api.com, NOT Frankfurter. Frankfurter is the
-obvious pick and it is wrong here: it serves ECB reference rates, which cover
-about thirty major currencies and **do not include PKR**. Measured 2026-08-14:
-`api.frankfurter.dev/v1/latest?from=USD&to=PKR` returns `{"message":"not
-found"}` while `open.er-api.com/v6/latest/USD` returns PKR at 277.82. Titan is
-run from Pakistan and its first client invoices in PKR, so the provider that
-lacks PKR cannot be the primary. Frankfurter stays as the fallback because it
-is excellent for EUR/USD/GBP and independent of the primary.
+`currency` - primary is open.er-api.com, not Frankfurter. Frankfurter serves
+ECB reference rates, which cover about thirty major currencies and not PKR
+(`api.frankfurter.dev/v1/latest?from=USD&to=PKR` returns "not found", while
+open.er-api.com returns PKR). Titan is run from Pakistan and invoices in PKR,
+so Frankfurter is only the fallback, where it's excellent for EUR/USD/GBP.
 
-`weather` and `geocoding` — Open-Meteo. No key, no attribution requirement for
-non-commercial use, and it answers with clean JSON. Geocoding resolves
-"Sialkot" to 32.4927/74.5313, which is the actual city the leather client
-operates from.
+`weather` and `geocoding` - Open-Meteo. No key, clean JSON. Geocoding
+resolves "Sialkot" to 32.4927/74.5313.
 
-**All three need no credential**, which is why they could be verified at all
-and why they cost nothing to run.
+None of these need a credential, so they cost nothing to run.
 
-Everything goes through `api_runtime`: SSRF guard, timeout, bounded read,
-content-type check, classified failures, per-host politeness. Responses are
-normalised to a stable shape so an agent never parses provider-specific JSON,
-and a provider swap does not change the caller.
+Everything goes through `api_runtime` (SSRF guard, timeout, bounded read,
+content-type check, classified failures, per-host politeness). Responses are
+normalised to a stable shape so callers never parse provider-specific JSON and
+a provider swap doesn't affect them.
 
-Values are reported as the provider gave them. Nothing here fabricates a rate
-or a temperature when a call fails — it returns `ok: False` and the reason.
+Values are reported as the provider gave them. When a call fails the result is
+`ok: False` with the reason, never a made-up rate or temperature.
 """
 
 from __future__ import annotations
@@ -48,7 +41,7 @@ _FRANKFURTER = "https://api.frankfurter.dev/v1/latest?base={base}"
 
 
 def exchange_rates(base: str = "USD", symbols: Optional[list] = None) -> dict:
-    """Live exchange rates, with a real fallback. Never invents a rate."""
+    """Live exchange rates, with a fallback. Never invents a rate."""
     base = (base or "USD").upper()[:3]
     attempts = []
 
@@ -76,9 +69,8 @@ def exchange_rates(base: str = "USD", symbols: Optional[list] = None) -> dict:
             "rates": rates,
             "as_of": data.get("time_last_update_utc") or data.get("date"),
             "latency_ms": r["latency_ms"],
-            # Named rather than silently dropped: Frankfurter carries ECB
-            # rates only, so a currency it does not publish is absent, not
-            # zero. A caller that sees {} must not read it as "rate is 0".
+            # Listed rather than silently dropped: Frankfurter only carries ECB rates, so
+            # a missing currency is absent, not zero.
             "unavailable_symbols": missing,
             "attempts": attempts,
         }
@@ -138,8 +130,8 @@ def weather(latitude: float, longitude: float) -> dict:
         "humidity_pct": cur.get("relative_humidity_2m"),
         "wind_speed_kmh": cur.get("wind_speed_10m"),
         "weather_code": code,
-        # None, not "unknown" — an unmapped WMO code is a gap in this table,
-        # and inventing a description for it would be a fabricated observation.
+        # None, not "unknown": an unmapped WMO code is a gap in this table, and
+        # making up a description would invent an observation.
         "conditions": _WMO.get(code),
         "observed_at": cur.get("time"),
         "latency_ms": r["latency_ms"],
@@ -181,19 +173,18 @@ def geocode(place: str, limit: int = 3) -> dict:
             "timezone": x.get("timezone"),
             "population": x.get("population"),
         } for x in rows],
-        # An empty list is a real answer: the provider does not know this
-        # place. It is not an error and must not be reported as one.
+        # An empty list is a real answer - the provider doesn't know this place. It
+        # isn't an error.
         "found": len(rows),
         "latency_ms": r["latency_ms"],
     }
 
 
 def weather_for_place(place: str) -> dict:
-    """Geocode then fetch weather — the two capabilities chained.
+    """Geocode then fetch weather.
 
-    This is what the capability router is for: an agent asks for "weather in
-    Sialkot" and never learns that two providers and a coordinate lookup were
-    involved.
+    An agent asks for "weather in Sialkot" without needing to know two
+    providers and a coordinate lookup are involved.
     """
     located = geocode(place, limit=1)
     if not located["ok"]:
@@ -215,16 +206,14 @@ def weather_for_place(place: str) -> dict:
 
 
 # -------------------------------------------------------- security headers --
-# MDN HTTP Observatory. The catalogue entry for this points at a GitHub README
-# for `mozilla/http-observatory`, and the host that README documents —
-# http-observatory.security.mozilla.org — is DEAD: measured 2026-08-15, both
-# GET and POST return 502. The live service is MDN's v2 API, and it answers
-# only to POST (`GET /api/v2/scan` is a 404). Nothing about that was
-# discoverable from the catalogue, which is the ceiling on auto-integration
-# stated in api_registry.
+# MDN HTTP Observatory. The catalogue entry points at the old
+# `mozilla/http-observatory` README, whose host
+# (http-observatory.security.mozilla.org) is gone - both GET and POST return
+# 502. The live service is MDN's v2 API, which only answers POST
+# (`GET /api/v2/scan` is a 404).
 #
-# This is the first adapter that measures something Titan already sells an
-# opinion about, from a source that is not Titan. Its own site scores B+ / 80.
+# This gives an independent, third-party grade for something Titan already
+# audits.
 _OBSERVATORY = "https://observatory-api.mdn.mozilla.net/api/v2/scan?host={host}"
 
 
@@ -246,9 +235,9 @@ def security_headers(host: str) -> dict:
     if not name or "." not in name:
         return {"ok": False, "capability": "security.headers",
                 "error": f"{raw!r} is not a hostname."}
-    # The scan is performed by Mozilla, not by Titan, so Titan's own SSRF guard
-    # never sees the target. Refuse to point a third-party scanner at anything
-    # that is not a public name — it would fail anyway, and asking is rude.
+    # The scan is run by Mozilla, not Titan, so Titan's SSRF guard never sees the
+    # target. Don't point a third-party scanner at anything that isn't a public
+    # name.
     try:
         ipaddress.ip_address(name)
         return {"ok": False, "capability": "security.headers",
@@ -272,8 +261,8 @@ def security_headers(host: str) -> dict:
                 "provider": "mdn-observatory", "host": name,
                 "error": str(d["error"])[:200], "stage": "provider"}
     if d.get("grade") is None:
-        # No grade is no grade. A missing score defaulted to 0 would read as a
-        # catastrophic F for a site nobody managed to scan.
+        # No grade means no grade. Defaulting a missing score to 0 would read as an F
+        # for a site nobody managed to scan.
         return {"ok": False, "capability": "security.headers",
                 "provider": "mdn-observatory", "host": name,
                 "error": "The scan returned no grade.",
@@ -287,8 +276,7 @@ def security_headers(host: str) -> dict:
         "tests_passed": d.get("tests_passed"),
         "tests_failed": d.get("tests_failed"),
         "tests_total": d.get("tests_quantity"),
-        # Mozilla serves a CACHED scan. The grade without the moment it was
-        # taken is a measurement presented as if it were current.
+        # Mozilla serves cached scans, so the grade needs the time it was taken.
         "scanned_at": d.get("scanned_at"),
         "algorithm_version": d.get("algorithm_version"),
         "details_url": d.get("details_url"),
@@ -306,7 +294,7 @@ CAPABILITIES = {
 
 
 def integrated() -> dict:
-    """What Titan can genuinely call, as opposed to what it has catalogued."""
+    """What Titan can actually call, as opposed to what it has catalogued."""
     return {
         "capabilities": sorted(CAPABILITIES),
         "count": len(CAPABILITIES),

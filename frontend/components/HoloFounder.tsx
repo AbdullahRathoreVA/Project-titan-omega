@@ -1,8 +1,8 @@
 "use client";
 
-// Wrapper for the holographic Founder: listens for the global "titan-speech"
-// events from the voice layer and drives the 3D scene's speaking state via a
-// ref (no re-renders per frame). Dynamic import + boundary keep it safe.
+// Wrapper for the holographic founder: listens for the global "titan-speech"
+// events from the voice layer and drives the scene's speaking state through a
+// ref (no re-render per frame). Dynamic import + error boundary keep it safe.
 
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";

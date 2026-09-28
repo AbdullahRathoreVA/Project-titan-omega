@@ -1,39 +1,33 @@
-"""Self-improvement: observe → propose → measure isolated → Abdullah approves
-→ activate → auto-rollback.
+"""Self-improvement: observe -> propose -> measure in isolation -> a person
+approves -> activate -> automatic rollback.
 
-**Nothing here ever deploys itself.** That is not a configuration choice, it is
-the structure: `activate()` refuses any proposal that is not already `approved`,
-and `approve()` refuses without a named human. There is no flag, no "auto" mode
-and no scheduled approver, for the same reason `site_fix` has no auto-apply — a
-model changing how a live product behaves at 3am, unattended, is how this
-product dies. `fix_cycle` proposes and never applies; this is the same shape
-pointed at Titan itself.
+Nothing here deploys itself. `activate()` refuses any proposal that isn't
+approved, and `approve()` refuses without a named person. There's no auto
+mode, for the same reason `site_fix` has no auto-apply: an unattended model
+changing how a live product behaves is too risky. `fix_cycle` proposes and
+never applies; this is the same idea aimed at Titan itself.
 
-What it can actually change is narrow and stated plainly in `core/params.py`:
-registered numeric parameters, with bounds, that are read as module globals at
-call time and have a benchmark. **Titan cannot modify its own source code** —
-that needs a git push and a rebuild, and the container has no git credentials.
+What it can change is narrow and defined in `core/params.py`: registered
+numeric parameters with bounds, read as module globals at call time, each with
+a benchmark. Titan can't modify its own code.
 
-The measurement discipline is the part that matters:
+Measurement rules:
 
-* A proposal is measured **before** anyone is asked to approve it. `approve()`
-  refuses a proposal that has not been evaluated: an approval without numbers
-  is a guess with a signature on it.
-* The candidate is applied, benchmarked and **restored in a `finally`, and the
-  restoration is then VERIFIED**. A scratch mutation script in this repo once
-  left `if False:` inside `backup.py` and silently disabled the check that a
-  backup restores. Anything that edits live state to measure it has to prove it
-  put it back.
-* A candidate that measures WORSE cannot be approved at all. It is recorded
-  with its numbers, because a measured failure is a result worth keeping.
-* `previous_value` is read off the live module at activation, not taken from
-  the source default. Rollback restores what was actually running.
-* Auto-rollback re-measures and reverts on regression. It is the one automatic
-  action here, and it only ever moves a value BACK to something a human already
-  approved of — the safe direction.
+* A proposal is measured before anyone is asked to approve it; `approve()`
+  refuses one that hasn't been evaluated.
+* The candidate is applied, benchmarked and restored in a `finally`, and the
+  restore is then verified. Anything that edits live state to measure it has
+  to prove it put it back.
+* A candidate that measures worse can't be approved. It's kept with its
+  numbers, because a measured failure is still a result.
+* `previous_value` is read from the live module at activation, not from the
+  source default, so rollback restores what was actually running.
+* Auto-rollback re-measures and reverts on regression. It's the only
+  automatic action here, and it only moves a value back to one a person
+  already approved.
 
-Numbers are `None` until measured. A proposal that has not been benchmarked
-reports `before_metric: None`, never 0.0.
+Numbers are None until measured: an unbenchmarked proposal reports
+`before_metric: None`, never 0.0.
 """
 
 from __future__ import annotations
@@ -71,7 +65,7 @@ def _row(r) -> dict:
     out["regression"] = (None if out.get("regression") is None
                          else bool(out["regression"]))
     out["automatic_rollback"] = bool(out.get("automatic_rollback"))
-    # None until measured, like before_metric — never an empty "all clear".
+    # None until measured, like before_metric - never an empty "all clear".
     raw = out.get("guard_metrics")
     out["guard_metrics"] = json.loads(raw) if raw else None
     return out
@@ -100,10 +94,10 @@ def listing(status: str = "", limit: int = 50) -> list:
 
 # --- observe ----------------------------------------------------------------
 def observe() -> dict:
-    """Real signals only, each labelled with where it came from.
+    """Real signals only, each labelled with its source.
 
-    This does not propose anything. It reports what is measurable right now, so
-    a proposal can cite something rather than assert an improvement.
+    Proposes nothing; it reports what's measurable now so a proposal can cite
+    it.
     """
     signals: list[dict] = []
 
@@ -115,7 +109,7 @@ def observe() -> dict:
             "samples": rep.get("samples"),
             "calibration": rep.get("calibration"),
             "brier": rep.get("brier"),
-            # None, not 0 — below MIN_SAMPLES there is nothing to say.
+            # None, not 0: below MIN_SAMPLES there's nothing to report.
             "note": "planner estimate bias; None until enough samples exist",
         })
     except Exception as exc:
@@ -203,9 +197,8 @@ def propose(param: str, value: Any, *, reason: str,
 def _measure(param_name: str, value: Any) -> dict:
     """Run the parameter's benchmark with `value` applied, then put it back.
 
-    The restoration is verified. Measuring by mutating live state and failing
-    to restore it would leave Titan running a value nobody approved, which is
-    the exact failure this module exists to make impossible.
+    The restore is verified. Failing to restore would leave Titan running a
+    value nobody approved.
     """
     spec = params.PARAMS[param_name]
     bench = params.benchmark(spec.benchmark)
@@ -250,14 +243,14 @@ def evaluate(proposal_id: str) -> dict:
     cand = _measure(row["param"], row["proposed_value"])
     before, after = base[spec.metric], cand[spec.metric]
 
-    # Equal is NOT an improvement. A change that measures identically is churn
-    # on a live product, and churn is a risk with no upside.
+    # Equal isn't an improvement. A change that measures the same is churn on a
+    # live product: risk with no upside.
     if spec.higher_is_better:
         regression = after <= before
     else:
         regression = after >= before
-    # Nor is one bought with another number the same benchmark measures:
-    # fewer silent answers paid for in invented ones is a worse receptionist.
+    # Nor is an improvement paid for with another metric from the same benchmark:
+    # fewer silent answers bought with invented ones is a worse receptionist.
     guards = {m: {"before": base[m], "after": cand[m],
                   "worse": _worse(cand[m], base[m], hib)}
               for m, hib in spec.guards}
@@ -284,7 +277,7 @@ def evaluate(proposal_id: str) -> dict:
 
 # --- decide -----------------------------------------------------------------
 def approve(proposal_id: str, approver: str) -> dict:
-    """A named human accepts a MEASURED change. Nothing else may call this."""
+    """A named person accepts a measured change. Nothing else may call this."""
     if not (approver or "").strip():
         raise ValueError("Approval must carry a name. An anonymous approval is "
                          "not an audit trail.")
@@ -338,7 +331,7 @@ def reject(proposal_id: str, approver: str, why: str = "") -> dict:
 
 # --- activate and roll back -------------------------------------------------
 def activate(proposal_id: str) -> dict:
-    """Apply an APPROVED proposal. The gate that makes this not self-deploying."""
+    """Apply an approved proposal. This gate is what stops self-deployment."""
     row = get(proposal_id)
     if row is None:
         raise ValueError(f"No such proposal: {proposal_id}")
@@ -347,7 +340,7 @@ def activate(proposal_id: str) -> dict:
             f"Only an {APPROVED} proposal can be activated; this one is "
             f"{row['status']}. Titan does not deploy its own changes.")
 
-    # Read off the LIVE module. The shipped default is not necessarily what is
+    # Read from the live module. The shipped default isn't necessarily what's
     # running, and rollback has to restore what actually was.
     previous = float(params.current(row["param"]))
     applied = params.set_value(row["param"], row["proposed_value"])
@@ -399,11 +392,11 @@ def rollback(proposal_id: str, *, why: str, automatic: bool = False) -> dict:
 
 
 def check_active() -> list:
-    """Re-measure every ACTIVE change and roll back any that got worse.
+    """Re-measure every active change and roll back any that got worse.
 
-    The only automatic action in this module, and it only ever moves a value
-    BACK to one that was already running before a human approved a change —
-    the safe direction. It never approves, activates or proposes.
+    The only automatic action in this module, and it only moves a value back to
+    one that was running before a person approved the change. It never
+    approves, activates or proposes.
     """
     out = []
     for row in listing(status=ACTIVE, limit=20):

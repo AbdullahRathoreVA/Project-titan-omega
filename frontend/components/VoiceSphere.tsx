@@ -1,36 +1,28 @@
 "use client";
 
 /**
- * VoiceSphere — Titan's voice avatar.
+ * VoiceSphere - Titan's voice avatar.
  *
  * A particle sphere that deforms while Titan speaks or while the microphone
- * hears you. Deliberately written with **no 3D library**: projection,
- * deformation and glow are plain canvas and arithmetic.
+ * hears you, written without a 3D library: projection, deformation and glow
+ * are plain canvas and arithmetic.
  *
- * Three reasons that is the right call here rather than reaching for R3F,
- * which this repo already ships:
+ * 1. No new dependency or bundle weight.
+ * 2. It runs well on integrated graphics (e.g. Iris Xe); additive 2D
+ *    compositing is comfortable there, while another heavy WebGL scene next
+ *    to Universe3D wouldn't be.
+ * 3. Additive blending (`lighter`) means overlapping particles accumulate,
+ *    which looks right and skips the per-frame depth sort naive point-cloud
+ *    renderers need.
  *
- * 1. **No new dependency.** The standing rule in this codebase is that a new
- *    package goes in requirements.txt in the same commit — reportlab once took
- *    production down. The same caution applies to the bundle.
- * 2. **It runs on integrated graphics.** The target machine is an Iris Xe with
- *    no CUDA. Additive 2D compositing is comfortable there; a heavy WebGL
- *    scene competing with the existing Universe3D view is not.
- * 3. **Additive blending removes the depth sort.** Drawing with `lighter`
- *    means overlapping particles accumulate, which both looks correct and
- *    skips the per-frame sort that dominates naive point-cloud renderers.
+ * What drives the motion: browsers don't expose synthesized speech to the
+ * audio graph, so while Titan speaks the field is driven by `onboundary` word
+ * events from the speech engine - one impulse per spoken word. The
+ * microphone path is a real FFT of real audio. `source` says which one is
+ * driving.
  *
- * **What actually drives the motion, and what does not.** Browsers do not
- * expose synthesized speech to the audio graph, so while Titan speaks the
- * field is driven by real `onboundary` word events from the speech engine —
- * one impulse per spoken word. The microphone path is a true FFT of real
- * audio. Both are real signals, they are not the same signal, and `source`
- * says which one is driving. Faking a waveform for the speaking case would be
- * inventing a measurement, which is exactly what the rest of this codebase
- * refuses to do.
- *
- * Listens for the `titan-speech` CustomEvent that lib/voice.ts already
- * broadcasts, so anything in the app that speaks drives this automatically.
+ * Listens for the `titan-speech` CustomEvent that lib/voice.ts broadcasts, so
+ * anything in the app that speaks drives this automatically.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -82,8 +74,8 @@ export default function VoiceSphere({
 
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    // Fibonacci lattice — the only cheap distribution that stays even at the
-    // poles. A lat/long grid visibly bunches there and reads as a bug.
+    // Fibonacci lattice - a cheap distribution that stays even at the poles; a
+    // lat/long grid bunches up there.
     const COUNT = Math.min(3600, Math.max(1200, Math.round(window.innerWidth * 2.2)));
     const px = new Float32Array(COUNT);
     const py = new Float32Array(COUNT);
@@ -123,7 +115,7 @@ export default function VoiceSphere({
     };
     window.addEventListener("titan-speech", onSpeech as EventListener);
 
-    // One impulse per spoken word — the real signal the engine gives us.
+    // One impulse per spoken word - the signal the speech engine gives us.
     const onWord = () => {
       targetRef.current = Math.min(1, 0.55 + Math.random() * 0.45);
     };

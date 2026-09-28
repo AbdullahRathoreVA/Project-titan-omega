@@ -1,25 +1,17 @@
-"""Titan audits its own website, continuously, with the engine it sells.
+"""Titan audits its own website with the same engine it sells.
 
-Two reasons this exists, and the second is the important one.
+- An SEO product that scores badly on its own SEO is an easy objection. The
+  site was missing a sitemap and JSON-LD, the two things the engine flags as
+  critical for clients; those are generated here.
+- It's a trust signal anyone can check: "Titan scores 94/100 on its own
+  audit, re-checked every 6 hours, and here are the open findings" can be
+  verified in seconds, because the same code produced it.
 
-1. Titan was failing its own audit. Measured on the live site before this
-   module: no sitemap.xml (404) and zero JSON-LD blocks — the exact two
-   findings its own engine reports as *critical* to paying clients. A product
-   that sells SEO while scoring badly on its own SEO is the easiest objection
-   in the world to raise, and the hardest to answer.
+The score is published as measured. If the site regresses, the public number
+goes down; a hardcoded 100 would be found out by the first prospect who ran
+another audit.
 
-2. It is the strongest trust signal available and it costs nothing. Anyone can
-   claim their tool is good. "Titan scores 94/100 on its own audit, re-checked
-   every 6 hours, and here are the findings it still has open" is a claim that
-   can be verified by the reader in about ten seconds — and it is verifiable
-   precisely because the same code produced it.
-
-The score is published truthfully or not at all. If Titan's own site regresses,
-the number goes down in public. Publishing a hardcoded 100 would be exactly the
-fabrication the rest of this codebase refuses to do, and would be found out by
-the first prospect who ran a competing audit.
-
-Runs on the existing heartbeat — no new process, no new cost.
+Runs on the existing heartbeat - no new process, no new cost.
 """
 
 from __future__ import annotations
@@ -32,21 +24,19 @@ from typing import Optional
 from ..core import events
 from . import client_seo
 
-# The public origin. Overridable so a fork does not audit Abdullah's domain.
+# The public origin. Overridable so a fork doesn't audit this domain.
 SITE = os.getenv("TITAN_PUBLIC_URL", "https://titanomega-ai.com").rstrip("/")
 
-# Six hours. Frequent enough to catch a regression the day it ships, rare
-# enough that Titan is not a meaningful share of its own traffic.
+# Six hours: often enough to catch a regression the day it ships, rarely
+# enough that Titan isn't a noticeable share of its own traffic.
 INTERVAL = float(os.getenv("TITAN_SELF_SEO_INTERVAL", str(6 * 3600)))
 
-# Pages worth advertising and worth auditing. Everything else on the site is
-# behind a login and has no business in a sitemap.
+# Pages worth listing and auditing. Everything else is behind a login and
+# doesn't belong in a sitemap.
 PUBLIC_PATHS = (
     ("/", 1.0, "daily"),
     ("/pricing", 0.9, "weekly"),
-    # The conversion page. It is the second most valuable URL on the site
-    # after the homepage — leaving it out of the sitemap while auditing
-    # clients for missing pages would be the same mistake twice.
+    # The sign-up page, the second most valuable URL after the homepage.
     ("/join", 0.9, "weekly"),
     ("/privacy", 0.3, "yearly"),
     ("/terms", 0.3, "yearly"),
@@ -60,12 +50,10 @@ _last_run = 0.0
 
 
 def sitemap_xml() -> str:
-    """A real sitemap. Titan's audit reports a missing one as a medium finding
-    on client sites; shipping without one was indefensible."""
+    """A real sitemap. Titan's audit flags a missing one on client sites."""
     today = time.strftime("%Y-%m-%d", time.gmtime())
-    # The landing pages are the only content Titan has that a search engine
-    # can match a real query against. Leaving them out of its own sitemap
-    # while auditing clients for exactly that would be the same mistake twice.
+    # The landing pages are the content a search engine can actually match
+    # queries against, so they belong in the sitemap.
     try:
         from . import landing
         paths = list(PUBLIC_PATHS) + landing.all_paths()
@@ -88,8 +76,8 @@ def sitemap_xml() -> str:
 def robots_txt() -> str:
     """Allow crawling, point at the sitemap, keep private surfaces out.
 
-    Disallowing /api matters: an indexed JSON endpoint is a support ticket
-    waiting to happen, and the client portal must never appear in results.
+    Disallowing /api matters: indexed JSON endpoints cause confusion, and the
+    client portal must never appear in search results.
     """
     return (
         "User-agent: *\n"
@@ -111,10 +99,9 @@ def robots_txt() -> str:
 def structured_data() -> dict:
     """JSON-LD for the product itself.
 
-    Titan's audit tells clients that only ~17% of sites publish schema and that
-    it is how AI Overviews and ChatGPT Search decide what to quote. Titan
-    published none. Offers are generated from the real plan table so the
-    marked-up price can never drift from the price actually charged.
+    Titan tells clients that schema is how AI Overviews and ChatGPT Search
+    decide what to quote, so its own site publishes it too. Offers come from
+    the real plan table so the marked-up price can't drift from what's charged.
     """
     from ..core import billing, contact
 
@@ -157,9 +144,9 @@ def structured_data() -> dict:
                 "name": "Titan Omega",
                 "url": SITE,
                 "logo": f"{SITE}/icons/icon-512.png",
-                # Empty until real details are set, and never a placeholder.
-                # Schema alone would not satisfy Titan's own NAP check either —
-                # that reads VISIBLE text, which is `contact.html_block`.
+                # Empty until real details are set; never a placeholder. Schema alone wouldn't
+                # pass Titan's own NAP check either - that reads visible text, which is
+                # `contact.html_block`.
                 **contact.schema_fragment(),
             },
             {
@@ -212,7 +199,7 @@ def audit_self(force: bool = False) -> dict:
 
 
 def report() -> dict:
-    """Published truthfully or not at all."""
+    """Published as measured, or not at all."""
     with _lock:
         snap = dict(_last)
     if not snap:

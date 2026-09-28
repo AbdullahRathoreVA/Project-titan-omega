@@ -1,8 +1,8 @@
-"""Titan Omega backend entrypoint.
+"""Titan Omega backend entry point.
 
-Boots the Executive Intelligence Core, seeds the Digital Employee Network, runs
-the Global Opportunity Engine once, and starts a background heartbeat so the
-empire keeps working with no operator input.
+Boots the executive core, seeds the agent network, runs the opportunity engine
+once, and starts the background heartbeat that keeps everything running with
+no operator input.
 
 Run locally:
     uvicorn app.main:app --reload --port 8000
@@ -24,8 +24,8 @@ from fastapi.staticfiles import StaticFiles
 from . import persistence
 from .core import envfile
 
-# Before anything reads configuration. A value already in the environment (on
-# Hugging Face, the Space secrets) always wins over the file.
+# Before anything reads configuration. A value already in the environment (the
+# Space secrets, on Hugging Face) always wins over the file.
 _ENV_LOADED = envfile.autoload()
 from .api.actions import router as actions_router
 from .api.comms import router as comms_router
@@ -43,37 +43,32 @@ from .store import STORE, seed
 
 HEARTBEAT_SECONDS = float(os.getenv("TITAN_HEARTBEAT_SECONDS", "5"))
 
-# The background loop is the product's whole "24/7" claim, so it is ON by
-# default and only the test suite turns it off. Tests exercise every cycle by
-# calling it directly; letting the loop also run inside ~100 TestClient
-# instantiations made the suite take SIX AND A HALF HOURS instead of two
-# minutes (each app start fired a full SQLite backup, an embedding-model
-# download and every scheduled cycle — see the interval note below).
+# The background loop is on by default; only the test suite turns it off. Tests
+# call each cycle directly, and letting the loop also run inside every
+# TestClient (each start firing a backup, an embedding-model download and every
+# scheduled cycle) makes the suite take hours instead of minutes.
 HEARTBEAT_ENABLED = os.getenv("TITAN_HEARTBEAT_ENABLED", "1").strip() not in (
     "0", "false", "no", "")
-# How often the autonomous growth engine runs a full live-research cycle (24/7).
-# Default 4h keeps a free Tavily key (1,000 searches/mo) well within budget:
-# 6 cycles/day x 2 searches = ~360/mo, leaving room for on-demand scans.
+# How often the autonomous growth engine runs a full live-research cycle.
+# The 4h default keeps a free Tavily key (1,000 searches/month) well within
+# budget: 6 cycles/day x 2 searches = ~360/month, leaving room for manual scans.
 GROWTH_INTERVAL = float(os.getenv("TITAN_GROWTH_INTERVAL", "14400"))  # 4 hours
 # Client site monitoring cadence. 30 min between ticks; each tick checks at most
 # 3 clients whose own 6-hour window has elapsed, so no site is hit often.
 WATCH_INTERVAL = float(os.getenv("TITAN_WATCH_INTERVAL", "1800"))
-# Six hours. Frequent enough that a rebuild loses at most one window of work,
-# rare enough that snapshotting is never a meaningful share of what this
-# container is doing.
+# Six hours: a rebuild loses at most one window of work, and snapshotting never
+# takes a noticeable share of the container's time.
 BACKUP_INTERVAL = float(os.getenv("TITAN_BACKUP_INTERVAL", str(6 * 3600)))
-# Re-measure every ACTIVE self-improvement and roll back any that got worse.
-# Six hours: a regression should not sit in production for a day, and the
-# check re-measures each active parameter, so it is not free.
+# Re-measure every active self-improvement and roll back any that got worse.
+# Six hours, so a regression doesn't sit in production for a day; the check
+# re-measures each active parameter, so it isn't free.
 IMPROVE_INTERVAL = float(os.getenv("TITAN_IMPROVE_INTERVAL", str(6 * 3600)))
 
-# Seeded to NOW, not to 0.0. `time.monotonic()` is time since system boot on
-# every platform Titan runs on, so `monotonic() - 0.0 >= INTERVAL` is TRUE on
-# the very first tick — every scheduled cycle fired immediately at startup.
-# In production that is a thundering herd on boot: a full SQLite backup, an
-# embedding-model download and every 24/7 cycle, all before the app has served
-# a request. Seeding to now means the first run of each happens one real
-# interval after boot, which is what the intervals were written to mean.
+# Seeded to now, not 0.0. `time.monotonic()` counts from system boot, so with
+# 0.0 every scheduled cycle would fire on the first tick - a backup, an
+# embedding-model download and every background cycle at once, before the app
+# has served a request. Seeding to now makes the first run happen one real
+# interval after boot.
 _last_growth = time.monotonic()
 _last_watch = time.monotonic()
 _last_backup = time.monotonic()
@@ -91,10 +86,9 @@ async def _heartbeat_loop() -> None:
             executive.heartbeat(STORE)
         with contextlib.suppress(Exception):
             await asyncio.to_thread(publisher.run_due, STORE)
-        # The durable queue. Bounded per tick so a deep backlog can never
-        # monopolise the heartbeat, and it is what takes crawls off the
-        # request path — a container recycled mid-audit retries instead of
-        # losing the work silently.
+        # The durable queue. Bounded per tick so a deep backlog can't monopolise
+        # the heartbeat. It keeps crawls off the request path, and a container
+        # recycled mid-audit retries instead of losing the work.
         with contextlib.suppress(Exception):
             from .core import queue
             await asyncio.to_thread(queue.drain, 3)
@@ -102,54 +96,45 @@ async def _heartbeat_loop() -> None:
         with contextlib.suppress(Exception):
             from .engines import telegram_bot
             await asyncio.to_thread(telegram_bot.poll_once, STORE)
-        # Autonomous client monitoring. Runs with nobody logged in — this is
-        # what makes the service continuous rather than on-demand.
+        # Client monitoring. Runs with nobody logged in, which is what makes the
+        # service continuous rather than on-demand.
         if time.monotonic() - _last_watch >= WATCH_INTERVAL:
             _last_watch = time.monotonic()
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(client_watch.cycle)
             # Titan audits its own site with the engine it sells. Rides the
-            # existing client-watch tick rather than adding a timer: self_seo
-            # keeps its own 6-hour interval internally, so calling it more
-            # often than that is a cheap no-op.
+            # client-watch tick instead of adding a timer; self_seo keeps its own
+            # 6-hour interval, so calling it more often is a cheap no-op.
             with contextlib.suppress(Exception):
                 from .engines import self_seo
                 await asyncio.to_thread(self_seo.cycle)
 
-            # Gives the audit, knowledge and watch engines real sites to work
-            # on instead of spinning against an empty client list. Keeps its
-            # own 6-hour interval, so this is a no-op the rest of the time.
+            # Gives the audit, knowledge and watch engines real sites to work on.
+            # Keeps its own 6-hour interval, so this is a no-op most of the time.
             with contextlib.suppress(Exception):
                 from .engines import demo_workspace
                 await asyncio.to_thread(demo_workspace.cycle)
 
-            # Per-client news watch. Keeps its own 3-hour interval and
-            # round-robins a few clients per tick, so a large portfolio never
-            # stalls the heartbeat.
+            # Per-client news watch. Keeps its own 3-hour interval and round-robins a
+            # few clients per tick, so a large portfolio never stalls the heartbeat.
             with contextlib.suppress(Exception):
                 from .engines import client_news
                 await asyncio.to_thread(client_news.cycle)
 
-            # The 24/7 half of the fix loop. Enqueues re-audits for every
-            # connected site; it never applies anything. Keeps its own 6-hour
-            # interval, so this is a cheap no-op the rest of the time.
+            # The scheduled half of the fix loop: enqueues re-audits for every
+            # connected site and never applies anything. Keeps its own 6-hour
+            # interval, so this is a cheap no-op most of the time.
             with contextlib.suppress(Exception):
                 from .engines import fix_cycle
                 await asyncio.to_thread(fix_cycle.cycle)
 
-            # Embed anything indexed while the model was still downloading.
-            # THIS WAS THE BUG: knowledge.backfill() existed, was tested, and
-            # was exposed as a manual endpoint that nothing ever called — so
-            # in production it never ran. Pages ingested in the first minutes
-            # after a rebuild kept no vectors and were never re-embedded, and
-            # that client stayed keyword-only forever. On a free Space that
-            # rebuilds often, that was most clients, and it is the likeliest
-            # cause of the measured 2/4 retrieval score.
+            # Embed anything indexed while the model was still downloading. Pages
+            # ingested in the first minutes after a rebuild have no vectors; without
+            # this they'd stay keyword-only until the next audit.
             #
-            # On the heartbeat rather than the queue deliberately: it is
-            # idempotent, bounded by MAX_PASSAGES, and a no-op when nothing is
-            # pending — durability buys nothing here and a job row per tick
-            # would be noise.
+            # On the heartbeat rather than the queue: it's idempotent, bounded by
+            # MAX_PASSAGES, and a no-op when nothing is pending, so a job row per tick
+            # would just be noise.
             with contextlib.suppress(Exception):
                 from .core import knowledge
                 await asyncio.to_thread(knowledge.backfill)
@@ -158,25 +143,19 @@ async def _heartbeat_loop() -> None:
                 from .core import queue
                 await asyncio.to_thread(queue.trim)
 
-            # A scheduled, self-verifying backup. Keeps its own interval.
-            # Titan holds the only copy of the previous value of pages it has
-            # changed on customers' live websites; losing that store loses the
-            # ability to undo those changes.
+            # A scheduled, self-verifying backup with its own interval. Titan holds
+            # the only copy of the previous content of pages it has changed on
+            # customers' sites; losing that store loses the ability to undo them.
             if time.monotonic() - _last_backup >= BACKUP_INTERVAL:
                 globals()["_last_backup"] = time.monotonic()
                 with contextlib.suppress(Exception):
                     from .core import backup
                     made = await asyncio.to_thread(backup.create, "scheduled")
-                    # Only a backup that VERIFIED is worth uploading. backup
-                    # proves itself by restoring into a scratch database and
-                    # counting rows; shipping one that failed that check would
-                    # replace a good snapshot with a broken one.
+                    # Only upload a backup that verified (backup restores it into a scratch
+                    # database and counts rows); uploading a failed one would replace a good
+                    # snapshot with a broken one.
                     #
-                    # The path lives at manifest["file"] -- there is no
-                    # top-level "path" key, and reading one returns None, which
-                    # is falsy, so the upload would simply never have happened
-                    # and the absence would have looked exactly like "nothing
-                    # to push".
+                    # The path is at manifest["file"]; there's no top-level "path" key.
                     manifest = (made or {}).get("manifest") or {}
                     if (made or {}).get("ok") and manifest.get("verified") \
                             and manifest.get("file"):
@@ -186,17 +165,12 @@ async def _heartbeat_loop() -> None:
                                 _remote.push, manifest["file"],
                                 note="scheduled")
 
-            # The self-improvement loop's automatic half. THIS WAS THE SAME BUG
-            # AS knowledge.backfill(): improve.check_active() re-measures every
-            # ACTIVE change and rolls back any that got worse, it is tested, it
-            # is mutation-guarded, and NOTHING IN PRODUCTION EVER CALLED IT. So
-            # "auto-rollback on regression" was true of the function and false
-            # of the deployment, and an approved change that made Titan worse
-            # stayed live until somebody clicked an endpoint by hand.
+            # The automatic half of the self-improvement loop: improve.check_active()
+            # re-measures every active change and rolls back any that got worse.
             #
-            # Safe to automate precisely because it is the only direction that
-            # is safe: it never proposes, never approves and never activates.
-            # It can only move a value BACK to one a human already approved.
+            # Safe to run automatically because it only goes one way: it never
+            # proposes, approves or activates, it only moves a value back to one a
+            # person already approved.
             if time.monotonic() - _last_improve >= IMPROVE_INTERVAL:
                 globals()["_last_improve"] = time.monotonic()
                 with contextlib.suppress(Exception):
@@ -213,24 +187,22 @@ async def _heartbeat_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # FIRST, before anything is loaded or served. A deployment that enforces
-    # authentication and has no usable TITAN_SECRET must not answer a single
-    # request: it would be signing founder sessions, and encrypting the
-    # WordPress credential vault, with a key printed in the public repository.
-    # Deliberately NOT wrapped in contextlib.suppress — this one is meant to
-    # stop the boot. See core/appsecret.py.
+    # First, before anything is loaded or served. A deployment that enforces
+    # authentication with no usable TITAN_SECRET must not answer a single
+    # request, or it would sign founder sessions and encrypt the WordPress
+    # credential vault with a published key. Deliberately not wrapped in
+    # contextlib.suppress - this is meant to stop the boot. See
+    # core/appsecret.py.
     from .core import appsecret as _appsecret
     _appsecret.verify_at_startup()
 
-    # BEFORE anything reads the database. A free Space wipes /tmp on every
-    # rebuild, so on a fresh container the state file is simply absent and the
-    # latest verified snapshot is pulled back from a free private Dataset repo.
-    # `remote_state.pull` REFUSES if a state file already exists, so this can
-    # only ever restore towards an empty database -- overwriting a live one
-    # with an older snapshot is the direction that loses data.
-    # The result used to be discarded. A restore that failed — expired token,
-    # renamed repo, Hub outage — wiped every account and said nothing, and the
-    # symptom was identical to a healthy first boot with no snapshot yet.
+    # Before anything reads the database. A free Space wipes /tmp on every
+    # rebuild, so on a fresh container the state file is absent and the latest
+    # verified snapshot is pulled from a free private Dataset repo.
+    # `remote_state.pull` refuses if a state file already exists, so this only
+    # ever restores into an empty database. The outcome is always recorded, so a
+    # failed restore (expired token, renamed repo, Hub outage) doesn't look like
+    # a healthy first boot.
     with contextlib.suppress(Exception):
         from .core import remote_state as _remote
         if not _remote.configured():
@@ -247,40 +219,35 @@ async def lifespan(app: FastAPI):
 
     seed(STORE)
     persistence.load(STORE)
-    # Seed the founder account from the environment, and with it retire the
-    # plaintext comparison in core/auth.py. Idempotent, and it never raises: a
-    # deployment that has not set TITAN_FOUNDER_EMAIL keeps the old gate and
-    # says so on /api/auth, rather than refusing to serve. Unlike the secret
-    # check above, being unconfigured here is a downgrade, not a danger.
+    # Seed the founder account from the environment, which retires the
+    # environment-password gate in core/auth.py. Idempotent and never raises: a
+    # deployment without TITAN_FOUNDER_EMAIL keeps the old gate and says so on
+    # /api/auth. Unlike the secret check above, being unconfigured here is a
+    # downgrade, not a danger.
     with contextlib.suppress(Exception):
         from .core import identity as _identity
         _identity.ensure_founder()
     opportunity.discover(STORE)
     ensure_weights(STORE)
     # Register the external-capability adapters. Idempotent, no network, no
-    # imports of optional packages — a tool that is not configured simply
-    # reports what it needs.
+    # optional-package imports - an unconfigured tool just reports what it needs.
     from .engines import adapters
     adapters.register_all()
-    # Re-apply approved parameter overrides to the live modules. Without this
-    # an approved, activated improvement silently reverts on the next rebuild
-    # and nobody would know why the numbers moved back — the same shape as
-    # knowledge.backfill(), which existed, was tested, was exposed as an
-    # endpoint, and had zero callers.
+    # Re-apply approved parameter overrides to the live modules; otherwise an
+    # approved improvement would silently revert on the next rebuild.
     with contextlib.suppress(Exception):
         from .core import params as _params
         _params.apply_stored()
-    # Bind job kinds to their handlers BEFORE the heartbeat drains anything,
-    # so work already sitting in the queue from a previous container is picked
-    # up on this boot rather than parked as unhandled.
+    # Bind job kinds to their handlers before the heartbeat drains anything, so
+    # work left in the queue by a previous container is picked up on this boot.
     with contextlib.suppress(Exception):
         from .engines import fix_cycle
         fix_cycle.register_handlers()
 
     async def _initial_sync() -> None:
-        # Same gate as the heartbeat: these are three network round trips
-        # (GitHub, CareerMind, a live web-research cycle) fired on every app
-        # start, which in the test suite means on every TestClient.
+        # Same gate as the heartbeat: these are network round trips (GitHub,
+        # CareerMind, a live web-research cycle) on every app start, which in the test
+        # suite means every TestClient.
         if not HEARTBEAT_ENABLED:
             return
         with contextlib.suppress(Exception):
@@ -293,12 +260,9 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(autonomous.growth_cycle, STORE)
         # One backup shortly after boot, then every BACKUP_INTERVAL.
         #
-        # Seeding the interval trackers to "now" fixed the boot stampede, but
-        # it also meant the first backup would be six hours after start — and
-        # a free Space frequently rebuilds sooner than that, so in practice a
-        # backup might never be taken at all. It measured ~20ms, so taking one
-        # here costs nothing and is exactly the case backups exist for: an
-        # ephemeral disk that can be wiped at any moment.
+        # A free Space often rebuilds sooner than six hours, so waiting a full
+        # interval could mean no backup ever gets taken. A backup takes ~20ms, so
+        # taking one here is cheap.
         with contextlib.suppress(Exception):
             from .core import backup
             await asyncio.to_thread(backup.create, "boot")
@@ -329,10 +293,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Paths that never require a login token — the login screen, health checks, the
-# voice/assistant UI calls, and the automation endpoints Make.com calls (it has
-# no login token). These are low-risk (content generation / append-only logging)
-# and the Space URL is private.
+# Paths that never need a login token: the login screen, health checks, public
+# product pages, and the automation endpoints Make.com calls (it has no login
+# token). The automation ones are low-risk: content generation and append-only
+# logging.
 _OPEN_PATHS = {
     # Paddle cannot hold a Titan token; the HMAC signature authenticates it
     # (api/router.py billing_webhook), and no secret means nothing is accepted.
@@ -340,21 +304,18 @@ _OPEN_PATHS = {
     "/api/login",
     "/api/auth",
     "/api/demo/enter",
-    # Opens the CUSTOMER product for a stranger, with no token. Public on
-    # purpose: it is the demo. It can only ever reach a business Titan owns —
-    # see demo_workspace.showcase(), which returns None rather than falling
-    # back to a real client.
+    # Opens the customer product for a stranger, with no token. Public on purpose:
+    # it's the demo. It can only reach a business Titan owns - see
+    # demo_workspace.showcase(), which returns None rather than falling back to a
+    # real client.
     "/api/demo/portal",
     # The subscriber cockpit on the read-only demo account (router.py
     # enter_cockpit_demo). Public for the same reason: it is the demo.
     "/api/demo/cockpit",
     "/api/session",
     "/health",
-    # /api/voice-report and /api/assistant used to be listed here, on the
-    # reasoning that "the Space URL is private". It stopped being private when
-    # the product went public: anyone could read the founder's live figures
-    # from the first and spend his AI quota through the second. The founder's
-    # screens send his token; a subscriber asks through /api/me.
+    # /api/voice-report and /api/assistant aren't open: the founder's screens send
+    # the founder token, and subscribers ask through /api/me.
     "/api/intelligence",
     "/api/llm/health",
     "/api/tts/health",
@@ -362,44 +323,32 @@ _OPEN_PATHS = {
     "/api/content/daily",
     "/api/intel/news",
     "/api/inbox/auto-reply",
-    # Public product surface. Pricing must be readable and signup reachable
-    # without a founder token, or nobody can ever become a customer — the
-    # whole point of Part 5B.
+    # Public product surface: pricing has to be readable and signup reachable
+    # without a founder token, or nobody can become a customer.
     "/api/plans",
     "/api/signup",
     "/api/account/login",
-    # Titan's own audit score and product schema are marketing assets — they
-    # are meant to be read by strangers and by crawlers.
+    # Titan's own audit score and product schema are marketing assets, meant to be
+    # read by strangers and crawlers.
     "/api/self-seo",
     "/api/structured-data",
-    # NOTE: the client portal is handled by _OPEN_PREFIXES below, not here.
-    # Listing each path individually meant every new client endpoint silently
-    # 401'd until someone remembered to register it — /client/social and
-    # /client/report.pdf both did exactly that.
-    # NOTE: /api/revenue/log is deliberately NOT open. It writes to the real
-    # money ledger, and this deployment is publicly reachable (demo button), so
-    # it now requires the founder token or the X-Webhook-Secret header. Make.com
-    # must send:  X-Webhook-Secret: <TITAN_WEBHOOK_SECRET>
+    # The client portal is handled by _OPEN_PREFIXES below, not here.
+    # /api/revenue/log is deliberately not open: it writes to the real money
+    # ledger, so it needs the founder token or the X-Webhook-Secret header.
+    # Make.com must send:  X-Webhook-Secret: <TITAN_WEBHOOK_SECRET>
 }
 
 
-# Every /api/client/* route carries its OWN credential (X-Client-Token), is
-# scoped to exactly one business, and fails closed on an unrecognised token.
-# So the whole prefix bypasses the FOUNDER token guard without weakening it —
-# admin client management stays behind the founder token.
+# Every /api/client/* route has its own credential (X-Client-Token), is scoped
+# to one business, and fails closed on an unknown token, so the whole prefix
+# can skip the founder token guard without weakening it. Admin client
+# management stays behind the founder token. A prefix rather than a list, so a
+# new client endpoint doesn't 401 until someone remembers to register it.
 #
-# A prefix rather than a list of exact paths: listing them individually meant
-# every new client endpoint silently 401'd until someone remembered to register
-# it, which is exactly what happened to /client/social and /client/report.pdf.
-#
-# /api/account and /api/checkout/* carry their OWN credential (X-Account-Token)
-# and are scoped to one subscriber, exactly like the client portal above. They
-# bypass the FOUNDER guard without weakening it: an unknown account token
-# resolves to nothing and the endpoint 401s.
-# /api/org carries its own credential too - an identity session resolved
-# through core/identity.py, scoped to one organisation by membership and
-# failing closed on an unrecognised token. Same contract as the three
-# above, so it bypasses the FOUNDER guard without weakening it.
+# /api/account and /api/checkout/* carry their own credential (X-Account-Token)
+# scoped to one subscriber, and /api/org uses an identity session scoped to one
+# organisation by membership. All fail closed on an unknown token, so they skip
+# the founder guard the same way.
 _OPEN_PREFIXES = ("/api/client/", "/api/account", "/api/checkout/",
                   "/api/org")
 
@@ -416,10 +365,10 @@ def _static_page(name: str) -> FileResponse:
 def robots():
     """Titan's own robots.txt.
 
-    NOTE: Cloudflare serves a managed AI-content-signals robots.txt at the zone
-    level, which takes precedence at the edge and does NOT declare a sitemap.
-    If this file is not what titanomega-ai.com returns, disable the managed
-    robots.txt in the Cloudflare dashboard so this one is served instead.
+    Cloudflare can serve a managed AI-content-signals robots.txt at the zone
+    level, which takes precedence at the edge and doesn't declare a sitemap.
+    If titanomega-ai.com isn't returning this file, disable the managed
+    robots.txt in the Cloudflare dashboard.
     """
     from .engines import self_seo
     return Response(content=self_seo.robots_txt(), media_type="text/plain")
@@ -427,8 +376,9 @@ def robots():
 
 @app.get("/sitemap.xml", include_in_schema=False)
 def sitemap():
-    """Titan's audit reports a missing sitemap as a finding on client sites.
-    Shipping without one was indefensible."""
+    """Titan's audit flags a missing sitemap on client sites, so its own site
+    serves one.
+    """
     from .engines import self_seo
     return Response(content=self_seo.sitemap_xml(),
                     media_type="application/xml")
@@ -436,17 +386,17 @@ def sitemap():
 
 @app.get("/privacy", include_in_schema=False)
 def privacy_page():
-    """Exists because Titan's own audit flagged its absence as legal-critical
-    against titanomega-ai.com — the same finding it charges clients to fix.
-    Signup now collects email addresses and the target market is the EU."""
+    """Privacy policy. Signup collects email addresses and the target market is
+    the EU, and Titan's own audit flags a missing policy as legal-critical.
+    """
     return _static_page("privacy.html")
 
 
 @app.get("/terms", include_in_schema=False)
 def terms_page():
-    """Paddle's seller review checks for terms of service and a refund policy
-    before it approves a merchant. Titan had neither, so the payment account
-    could not be approved however complete the checkout code was."""
+    """Terms of service and refund policy, which Paddle's seller review checks
+    for before approving a merchant.
+    """
     return _static_page("terms.html")
 
 
@@ -457,17 +407,12 @@ def refunds_page():
 
 @app.get("/pricing", include_in_schema=False)
 def pricing_page_with_schema():
-    """Pricing, with the product JSON-LD injected SERVER-SIDE.
+    """Pricing, with the product JSON-LD injected server-side.
 
-    The page originally fetched /api/structured-data and appended a script tag
-    from JavaScript. Google executes JS, but most AI answer-engine crawlers do
-    not — and Titan's own audit tells clients that schema is how those engines
-    decide what to quote. Schema that only exists after hydration is schema
-    those crawlers never see, so Titan was failing its own advice.
-
-    Injected at request time rather than baked into the file so the marked-up
-    prices are generated from the live plan table and cannot drift from what is
-    actually charged.
+    Google runs JavaScript, but most AI answer-engine crawlers don't, so schema
+    added after hydration would never be seen by them. Injected per request
+    rather than baked into the file, so the marked-up prices come from the live
+    plan table and can't drift from what's charged.
     """
     import json as _json
     import os as _os
@@ -480,8 +425,8 @@ def pricing_page_with_schema():
     with open(page, encoding="utf-8") as fh:
         html = fh.read()
     ld = _json.dumps(self_seo.structured_data(), ensure_ascii=False)
-    # Escaping "</" prevents a stray closing tag inside the JSON from ending the
-    # script element early, which would break the page and the markup with it.
+    # Escaping "</" stops a stray closing tag inside the JSON from ending the
+    # script element early.
     ld = ld.replace("</", "<\\/")
     tag = f'<script type="application/ld+json">{ld}</script>\n</head>'
     return Response(content=html.replace("</head>", tag, 1),
@@ -492,9 +437,8 @@ def pricing_page_with_schema():
 def compliance_landing(code: str):
     """Per-jurisdiction legal requirements, server-rendered.
 
-    Server-rendered on purpose: the dashboard is a client-rendered SPA, and
-    Titan's own audit already caught its homepage serving an empty shell to
-    crawlers. A page written to be found must be readable with JavaScript off.
+    The dashboard is a client-rendered SPA; a page meant to be found by search
+    has to be readable with JavaScript off.
     """
     from .engines import landing
     page = landing.compliance_page(code)
@@ -515,12 +459,12 @@ def vertical_landing(vertical: str):
 
 @app.get("/join", include_in_schema=False)
 def join_page():
-    """Signup → pick a plan → add a business → first audit → PDF, on one screen.
+    """Signup -> pick a plan -> add a business -> first audit -> PDF, on one screen.
 
-    Static for the same reason /pricing is: this is where a stranger decides
-    whether Titan is worth the trouble, and it must render before a 175 kB
-    dashboard bundle would have finished downloading. It holds no logic — every
-    number and limit comes from the API that enforces them.
+    Static like /pricing: this is where a stranger decides whether Titan is
+    worth trying, so it has to render before the dashboard bundle would have
+    downloaded. It holds no logic - every number and limit comes from the API
+    that enforces them.
     """
     return _static_page("join.html")
 
@@ -533,11 +477,10 @@ def client_portal():
 
 @app.get("/clients", include_in_schema=False)
 def admin_console():
-    """Abdullah's console: every business he manages, on one screen.
+    """The founder's console: every managed business on one screen.
 
-    The page itself is public HTML — it holds no data. Everything it renders
-    comes from /api/admin/* which stays behind the founder token, so serving
-    the shell openly leaks nothing.
+    The page itself is public HTML with no data. Everything it shows comes
+    from /api/admin/*, which stays behind the founder token.
     """
     return _static_page("admin.html")
 
@@ -545,8 +488,9 @@ def admin_console():
 @app.middleware("http")
 async def no_cache_html(request: Request, call_next):
     """Never let browsers cache the HTML shell. Next.js chunks are content-hashed
-    (safe to cache forever), but a cached index.html keeps pointing at OLD chunks —
-    which is exactly how the HF Space iframe kept showing a stale dashboard."""
+    (safe to cache forever), but a cached index.html keeps pointing at old
+    chunks, which shows a stale dashboard.
+    """
     resp = await call_next(request)
     if "text/html" in resp.headers.get("content-type", ""):
         resp.headers["Cache-Control"] = "no-cache, must-revalidate"
@@ -562,9 +506,8 @@ _ASSET_SUFFIXES = (".js", ".css", ".png", ".jpg", ".jpeg", ".svg", ".ico",
 async def count_visitors(request: Request, call_next):
     """Count HTML page loads so the founder can see who opened the site.
 
-    Only page loads: counting assets and API calls would turn a single visit
-    into thirty and make the number worthless. See core/traffic.py for why no
-    IP is stored.
+    Only page loads: counting assets and API calls would turn one visit into
+    thirty. See core/traffic.py for why no IP is stored.
     """
     resp = await call_next(request)
     try:
@@ -575,15 +518,15 @@ async def count_visitors(request: Request, call_next):
             client_host = request.client.host if request.client else ""
             traffic.record(
                 path=path,
-                # Behind the Cloudflare Worker the socket peer is Cloudflare,
-                # not the visitor — the real address is in CF-Connecting-IP.
+                # Behind the Cloudflare Worker the socket peer is Cloudflare, not the
+                # visitor; the real address is in CF-Connecting-IP.
                 ip=(request.headers.get("cf-connecting-ip")
                     or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
                     or client_host),
                 user_agent=request.headers.get("user-agent", ""),
                 referrer=request.headers.get("referer", ""),
-                # Cloudflare adds this on every proxied request at no cost and
-                # with no IP database. Country only, deliberately.
+                # Cloudflare adds this on every proxied request, free and without an IP
+                # database. Country only, deliberately.
                 country=request.headers.get("cf-ipcountry", ""),
             )
     except Exception:
@@ -593,23 +536,20 @@ async def count_visitors(request: Request, call_next):
 
 @app.middleware("http")
 async def bill_to(request: Request, call_next):
-    """Say which subscriber this request belongs to, once.
+    """Say which subscriber this request is billed to, once.
 
-    Read by core/quota.py, which core/llm.py asks before spending a model call.
-    Bound HERE rather than at each of the ~20 routes that resolve an account
-    token, because the one that gets forgotten is the one that runs unmetered —
-    which is how 36 LLM call sites came to charge nobody at all.
+    Read by core/quota.py, which core/llm.py checks before spending a model
+    call. Bound here rather than in each route that resolves an account token,
+    so no route can forget it.
 
-    An absent or unrecognised token binds NOTHING, and unbound work is not
-    charged to anybody and never refused. Founder work, the heartbeat engines
-    and the public demo are not a subscriber's usage, and guessing an account
-    for them would either invent usage on somebody's bill or refuse Titan's own
-    background work because a stranger's plan ran out.
+    An absent or unknown token binds nothing, and unbound work is neither
+    charged nor refused: founder work, the heartbeat engines and the public
+    demo aren't a subscriber's usage.
     """
     from .core import quota
     quota.bind("")
-    # A customer cockpit call was already authenticated by auth_guard, which
-    # runs first and has rewritten /api/me/<x> to /api/<x>. Bill that customer.
+    # A customer cockpit call was already authenticated by auth_guard, which runs
+    # first and has rewritten /api/me/<x> to /api/<x>. Bill that customer.
     from .core import cockpit_scope
     if cockpit_scope.is_customer():
         quota.bind(cockpit_scope.customer_email())
@@ -662,9 +602,9 @@ def _is_demo_request(request: Request) -> bool:
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
     path = request.url.path
-    # The public demo account reads everything and changes nothing - on
-    # /api/me and on the older /api/account door alike, since its token is an
-    # ordinary account token and would otherwise open both.
+    # The public demo account can read everything and change nothing, on /api/me
+    # and the older /api/account door alike, since its token is an ordinary
+    # account token and would otherwise open both.
     if request.method not in ("GET", "HEAD", "OPTIONS") and _is_demo_request(request):
         return JSONResponse({"detail": ("This is the demo. Sign up free to do "
                                         "this in your own workspace."),
@@ -697,8 +637,7 @@ async def auth_guard(request: Request, call_next):
                 if payload is not None:
                     return JSONResponse(payload)
                 if demo_data.is_sensitive(path):
-                    # Any private path without an explicit sample is refused
-                    # outright — fail closed, never leak.
+                    # Any private path without a sample is refused outright - fail closed.
                     return JSONResponse({"detail": "Hidden in demo", "guest": True}, status_code=403)
                 return await call_next(request)
 
@@ -710,18 +649,17 @@ async def auth_guard(request: Request, call_next):
     return await call_next(request)
 
 
-# Registered LAST, and that is load-bearing. Starlette's `add_middleware`
-# inserts at the FRONT of the list, so the last one registered is the
-# OUTERMOST and runs first. Declared any earlier in this file, this would sit
-# inside `auth_guard` and every 401/403 — the requests you most want a record
-# of — would never be logged at all.
+# Registered last on purpose. Starlette's `add_middleware` inserts at the front
+# of the list, so the last one registered is outermost and runs first. Declared
+# any earlier, this would sit inside `auth_guard`, and 401/403 responses (the
+# ones you most want logged) would never be logged.
 @app.middleware("http")
 async def request_log(request: Request, call_next):
     """One structured line per request, with an id that follows the work.
 
     The id is returned in `X-Request-Id`, so a customer reporting a problem can
-    quote a number that finds the exact request. An inbound `X-Request-Id` is
-    honoured (truncated) so a trace survives a proxy hop.
+    quote it. An inbound `X-Request-Id` is kept (truncated) so a trace survives
+    a proxy hop.
     """
     from .core import obs
 
@@ -737,8 +675,8 @@ async def request_log(request: Request, call_next):
                   error=f"{type(exc).__name__}: {str(exc)[:200]}")
         raise
     ms = round((time.monotonic() - started) * 1000, 1)
-    # Assets are most of the traffic and none of the signal. Logging every
-    # chunk would bury the API calls that matter.
+    # Assets are most of the traffic and none of the signal; logging every chunk
+    # would bury the API calls that matter.
     if not path.endswith(_ASSET_SUFFIXES) and not path.startswith("/_next/"):
         obs.log("http.request",
                 "error" if resp.status_code >= 500

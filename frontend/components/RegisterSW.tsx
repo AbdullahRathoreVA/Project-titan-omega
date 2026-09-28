@@ -27,8 +27,8 @@ export function RegisterSW() {
       });
     };
 
-    // Wait for load so registration never competes with the first paint of the
-    // 3D scene, which is already the heaviest thing on the page.
+    // Wait for load so registration doesn't compete with the first paint of the
+    // 3D scene, already the heaviest thing on the page.
     if (document.readyState === "complete") register();
     else window.addEventListener("load", register, { once: true });
   }, []);

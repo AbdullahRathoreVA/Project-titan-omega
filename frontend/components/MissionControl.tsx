@@ -1,8 +1,8 @@
 "use client";
 
-// Mission Control — the unified live operations view (Vision X slice 4+6):
-// execution queues, priority/opportunity queue, risk alerts, agent health,
-// and the AI memory timeline (council decisions), all from live data.
+// Mission Control - the unified live operations view: execution queues,
+// priority/opportunity queue, risk alerts, agent health, and the council
+// decision timeline, all from live data.
 
 import { motion } from "framer-motion";
 import {

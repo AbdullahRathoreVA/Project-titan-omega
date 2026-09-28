@@ -22,8 +22,7 @@ export function ExecutionFeed({ events }: { events: FeedEvent[] }) {
         <AnimatePresence initial={false}>
           {events.map((e) =>
             e.kind === "handoff" ? (
-              // Inter-division hand-off — rendered as a distinct "collaboration"
-              // row so the network visibly cooperates, not just logs events.
+              // Inter-division hand-off, rendered as a distinct "collaboration" row.
               <motion.div
                 key={e.id}
                 initial={{ opacity: 0, x: -8 }}

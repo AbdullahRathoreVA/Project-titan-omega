@@ -1,5 +1,5 @@
-// Futuristic UI sounds, synthesized live with WebAudio — no audio files, no
-// bundle cost. Everything is wrapped in try/catch: sound must never break UI.
+// UI sounds synthesized live with WebAudio - no audio files, no bundle cost.
+// Everything is wrapped in try/catch; sound must never break the UI.
 
 import { authHeaders } from "@/lib/api";
 
@@ -17,7 +17,7 @@ function emitSpeech(speaking: boolean) {
 }
 
 // One reusable <audio> element for premium (ElevenLabs) playback. Reusing a
-// single element that was unlocked inside a gesture is what lets iOS replay
+// single element that was unlocked inside a gesture is what lets iOS play
 // audio later. A tiny silent WAV primes it.
 let mediaEl: HTMLAudioElement | null = null;
 const SILENT_WAV =
@@ -39,11 +39,11 @@ function ac(): AudioContext | null {
 }
 
 // --- Cross-device audio unlock -------------------------------------------
-// Browsers (especially iOS Safari, Android Chrome, macOS Safari) refuse to
-// play WebAudio OR speech synthesis unless the very first call happens inside
-// a real user gesture (tap/click). `unlockAudio()` MUST be called synchronously
-// from a click/tap handler — it resumes the audio context and primes the TTS
-// engine so every later speak()/tone() works for the rest of the session.
+// Browsers (especially iOS Safari, Android Chrome, macOS Safari) refuse to play
+// WebAudio or speech synthesis unless the first call happens inside a real user
+// gesture (tap/click). `unlockAudio()` must be called synchronously from a
+// click/tap handler: it resumes the audio context and primes the TTS engine so
+// later speak()/tone() calls work for the rest of the session.
 let audioUnlocked = false;
 
 export function unlockAudio(): void {
@@ -58,8 +58,8 @@ export function unlockAudio(): void {
       } catch {
         /* silent */
       }
-      // A silent utterance spoken inside the gesture is what actually unlocks
-      // TTS on iOS/Android — after this, deferred speak() calls are allowed.
+      // A silent utterance spoken inside the gesture is what unlocks TTS on
+      // iOS/Android; after this, deferred speak() calls are allowed.
       const primer = new SpeechSynthesisUtterance(" ");
       primer.volume = 0;
       ss.speak(primer);
@@ -204,10 +204,13 @@ export function speak(text: string) {
   }
 }
 
-/** Premium voice via the backend ElevenLabs proxy (founder-only + $0-safe). If
- * the backend returns audio (200), play it through the primed media element;
- * on ANY miss (204/403/no key/guest/error) run `fallback()` — the free browser
- * voice — so speech NEVER goes silent. Returns when playback (or fallback) starts. */
+/**
+ * Premium voice via the backend ElevenLabs proxy (founder-only, free when no
+ * key is set). If the backend returns audio (200), play it through the primed
+ * media element; on any miss (204/403/no key/guest/error) run `fallback()`,
+ * the browser voice, so speech never goes silent. Resolves when playback (or
+ * the fallback) starts.
+ */
 export async function speakPremium(text: string, fallback: () => void): Promise<void> {
   let played = false;
   try {

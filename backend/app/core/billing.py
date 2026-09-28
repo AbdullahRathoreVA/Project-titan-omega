@@ -1,30 +1,20 @@
 """Subscription plans, usage limits and signup.
 
-Spec Part 5B: a genuinely useful free tier, clear upgrade paths, plans with
-"feature comparison, usage limits, storage limits, AI usage quotas", and
-explicitly: "Avoid dark patterns or deceptive UX."
+A useful free tier first, conversion second, with clear upgrade paths and no
+dark patterns. Two rules are enforced in code:
 
-The model is the one Abdullah described — free usage first, conversion second.
-Two rules follow from Part 5B and are enforced in code rather than trusted to
-copywriting:
+1. The free tier is genuinely useful. It includes a real audit with the legal
+   findings, because that's what shows Titan is worth paying for.
+2. Reaching a limit is never a silent failure. Exceeding a quota returns which
+   limit, its value, when it resets and what the next tier gives - never a
+   bare error or quietly truncated results.
 
-1. **The free tier must be genuinely useful.** Free includes a real audit with
-   the legal findings, because the legal check is the thing that proves Titan
-   is worth paying for. Crippling it to force upgrades would be the dark
-   pattern the spec forbids and would sell nothing.
+Payment processors sit behind one `Processor` seam, so the tier logic, quotas
+and signup flow don't care who takes the money.
 
-2. **A limit that is reached is never a silent failure.** Exceeding a quota
-   returns which limit, what it is, when it resets and what the next tier gives
-   — never a bare error, and never a quiet truncation of results.
-
-Processor: PayPal, on Abdullah's instruction. Deliberately behind the same
-`Processor` seam as everything else in this codebase, so switching to Dodo or
-Stripe later is one adapter, not a rewrite — the tier logic, the quotas and the
-signup flow do not know or care who takes the money.
-
-Nothing here charges anyone. Creating a subscription returns an approval URL
-that the CUSTOMER must open and confirm themselves; Titan never handles a card
-number and never completes a payment on a user's behalf.
+Nothing here charges anyone. Starting a subscription returns a checkout the
+customer opens and confirms themselves; Titan never handles a card number or
+completes a payment on anyone's behalf.
 """
 
 from __future__ import annotations
@@ -41,21 +31,18 @@ from typing import Optional
 from . import events
 
 # ------------------------------------------------------------------ plans --
-# Prices in USD. Chosen against what comparable SEO/agency tools charge, and
-# deliberately low: a Pakistan-based solo founder competing on price with
-# incumbents is a real advantage, and an empty paid tier earns nothing.
+# Prices in USD, kept low against comparable SEO/agency tools.
 
 
-# Trial lengths, per plan, overridable without a deploy:
+# Trial lengths per plan, overridable without a deploy:
 #   TITAN_TRIAL_DAYS_STUDENT / _INDIVIDUAL / _ENTERPRISE / _AGENCY
 #
-# Abdullah set these on 2026-09-28, replacing the earlier year-long student
-# trial: 3 days on Student, 7 on Individual, a month (30 days) on Enterprise,
-# and none on Agency, whose price pays for his own time from day one.
+# Defaults: 3 days on Student, 7 on Individual, 30 on Enterprise, and none on
+# Agency, whose price covers the founder's own time from day one.
 #
-# They are env-driven because a trial length is a pricing experiment, and a
-# pricing experiment that needs a redeploy never gets run. The Paddle price
-# carries its own trial; the two must be changed together.
+# Env-driven because trial length is a pricing experiment, and one that needs a
+# redeploy never gets run. The Paddle price carries its own trial; change both
+# together.
 _DEFAULT_TRIAL_DAYS = {"free": 0, "student": 3, "individual": 7,
                        "enterprise": 30, "agency": 0}
 
@@ -98,9 +85,8 @@ class Plan:
             "features": list(self.features),
             "note": self.note,
             "trial_days": days,
-            # A trial with no processor behind it is not a trial, it is a
-            # free account that stops working. Say which one this is rather
-            # than advertising a conversion that cannot happen.
+            # A trial with no processor behind it is really a free account that stops
+            # working, so say which one this is.
             "trial_billable": bool(days) and processor_configured(),
         }
 
@@ -153,12 +139,11 @@ PLANS: dict[str, Plan] = {
             "API access",
         ),
         note="-1 means no enforced limit."),
-    # Enterprise already has no enforced limit, so Agency cannot be sold on a
-    # bigger number. Everything it adds is either built (the client's logo on
-    # their portal and reports: clients.logo_url, client_report.py) or
-    # Abdullah's own time, which he chose to promise on 2026-09-28. Adding a
-    # line here that neither the code nor he delivers is a false advert, and
-    # Paddle's review compares the site against what is sold.
+    # Enterprise already has no enforced limit, so Agency isn't sold on a bigger
+    # number. Everything it adds is either built (the client's logo on their portal
+    # and reports: clients.logo_url, client_report.py) or the founder's own time.
+    # Don't add a line here that neither the code nor the founder delivers - Paddle
+    # reviews the site against what's sold.
     "agency": Plan(
         "agency", "Agency", 50.0,
         clients=-1, audits_per_month=-1, ai_calls_per_month=-1,
@@ -201,35 +186,29 @@ def _hash(password: str, salt: str) -> str:
 
 def _period_start() -> float:
     """Quotas reset on a rolling 30-day window from signup, not on the 1st of
-    the month — otherwise someone signing up on the 30th gets one day of usage
-    for a full month's price."""
+    the month - otherwise signing up on the 30th would get one day of usage
+    for a full month's price.
+    """
     return time.time()
 
 
 def signup(email: str, password: str, plan: str = "free") -> dict:
-    """Create an account. ALWAYS on Free.
+    """Create an account. Always on Free.
 
-    `plan` is only what the person chose on the way in, kept as
-    `requested_plan` so the pricing funnel can be measured. It used to become
-    the account's plan, with status "pending_payment" - and every limit read
-    the plan and ignored the status, so picking Agency on /join and closing
-    the checkout kept unlimited Agency for nothing. A paid plan is set only by
-    a confirmed payment (apply_paddle_event -> set_plan) or a founder grant.
+    `plan` is only what the person picked on the way in, kept as
+    `requested_plan` so the pricing funnel can be measured. A paid plan is set
+    only by a confirmed payment (apply_paddle_event -> set_plan) or a founder
+    grant, so choosing a plan and closing the checkout doesn't grant it.
     """
-    # The check here used to be `"@" not in email or len(email) < 5`, which
-    # accepted `xx@xx` and `@@@@@` as customers. That is not a cosmetic
-    # problem: the signup funnel is the only instrument that answers "is
-    # anybody actually using this?", and it was counting junk. Nothing could
-    # ever be sent to those accounts either, so a receipt or a trial-ending
-    # notice was undeliverable before it was written.
+    # A real syntax check, so junk like `xx@xx` doesn't count as a customer in the
+    # signup funnel or sit there as an address nothing can be sent to.
     from . import emailaddr
     email = emailaddr.normalise(email)
     problem = emailaddr.reason_invalid(email)
     if problem:
         raise ValueError(problem)
-    # Deliverability is a SEPARATE question, off by default, and it fails open
-    # — see core/emailaddr.py. Unknown never becomes invalid, because a
-    # nameserver blinking must not cost a customer.
+    # Deliverability is a separate check, off by default, and it fails open (see
+    # core/emailaddr.py): unknown never becomes invalid.
     posted = emailaddr.deliverable(email)
     if posted.get("deliverable") is False:
         raise ValueError(
@@ -247,10 +226,8 @@ def signup(email: str, password: str, plan: str = "free") -> dict:
         salt = secrets.token_hex(16)
         _accounts[email] = {
             "email": email,
-            # Always False, and never set to True by anything here. Only a
-            # delivered message proves a mailbox exists, and sending needs a
-            # provider Titan does not have. An unsent address reported as
-            # verified is the same lie as an unmeasured number.
+            # Always False, and never set to True here. Only a delivered message proves a
+            # mailbox exists, and sending needs an email provider Titan doesn't have yet.
             "email_verified": False,
             "_salt": salt,
             "_pwhash": _hash(password, salt),
@@ -261,14 +238,13 @@ def signup(email: str, password: str, plan: str = "free") -> dict:
             "usage": {"audits": 0, "ai_calls": 0},
             "subscription_id": "",
             "status": "active",
-            # Businesses this subscriber has onboarded. The plan's `clients`
-            # limit is enforced against the length of this list, so a Free
-            # account cannot quietly manage ten businesses.
+            # Businesses this subscriber has onboarded. The plan's `clients` limit is
+            # enforced against this list's length.
             "client_ids": [],
         }
-    # from_plan is NULL for the first row of an account's life. That is what
-    # makes a signup distinguishable from an upgrade later, and without it
-    # trial-to-paid conversion could not be reconstructed from history at all.
+    # from_plan is NULL for an account's first row, which separates a signup from
+    # a later upgrade; without it trial-to-paid conversion couldn't be
+    # reconstructed from history.
     record_change(email, None, "free", status=_accounts[email]["status"],
                   reason="signup" if plan == "free" else f"signup:wants={plan}")
     events.emit("SubscriptionChanged", {"email": email, "plan": "free",
@@ -287,10 +263,7 @@ def authenticate(email: str, password: str) -> Optional[str]:
         if not hmac.compare_digest(_hash(password, acct["_salt"]),
                                    acct["_pwhash"]):
             return None
-    # A signed token rather than a dict entry. The dict meant every paying
-    # customer was silently signed out by a restart, which on a free-tier host
-    # happens often. Verification is stateless, so a restart no longer touches
-    # anyone's session.
+    # A signed, stateless token, so a restart doesn't sign customers out.
     from . import sessions
     return sessions.issue(email, kind="account", ttl=sessions.ACCOUNT_TTL)
 
@@ -300,22 +273,21 @@ def resolve(token: str) -> Optional[str]:
     email = sessions.subject(token or "", kind="account")
     if not email:
         return None
-    # A valid signature is not enough: the account must still exist. Deleting
-    # someone must actually revoke their access.
+    # A valid signature isn't enough: the account must still exist, so deleting
+    # someone actually revokes their access.
     with _lock:
         return email if email in _accounts else None
 
 
 def set_password(email: str, current: str, new: str) -> dict:
-    """Change a subscriber's password. Requires the CURRENT one.
+    """Change a subscriber's password. Requires the current one.
 
-    Requiring it is not politeness. Without it a stolen session token becomes a
-    permanent account takeover: the thief changes the password, and the owner
-    is locked out of their own billing.
+    Without it, a stolen session token would be a permanent account takeover:
+    the thief changes the password and the owner is locked out of their own
+    billing.
 
-    Every other session for this account ends. That is the entire reason a
-    person changes a password, and one that leaves the thief signed in has
-    done nothing.
+    Every other session for this account ends, since that's usually why
+    someone changes a password.
     """
     email = (email or "").strip().lower()
     if len(new or "") < 8:
@@ -326,9 +298,8 @@ def set_password(email: str, current: str, new: str) -> dict:
             return {"ok": False, "error": "No such account."}
         if not hmac.compare_digest(_hash(current, acct["_salt"]),
                                    acct["_pwhash"]):
-            # Deliberately the same wording the login uses. "Your current
-            # password is wrong" and "no such account" must not be
-            # distinguishable to somebody holding a token and guessing.
+            # Same wording as the login, so someone holding a token and guessing can't
+            # tell "wrong current password" from "no such account".
             return {"ok": False, "error": "Wrong email or password"}
         salt = secrets.token_hex(16)
         acct["_salt"] = salt
@@ -375,8 +346,9 @@ def _roll_period(acct: dict) -> None:
 
 
 def check_quota(email: str, kind: str, cost: int = 1) -> dict:
-    """Is this action allowed? Returns a verdict, never raises, never silently
-    truncates. A refusal always says what to do about it."""
+    """Is this action allowed? Returns a verdict; never raises, never silently
+    truncates. A refusal always says what to do about it.
+    """
     field_map = {"audits": "audits_per_month", "ai_calls": "ai_calls_per_month"}
     if kind not in field_map:
         return {"allowed": True, "reason": ""}
@@ -432,9 +404,10 @@ DEMO_ACCOUNT = "demo@titan-omega.invalid"
 
 
 def ensure_demo_account() -> str:
-    """Create the demo account if it is missing. It is kept out of every
-    founder figure (analytics.accounts_snapshot skips it) and records no
-    signup, because nobody signed up."""
+    """Create the demo account if it's missing. It's kept out of every founder
+    figure (analytics.accounts_snapshot skips it) and records no signup,
+    since nobody signed up.
+    """
     with _lock:
         if DEMO_ACCOUNT not in _accounts:
             _accounts[DEMO_ACCOUNT] = {
@@ -466,10 +439,9 @@ def owned_clients(email: str) -> list:
 def plan_for_client(client_id: str) -> str:
     """The plan name of the subscriber who owns this business, or "".
 
-    The client portal showed every business a 60-day countdown meant for
-    businesses the founder onboards by hand, so a subscriber's own business
-    read "59 days left in trial" - a clock that ends nothing, on an account
-    whose access actually comes from its plan.
+    A subscriber's business gets its access from their plan, so the portal
+    shouldn't show it the 60-day trial countdown meant for businesses the
+    founder onboards by hand.
     """
     with _lock:
         for acct in _accounts.values():
@@ -481,17 +453,18 @@ def plan_for_client(client_id: str) -> str:
 def all_emails() -> list:
     """Every registered subscriber. For tenancy lookups, never for display.
 
-    Deliberately an accessor rather than letting callers reach into
-    `_accounts`: the ownership rule has one home (`core/tenancy.py`) and this
-    is the only door it needs.
+    An accessor rather than letting callers reach into `_accounts`: the
+    ownership rule lives in `core/tenancy.py`, and this is the only access it
+    needs.
     """
     with _lock:
         return list(_accounts)
 
 
 def can_add_client(email: str) -> dict:
-    """Is this subscriber allowed another business? Never a bare boolean —
-    a refusal has to say what to do about it."""
+    """Is this subscriber allowed another business? Never a bare boolean - a
+    refusal has to say what to do about it.
+    """
     with _lock:
         acct = _accounts.get(email)
         if not acct:
@@ -546,10 +519,9 @@ def set_plan(email: str, plan: str, subscription_id: str = "",
             raise ValueError("No such account.")
         was = acct.get("plan")
         acct.update(plan=plan, subscription_id=subscription_id, status=status)
-    # Durable, append-only, and BEFORE the in-memory event: churn and
-    # trial-to-paid conversion are properties of how an account changed, not of
-    # what it is now. This call is the difference between those numbers being
-    # measurable later and being invented.
+    # Durable, append-only, and before the in-memory event: churn and
+    # trial-to-paid conversion depend on how an account changed, so this record is
+    # what makes them measurable.
     record_change(email, was, plan, status=status,
                   subscription_id=subscription_id)
     events.emit("SubscriptionChanged",
@@ -567,8 +539,9 @@ def _history_conn():
 
 def record_change(email: str, from_plan, to_plan: str, *, status: str = "active",
                   subscription_id: str = "", reason: str = "") -> None:
-    """Append one row. Never raises: failing to record history must not be the
-    thing that stops somebody's plan from changing."""
+    """Append one row. Never raises: failing to record history mustn't stop a
+    plan change.
+    """
     import uuid as _uuid
     try:
         granted = 1 if str(subscription_id or "").startswith("granted") else 0
@@ -584,7 +557,7 @@ def record_change(email: str, from_plan, to_plan: str, *, status: str = "active"
 
 
 def history(email: str = "", limit: int = 200) -> list:
-    """Newest first. The only reader; there is deliberately no edit or delete."""
+    """Newest first. The only reader; there's no edit or delete."""
     limit = max(1, min(int(limit or 200), 1000))
     try:
         if email:
@@ -604,20 +577,17 @@ def history(email: str = "", limit: int = 200) -> list:
 
 
 # -------------------------------------------------------------- processor --
-# Two adapters behind one seam.
+# Processor adapters behind one seam.
 #
-# PayPal is Abdullah's stated preference and stays supported. It also cannot
-# RECEIVE money in Pakistan, which means a PayPal-only build can never be paid
-# — the plan table, the quotas and the signup flow are all finished and the
-# product still earns nothing.
+# PayPal is supported, but it can't receive money in Pakistan, so a PayPal-only
+# setup could never be paid.
 #
-# Dodo Payments is the researched alternative: a Merchant of Record that
-# handles US sales tax and EU VAT and pays out to Payoneer and Wise, both of
-# which work in Pakistan. Fees ~4% + $0.40. Preferred here purely because it
-# is the one that can actually complete a sale from where he lives.
+# Dodo Payments is a Merchant of Record that handles US sales tax and EU VAT
+# and pays out to Payoneer and Wise, both of which work in Pakistan (fees ~4% +
+# $0.40).
 #
-# Neither is required. With neither configured, signup and the free tier work
-# and the refusal names exactly what is missing.
+# None is required. With none configured, signup and the free tier still work,
+# and the refusal names exactly what's missing.
 
 
 def _dodo_key() -> str:
@@ -638,18 +608,11 @@ def paddle_price_id(plan_key: str) -> str:
 
 
 def paddle_configured() -> bool:
-    """Paddle is the researched processor for a Pakistan seller — and until
-    now nothing in this module looked for it.
+    """Paddle: API key plus at least one price id.
 
-    It was named in the help text as the recommended option and checked
-    against Paddle's own unsupported-suppliers list on 2026-08-08, but there
-    was no detector: `configured()` tested Dodo and PayPal only. Setting
-    PADDLE_API_KEY would have left the product still reporting "no processor"
-    and still refusing every sale, with nothing on screen explaining why.
-
-    Requires the API key AND at least one price id — a key with no price to
-    sell against cannot complete a checkout, and reporting "configured" on the
-    key alone would move the failure to the customer's card screen.
+    A key with no price to sell against can't complete a checkout, and
+    reporting "configured" on the key alone would move the failure to the
+    customer's card screen.
     """
     if not os.getenv("PADDLE_API_KEY", "").strip():
         return False
@@ -657,40 +620,36 @@ def paddle_configured() -> bool:
 
 
 def paddle_client_token() -> str:
-    """The token the BROWSER uses to open Paddle's checkout.
+    """The token the browser uses to open Paddle's checkout.
 
-    A different credential from PADDLE_API_KEY, and deliberately so: Paddle
-    publishes client-side tokens as safe for frontend code, while the API key
-    is server-side only. Checked against Paddle's overlay-checkout
-    documentation, not from memory.
+    A different credential from PADDLE_API_KEY on purpose: Paddle documents
+    client-side tokens as safe for frontend code, while the API key is
+    server-side only.
     """
     return os.getenv("PADDLE_CLIENT_TOKEN", "").strip()
 
 
 def paddle_environment() -> str:
-    """"sandbox" or "production". Sandbox unless PADDLE_LIVE is set, because a
-    deployment that defaults to live is one typo away from taking a real card
-    during a test."""
+    """"sandbox" or "production". Sandbox unless PADDLE_LIVE is set, so a typo
+    can't take a real card during a test.
+    """
     return "production" if os.getenv("PADDLE_LIVE", "").strip() else "sandbox"
 
 
 def paddle_checkout_ready() -> bool:
-    """Can a CUSTOMER actually complete a Paddle checkout?
+    """Can a customer actually complete a Paddle checkout?
 
-    Separate from paddle_configured() on purpose. That one answers "is the
-    server set up", and it is what processor_name() and the money metrics read.
-    This one adds the client-side token, without which the browser cannot open
-    the overlay at all — so a deployment can be server-configured and still
-    unable to sell, and the two must not report the same thing.
+    Separate from paddle_configured(), which answers "is the server set up"
+    and feeds processor_name() and the money metrics. This also needs the
+    client-side token, without which the browser can't open the overlay; a
+    deployment can be server-configured and still unable to sell.
     """
     return bool(paddle_configured() and paddle_client_token())
 
 
 # ------------------------------------------------------ Paddle webhook --
-# The checkout told customers "Titan is told the result by webhook" and
-# docs/PAYMENTS.md said to point Paddle at POST /api/webhooks/billing. Neither
-# existed: set_plan() had no caller except the founder's manual grant, so a
-# customer who paid stayed on Free. This is the missing half.
+# Paddle notifies POST /api/webhooks/billing; verified subscription events
+# become plan changes here.
 WEBHOOK_TOLERANCE_S = 300        # a captured request cannot be replayed later
 _WEBHOOK_STATE = "billing.paddle_webhook"
 _ACTIVE = ("active", "trialing", "past_due")   # past_due: Paddle is retrying
@@ -721,10 +680,10 @@ def _plan_for_price(price_id: str) -> str:
 
 
 def apply_paddle_event(event: dict) -> dict:
-    """Turn one VERIFIED subscription notification into a plan change.
+    """Turn one verified subscription notification into a plan change.
 
     The plan comes from the price id in Paddle's signed payload, never from
-    custom data a browser supplied. Duplicates and out-of-order deliveries,
+    custom data a browser supplied. Duplicate and out-of-order deliveries,
     both normal for webhooks, are ignored rather than re-applied.
     """
     from . import db, emailaddr
@@ -752,7 +711,7 @@ def apply_paddle_event(event: dict) -> dict:
                else "" if status in _ACTIVE + _ENDED
                else f"unhandled status {status!r}")
     if problem:
-        # Somebody may have paid. Never silent: the founder resolves it by hand.
+        # Someone may have paid. Never silent: the founder resolves it by hand.
         events.emit("PaymentUnmatched", {"subscription_id": sub_id,
                                          "event": kind, "why": problem},
                     actor="billing", severity="warn")
@@ -768,8 +727,8 @@ def apply_paddle_event(event: dict) -> dict:
 
 
 def processor_name() -> str:
-    # Paddle first: it is the only one of the three verified to onboard a
-    # Pakistan-based seller, so if it is configured it is the intended one.
+    # Paddle first: it's the processor verified to onboard a Pakistan-based
+    # seller, so if it's configured it's the intended one.
     if paddle_configured():
         return "paddle"
     if dodo_configured():
@@ -784,15 +743,13 @@ def configured() -> bool:
 
 
 def can_take_payment() -> bool:
-    """Can a CUSTOMER actually complete a purchase right now?
+    """Can a customer actually complete a purchase right now?
 
     Distinct from configured(), which answers "is a processor set up on the
-    server". For Paddle those came apart the moment the checkout was wired:
-    the API key and a price id make the server ready, and the browser still
-    cannot open the overlay without PADDLE_CLIENT_TOKEN.
-
-    Reporting the two as one is how a pricing page comes to advertise a trial
-    that converts while no sale can complete.
+    server". For Paddle the API key and a price id make the server ready, but
+    the browser still can't open the overlay without PADDLE_CLIENT_TOKEN.
+    Treating them as one would let the pricing page advertise a trial that
+    can't convert.
     """
     if paddle_configured():
         return paddle_checkout_ready()
@@ -801,15 +758,16 @@ def can_take_payment() -> bool:
 
 def processor_configured() -> bool:
     """Alias used by the plan table. A trial is only real if a card can be
-    charged at the end of it — so this asks whether one CAN be, not whether a
-    key is present. It used to call configured(), and with a Paddle API key
-    but no client token that advertised a conversion nobody could complete."""
+    charged at the end of it, so this asks whether one can be, not whether a
+    key is present.
+    """
     return can_take_payment()
 
 
 def missing_for_paddle() -> list[str]:
-    """Exactly which environment variables are still absent. Names them rather
-    than saying 'not configured', so the fix is a copy-paste."""
+    """Exactly which environment variables are still missing. Names them
+    rather than saying "not configured", so the fix is a copy-paste.
+    """
     missing = []
     if not os.getenv("PADDLE_API_KEY", "").strip():
         missing.append("PADDLE_API_KEY")
@@ -818,10 +776,9 @@ def missing_for_paddle() -> list[str]:
             continue
         if not paddle_price_id(key):
             missing.append(f"PADDLE_PRICE_ID_{key.upper()}")
-    # The browser cannot open Paddle's overlay without this, so leaving it out
-    # of the list would report "nothing missing" on a deployment that still
-    # cannot take a payment. It is listed last because the others are the ones
-    # that make the server ready.
+    # The browser can't open Paddle's overlay without this, so leaving it out
+    # would report "nothing missing" on a deployment that still can't take a
+    # payment. Listed last because the others are what make the server ready.
     if not paddle_client_token():
         missing.append("PADDLE_CLIENT_TOKEN")
     return missing
@@ -830,13 +787,12 @@ def missing_for_paddle() -> list[str]:
 def _paddle_checkout(email: str, plan_key: str, plan: Plan) -> dict:
     """What the browser needs to open Paddle's own checkout.
 
-    Titan never takes a card number and never completes a payment on anyone's
-    behalf. This hands back the price id and the CLIENT-SIDE token, and the
-    customer approves inside Paddle's overlay.
+    Titan never takes a card number or completes a payment on anyone's behalf.
+    This returns the price id and the client-side token, and the customer
+    approves inside Paddle's overlay.
 
-    PADDLE_API_KEY is never included. It is a server-side credential, this
-    payload is read by a browser, and there is a test asserting it never
-    appears here.
+    PADDLE_API_KEY is never included: it's server-side only, this payload goes
+    to a browser, and a test checks it never appears here.
     """
     price_id = paddle_price_id(plan_key)
     if not price_id:
@@ -865,14 +821,14 @@ def _paddle_checkout(email: str, plan_key: str, plan: Plan) -> dict:
         "plan": plan_key,
         "price_usd": plan.price_usd,
         "price_id": price_id,
-        # Safe to publish, by Paddle's own documentation. The API key is NOT
-        # here and must never be.
+        # Safe to publish, per Paddle's documentation. The API key is not here and
+        # must never be.
         "client_token": token,
         "environment": paddle_environment(),
         "customer_email": email,
-        # Rides the checkout into the transaction and the subscription, which
-        # is how the webhook knows WHICH Titan account paid: Paddle's own
-        # subscription events carry a customer id, not an email.
+        # Carried through the checkout into the transaction and subscription, which is
+        # how the webhook knows which Titan account paid - Paddle's subscription events
+        # carry a customer id, not an email.
         "custom_data": {"titan_email": email},
         "flow": ("The page loads Paddle.js, calls Paddle.Initialize with "
                  "client_token, and opens Paddle.Checkout.open with this "
@@ -886,12 +842,11 @@ def _dodo_product_id(plan_key: str) -> str:
 
 
 def _dodo_checkout(email: str, plan_key: str, plan: Plan) -> dict:
-    """Create a Dodo checkout session and hand back the URL the CUSTOMER opens.
+    """Create a Dodo checkout session and return the URL the customer opens.
 
-    Titan never sees a card number. The SDK is imported inside the function on
-    purpose: a missing package must degrade to an honest "not configured"
-    message, never take the process down at import time the way reportlab once
-    did.
+    Titan never sees a card number. The SDK is imported inside the function so
+    a missing package gives a clear "not configured" message instead of
+    breaking startup.
     """
     product_id = _dodo_product_id(plan_key)
     if not product_id:
@@ -941,8 +896,8 @@ def _dodo_checkout(email: str, plan_key: str, plan: Plan) -> dict:
                      "sees card details."),
         }
     except Exception as exc:
-        # Report the real failure. A checkout that silently returns nothing is
-        # indistinguishable from a customer who changed their mind.
+        # Report the real failure. A checkout that silently returns nothing looks the
+        # same as a customer who changed their mind.
         return {
             "ready": False, "processor": "dodo", "plan": plan_key,
             "error": f"{type(exc).__name__}: {str(exc)[:200]}",
@@ -954,20 +909,17 @@ def _dodo_checkout(email: str, plan_key: str, plan: Plan) -> dict:
 
 
 def checkout(email: str, plan_key: str) -> dict:
-    """Return where the CUSTOMER goes to approve a subscription.
+    """Return where the customer goes to approve a subscription.
 
-    Titan never takes a card number and never completes a payment on anyone's
-    behalf — it hands back an approval URL the customer opens themselves. That
-    is both the correct integration and the only safe one.
+    Titan never takes a card number or completes a payment on anyone's behalf;
+    it returns an approval URL the customer opens themselves.
     """
     if plan_key not in PLANS or plan_key == "free":
         raise ValueError("Choose a paid plan.")
     plan = PLANS[plan_key]
 
-    # Paddle FIRST. It is the only processor verified to onboard a Pakistan
-    # seller, processor_name() already prefers it, and until now checkout()
-    # skipped it entirely and fell through to PayPal's environment variable —
-    # so setting the Paddle keys produced "Set PAYPAL_PLAN_ID_INDIVIDUAL."
+    # Paddle first: it's the processor verified to onboard a Pakistan seller,
+    # and processor_name() already prefers it.
     if paddle_configured():
         return _paddle_checkout(email, plan_key, plan)
 
@@ -1040,9 +992,9 @@ def import_state(data: dict) -> None:
                 acct.setdefault("plan", "free")
                 if acct["plan"] not in PLANS:
                     acct["plan"] = "free"
-                # Accounts created before signup stopped granting paid plans:
-                # a paid plan that was never paid for drops to Free. A payment
-                # always arrives as set_plan with a real status, never this.
+                # Accounts created while signup still granted paid plans: a paid plan that
+                # was never paid for drops to Free. A real payment always arrives through
+                # set_plan with a real status, never as this.
                 if acct.get("status") == "pending_payment":
                     acct.setdefault("requested_plan", acct["plan"])
                     acct["plan"], acct["status"] = "free", "active"

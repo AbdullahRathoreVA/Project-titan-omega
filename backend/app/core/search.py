@@ -1,27 +1,20 @@
-"""One box that finds a customer from anything you can remember about them.
+"""Find a customer from anything you remember about them.
 
-The brief's example is the real use case: somebody emails about `example.com`
-and you need the account behind it in one step, not by opening four screens and
-guessing which one lists domains.
+Typical case: someone emails about `example.com` and you want the account
+behind it in one step.
 
-Decisions worth defending
--------------------------
-* **Founder-scoped, and it says so.** This searches ACROSS tenants by design —
-  that is what makes it useful to the operator and exactly what makes it unsafe
-  to expose to a customer. The endpoint is under ``/api/founder``, which is
-  already in ``demo_data._SENSITIVE_PREFIXES``. If a per-tenant search is ever
-  wanted it needs a different function with an org filter, not a parameter on
-  this one: a boolean that decides whether to leak every tenant is one wrong
-  default away from doing it.
-* **Domains are matched on the host, not the string.** ``https://example.com/``
-  and ``example.com`` and ``www.example.com`` are the same business, and an
-  operator pasting whatever was in the email should not have to know that.
-* **Every result says what it matched on.** A hit with no visible reason looks
-  like a bug, and the operator cannot tell a domain match from a name
-  coincidence.
-* **Nothing here reads a secret.** Results are built from the public accessors
+- Founder only. This searches across tenants by design, which is what makes
+  it useful to the operator and unsafe for a customer. It lives under
+  ``/api/founder`` (already in ``demo_data._SENSITIVE_PREFIXES``). A
+  per-tenant search should be a separate function with an org filter, not a
+  flag on this one.
+- Domains are matched on the host: ``https://example.com/``, ``example.com``
+  and ``www.example.com`` are the same business.
+- Every result says what it matched on, so a domain match can be told apart
+  from a name coincidence.
+- Nothing here reads a secret. Results come from the public accessors
   (`identity` never exposes a hash; `clients.public` is an allow-list), so a
-  future field added to a private record cannot leak through search.
+  new private field can't leak through search.
 """
 
 from __future__ import annotations
@@ -40,8 +33,8 @@ _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://", re.I)
 def normalise_host(value: str) -> str:
     """`https://WWW.Example.com/path` -> `example.com`.
 
-    Deliberately not urlparse alone: half the values Titan holds are bare
-    hostnames typed by a human, which urlparse reads as a path.
+    Not urlparse alone: many stored values are bare hostnames typed by a
+    person, which urlparse reads as a path.
     """
     text = (value or "").strip().lower()
     if not text:
@@ -64,8 +57,9 @@ def _hit(kind: str, ident: str, label: str, sublabel: str, matched_on: str,
 
 
 def _contains(needle: str, *fields) -> Optional[str]:
-    """Which field matched, or None. Returns the FIELD NAME so the result can
-    explain itself."""
+    """Which field matched, or None. Returns the field name so the result can
+    explain itself.
+    """
     for name, value in fields:
         if value and needle in str(value).lower():
             return name
@@ -75,9 +69,8 @@ def _contains(needle: str, *fields) -> Optional[str]:
 def search(query: str, limit: int = 20) -> dict:
     """Search organisations, people, businesses and billing accounts.
 
-    Never raises on a partial failure: if one source is unavailable the others
-    still answer, and the payload names the source that could not be searched
-    rather than silently returning fewer results.
+    If one source is unavailable the others still answer, and the payload
+    names the source that couldn't be searched.
     """
     raw = (query or "").strip()
     needle = raw.lower()
@@ -126,7 +119,7 @@ def search(query: str, limit: int = 20) -> dict:
             site = rec.get("website", "")
             field = _contains(needle, ("business_name", rec.get("business_name")),
                               ("website", site), ("id", rec.get("id")))
-            # The point of the whole feature: paste a domain, find the business.
+            # The main use case: paste a domain, find the business.
             if not field and host and normalise_host(site) == host:
                 field = "domain"
             if field:
@@ -164,8 +157,8 @@ def search(query: str, limit: int = 20) -> dict:
     for hit in results:
         counts[hit["kind"]] = counts.get(hit["kind"], 0) + 1
 
-    # A domain match is what the operator almost always wants, so it sorts
-    # first; everything else keeps its source order.
+    # A domain match is almost always what the operator wants, so it sorts first;
+    # everything else keeps its source order.
     results.sort(key=lambda r: 0 if r["matched_on"] == "domain" else 1)
 
     return {
@@ -175,7 +168,7 @@ def search(query: str, limit: int = 20) -> dict:
         "counts": counts,
         "total": len(results),
         "searched": searched,
-        # Named rather than swallowed: fewer results because a source was down
-        # is a different answer from fewer results because there are fewer.
+        # Named rather than swallowed: fewer results because a source was down is
+        # different from fewer results.
         "unavailable": unavailable,
     }

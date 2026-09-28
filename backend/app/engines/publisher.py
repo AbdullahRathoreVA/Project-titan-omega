@@ -1,19 +1,16 @@
-"""Publishing Pipeline — real, ban-safe auto-posting.
+"""Publishing pipeline: scheduled posts, delivered through an automation webhook.
 
-The goal: agents don't just draft, they *publish* — on a schedule, automatically.
-The safe way to do that across LinkedIn / Facebook / Pinterest is **not** a
-password bot (that gets accounts banned); it's the official "front door":
+Posting through password bots gets accounts banned, so Titan goes through an
+approved route instead:
 
-    Titan  →  webhook  →  Zapier / Make / Buffer  →  the platforms
+    Titan -> webhook -> Zapier / Make / Buffer -> the platforms
 
-You connect those platforms once inside Zapier/Make/Buffer (their approved,
-compliant OAuth — never a password handed to Titan), point Titan at the
-automation's catch-hook URL (``TITAN_PUBLISH_WEBHOOK``), and from then on Titan
-fires every scheduled post at it and the automation publishes everywhere.
+Connect the platforms once inside Zapier, Make or Buffer (their OAuth, never
+a password given to Titan), set the automation's catch-hook URL as
+TITAN_PUBLISH_WEBHOOK, and Titan sends each scheduled post to it.
 
-If no webhook is configured, posts sit in a **ready-to-publish queue** (status
-``queued``) instead — nothing is lost, you just publish them yourself until you
-wire the automation. Either way, agents do the producing and scheduling.
+Without a webhook, posts wait in a ready-to-publish queue (status "queued")
+to be posted by hand.
 """
 
 from __future__ import annotations
@@ -24,7 +21,7 @@ from typing import List, Optional
 
 from ..store import STORE, Store, now
 
-# Channels Titan knows how to *describe*; actual delivery is via your automation.
+# Channels Titan can target; delivery itself happens in the automation.
 KNOWN_CHANNELS = ["linkedin", "facebook", "pinterest", "instagram", "twitter"]
 
 
@@ -67,8 +64,8 @@ def publish(post_id: str, store: Store = STORE) -> dict:
     """Send a post to its channels now, via the configured automation webhook."""
     post = store.posts[post_id]  # KeyError handled by caller
     from ..core import cockpit_scope
-    # The webhook posts to the founder's own accounts. A subscriber's post
-    # never goes through it; it stays ready for them to post themselves.
+    # The webhook posts to the founder's own accounts. A subscriber's post never
+    # goes through it; it stays queued for them to post themselves.
     customer = cockpit_scope.is_customer()
     url = None if customer else _webhook_url()
 
@@ -112,7 +109,7 @@ def publish(post_id: str, store: Store = STORE) -> dict:
             f"{', '.join(post['channels'])} via automation webhook.",
             "success" if ok else "critical",
         )
-    except Exception as exc:  # network/automation down — keep it queued, don't lose it
+    except Exception as exc:  # network or automation down: keep it queued
         post["status"] = "queued"
         post["results"] = [{"channel": c, "status": "ready", "detail": str(exc)}
                            for c in post["channels"]]
@@ -123,7 +120,7 @@ def publish(post_id: str, store: Store = STORE) -> dict:
 
 
 def due(store: Store = STORE) -> List[dict]:
-    """Scheduled posts whose time has arrived and haven't gone out yet."""
+    """Scheduled posts whose time has come and that haven't gone out yet."""
     t = datetime.now(timezone.utc)
     return [
         p for p in store.posts.values()
@@ -132,7 +129,7 @@ def due(store: Store = STORE) -> List[dict]:
 
 
 def run_due(store: Store = STORE) -> int:
-    """Publish everything that's due. Called on the heartbeat — the empire posts 24/7."""
+    """Publish everything that's due. Called on the heartbeat."""
     count = 0
     for post in due(store):
         publish(post["id"], store)

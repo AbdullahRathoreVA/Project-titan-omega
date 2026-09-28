@@ -1,14 +1,13 @@
 "use client";
 
-// Cinematic boot overlay: black screen → startup sound + AI voice → particle
-// text assembly → camera fly-through → dashboard reveal. Plays on every open;
+// Boot overlay: black screen -> startup sound + AI voice -> particle text
+// assembly -> camera fly-through -> dashboard reveal. Plays on every open;
 // always skippable.
 //
-// Audio policy: EVERY browser (desktop Chrome/Safari included, not just phones)
-// blocks sound and speech until the user interacts. So we gate the whole boot
-// behind a single tap/click and fire the sound + voice INSIDE that gesture —
-// that is the only thing that makes Titan speak reliably on Android, iPhone,
-// Mac and desktop alike.
+// Browsers (desktop included, not just phones) block sound and speech until
+// the user interacts, so the whole boot waits for a single tap/click and
+// fires the sound and voice inside that gesture. That's what makes the voice
+// work reliably on Android, iPhone, Mac and desktop.
 
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -29,16 +28,16 @@ function isGuest(): boolean {
 
 export function BootSequence({ onDone }: { onDone: () => void }) {
   const [visible, setVisible] = useState(true);
-  // Wait for a tap/click on ALL devices — the only reliable cross-device
-  // audio + voice unlock. false = waiting for the gesture, true = running.
+  // Wait for a tap/click on every device - the only reliable way to unlock
+  // audio and voice. false = waiting for the gesture, true = running.
   const [started, setStarted] = useState(false);
   const done = useRef(false);
 
   const finish = (skipped = false) => {
     if (done.current) return;
     done.current = true;
-    // Only cut the voice when the founder SKIPS — on a natural finish the
-    // welcome line keeps speaking and the live briefing queues right after it.
+    // Only cut the voice when the user skips. On a natural finish the welcome
+    // line keeps speaking and the live briefing queues right after it.
     if (skipped) {
       try {
         window.speechSynthesis?.cancel();
@@ -52,8 +51,8 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
 
   const begin = () => {
     if (started) return;
-    // All three of these MUST run synchronously inside the click/tap handler,
-    // otherwise iOS/Android/Safari silently refuse the audio and the voice.
+    // These must run synchronously inside the click/tap handler, or
+    // iOS/Android/Safari silently refuse the audio and the voice.
     unlockAudio();
     bootSound();
     speak(

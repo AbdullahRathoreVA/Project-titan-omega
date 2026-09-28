@@ -27,8 +27,8 @@ class AgentRuntime:
     success_rate: float = 0.0
     impact_score: float = 0.0
     last_active: Optional[datetime] = None
-    # Living-agent workflow position: which stage of its division's pipeline the
-    # agent is on, and 0..1 progress through that pipeline.
+    # Workflow position: which stage of the division's pipeline the agent is on,
+    # and progress (0..1) through it.
     step: int = 0
     progress: float = 0.0
 
@@ -43,24 +43,24 @@ class Store:
     posts: Dict[str, dict] = field(default_factory=dict)
     feed: List[dict] = field(default_factory=list)
     metrics: Dict[str, float] = field(default_factory=dict)
-    # Append-only ledger of real earned orders/sales (see api revenue routes).
+    # Append-only ledger of real orders and sales (see the revenue routes).
     revenue_entries: List[dict] = field(default_factory=list)
-    # The current "next post" draft (caption + free AI image) shown on the HUD.
+    # Current "next post" draft (caption + AI image) shown on the dashboard.
     next_post: Optional[dict] = None
-    # Latest autonomous growth-engine research (opportunities, competitors, SEO).
+    # Latest growth research (opportunities, competitors, keywords).
     intel: Optional[dict] = None
-    # Telegram command center: last processed update id + command/response log.
+    # Telegram: last processed update id, and the command/reply log.
     telegram_offset: int = 0
     telegram_log: List[dict] = field(default_factory=list)
-    # Job Radar: found remote jobs/gigs with scores + applied tracking.
+    # Job Radar: found jobs/gigs with scores and applied status.
     jobs: Optional[dict] = None
-    # Financial Center: real expenses ledger (revenue lives in revenue_entries).
+    # Expense ledger (revenue lives in revenue_entries).
     expenses: List[dict] = field(default_factory=list)
     # CRM-lite: leads pipeline keyed by id.
     leads: Dict[str, dict] = field(default_factory=dict)
-    # Last war-room decision awaiting founder approval (pushed to Telegram).
+    # Latest war-room decision waiting for the founder's approval (sent to Telegram).
     pending_decision: Optional[dict] = None
-    # Council decision history — auditable record of every debate outcome.
+    # History of war-room decisions.
     decisions: List[dict] = field(default_factory=list)
 
     _lock: threading.RLock = field(default_factory=threading.RLock)
@@ -91,12 +91,12 @@ class Store:
             return list(reversed(self.feed[-limit:]))
 
 
-# --- which Store a request sees ------------------------------------------------
-# The founder's Store is the default. A customer request binds that customer's
-# workspace for its duration (see main.auth_guard and core/workspaces.py), and
-# everything that says STORE follows the binding. Threads started with
-# contextvars.copy_context() carry it; asyncio.to_thread and Starlette's
-# threadpool already do.
+# --- which Store a request sees -------------------------------------------
+# The founder's Store is the default. A subscriber request binds that
+# subscriber's workspace for its duration (see main.auth_guard and
+# core/workspaces.py), and everything that uses STORE follows the binding.
+# Threads started with contextvars.copy_context() carry it, as do
+# asyncio.to_thread and Starlette's threadpool.
 _FOUNDER = Store()
 _bound: "contextvars.ContextVar[Optional[Store]]" = contextvars.ContextVar(
     "titan_store", default=None)
@@ -122,9 +122,9 @@ def unbind(token: "contextvars.Token") -> None:
 class _StoreProxy:
     """Stands in for the Store every module imports as STORE.
 
-    About 600 call sites say `from ..store import STORE`. Making that one name
-    follow the bound workspace keeps them all unchanged, and means a customer
-    request cannot reach the founder's Store by forgetting a parameter.
+    Hundreds of call sites use `from ..store import STORE`. Making that name
+    follow the bound workspace keeps them unchanged, and a subscriber request
+    can't reach the founder's Store by forgetting to pass one.
     """
 
     __slots__ = ()

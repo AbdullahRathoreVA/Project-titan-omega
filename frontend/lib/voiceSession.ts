@@ -1,16 +1,15 @@
 // Client for the voice session store, so the Voice Agents screen shows real
-// conversations instead of an empty orbit.
+// conversations.
 //
-// **Every call here fails silently.** This is telemetry: a guest gets 403 on
-// the whole /api/voice prefix because transcripts are founder-only, and an
-// offline visitor gets nothing at all. Neither may break the conversation the
-// session is describing — the same rule analytics.record follows server-side.
-// If recording fails the chat carries on exactly as before, and the screen
-// simply has one fewer session on it.
+// Every call here fails silently. This is telemetry: a guest gets 403 on the
+// whole /api/voice prefix (transcripts are founder-only) and an offline
+// visitor gets nothing, and neither may break the conversation being
+// recorded. If recording fails the chat carries on and the screen just shows
+// one fewer session.
 //
-// The state machine is enforced by the server, not here. This sends the
-// transitions a conversation genuinely makes; an illegal one comes back 409
-// and is swallowed rather than retried into a lie.
+// The server enforces the state machine. This sends the transitions a
+// conversation actually makes; an illegal one comes back 409 and is ignored,
+// not retried.
 
 import { apiBase, authHeaders } from "./api";
 
@@ -45,8 +44,10 @@ export class VoiceSession {
     private agent: string = "titan-assistant",
   ) {}
 
-  /** Opened lazily on the first real turn — an idle chat panel nobody typed
-   *  into should not appear on the live screen as a session. */
+  /**
+   * Opened lazily on the first real turn, so an idle chat panel nobody typed
+   * into doesn't show up as a session.
+   */
   private async ensure(language: string): Promise<void> {
     if (this.id) return;
     if (!this.opening) {
@@ -62,9 +63,10 @@ export class VoiceSession {
     await this.opening;
   }
 
-  /** The first turn opens the session, and the `thinking` sent right after it
-   *  used to arrive before the id did and be dropped - so the first answer of
-   *  every conversation never had its latency measured. Wait for the open. */
+  /**
+   * The first turn opens the session; wait for the id before sending
+   * `thinking`, or the first answer's latency would never be measured.
+   */
   private async opened(): Promise<boolean> {
     if (this.opening) await this.opening;
     return this.id !== null;
@@ -87,8 +89,8 @@ export class VoiceSession {
       role,
       text,
       language,
-      // Only pass a confidence the recogniser actually reported. Titan never
-      // invents one — a self-assigned score is not evidence.
+      // Only pass a confidence the recogniser actually reported; a
+      // self-assigned score isn't evidence.
       ...(typeof confidence === "number" ? { confidence } : {}),
     });
   }
@@ -105,10 +107,12 @@ export class VoiceSession {
     this.opening = null;
   }
 
-  /** For a page that is going away: a reload or a closed tab never unmounts
-   *  the panel, so without this the session sat on the live screen for ever.
-   *  `keepalive` lets the request outlive the page, and unlike sendBeacon it
-   *  can carry the Authorization header. */
+  /**
+   * For a page that's going away: a reload or closed tab never unmounts the
+   * panel, so without this the session would stay on the live screen
+   * forever. `keepalive` lets the request outlive the page, and unlike
+   * sendBeacon it can carry the Authorization header.
+   */
   endOnExit(): void {
     if (!this.id) return;
     try {

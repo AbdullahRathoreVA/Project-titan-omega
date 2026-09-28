@@ -16,14 +16,14 @@ import type { Debate, GrowthIntel, PrResult, SeoReport } from "@/lib/types";
 import { NeuralString } from "./NeuralString";
 import { ContentFactory } from "./ContentFactory";
 
-// The War Room: Titan's autonomous growth brain. Live research engine (runs
-// 24/7 server-side), a marketing team that argues then decides, and an SEO
-// co-pilot — all wrapped around the unique 3D Neural String signature.
+// The War Room: the live research engine (runs server-side around the clock),
+// a marketing team that debates and then decides, and an SEO co-pilot, around
+// the 3D Neural String scene.
 //
 // In a subscriber's cockpit the same engines work on their own business
 // (backend engines/owner.py), research runs when they ask rather than on the
-// heartbeat, and the auto-PR panel - a pull request on Titan's own repo - is
-// not shown.
+// heartbeat, and the auto-PR panel (a pull request on Titan's own repo) isn't
+// shown.
 export function WarRoomView({
   intensity,
   agentCount,
@@ -34,8 +34,8 @@ export function WarRoomView({
   const [customer] = useState(() => isCustomer());
   const [intel, setIntel] = useState<GrowthIntel | null>(null);
   const [scanning, setScanning] = useState(false);
-  // A click that came back empty. Said out loud rather than leaving the
-  // button looking like it did nothing.
+  // A click that came back empty says so, rather than leaving the button
+  // looking like it did nothing.
   const [notice, setNotice] = useState<string | null>(null);
 
   const [topic, setTopic] = useState("");

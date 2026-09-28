@@ -1,15 +1,12 @@
-"""Live Career Mind AI connector.
+"""Career Mind connector.
 
-Monitors the Career Mind AI platform — the primary product asset — by polling
-its public ``/health`` probe and ``/api/public/stats`` aggregate endpoint (added
-to Career Mind for exactly this purpose). No login required; the optional
-``CAREERMIND_API_KEY`` is sent as ``X-Titan-Key`` when Career Mind has
-``TITAN_STATS_KEY`` configured.
+Polls Career Mind's public /health probe and its /api/public/stats aggregate.
+No login needed; CAREERMIND_API_KEY, if set, is sent as X-Titan-Key for
+deployments that have TITAN_STATS_KEY configured. Defaults to the live HF
+Space; override with CAREERMIND_URL.
 
-The live HF Space is used by default; override with ``CAREERMIND_URL``.
-
-Degrades gracefully: on any network failure the last-known metrics are kept and
-the connector status is set to DISCONNECTED so the dashboard never breaks.
+On a network failure the last known metrics are kept and the connector is
+marked DISCONNECTED.
 """
 
 from __future__ import annotations
@@ -57,7 +54,7 @@ def refresh(store: Store = STORE) -> Optional[dict]:
     existing = store.connectors.get(_CONN_ID, {})
     key      = os.getenv("CAREERMIND_API_KEY")  # optional X-Titan-Key
 
-    # 1. Public health probe — confirms the platform is reachable.
+    # 1. Health probe - is the platform reachable?
     health = _get("/health")
 
     if health is None:
@@ -128,7 +125,7 @@ def refresh(store: Store = STORE) -> Optional[dict]:
 
 
 def _default_metrics() -> dict:
-    """Zero-based seed — real numbers arrive on the first successful live sync."""
+    """Zero-based defaults; real numbers arrive with the first successful sync."""
     return {
         "traffic":         0.0,
         "signups":         0.0,

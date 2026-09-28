@@ -1,8 +1,8 @@
-"""Communication + job-hunt APIs: Telegram Command Center and Job Radar.
+"""Telegram Command Center and Job Radar APIs.
 
-A subscriber reaches both through /api/me. Their Telegram is Titan's own bot,
-linked to their chat by a one-time code (core/telegram_links.py) and answered
-from their workspace; their Job Radar works from the profile they write.
+Subscribers reach both through /api/me: their Telegram chat is linked to
+Titan's bot with a one-time code (core/telegram_links.py), and their Job
+Radar works from the profile they write.
 """
 
 from __future__ import annotations
@@ -77,16 +77,18 @@ def telegram_handle(
     req: TelegramHandleRequest,
     x_webhook_secret: Optional[str] = Header(default=None),
 ) -> dict:
-    """Relay entrypoint: HF's network blocks outbound calls to api.telegram.org,
-    so a tiny Cloudflare Worker (see TELEGRAM_SETUP.md) receives the Telegram
-    webhook, calls this endpoint for the reply, and sends it back to Telegram.
-    Secured with the existing TITAN_WEBHOOK_SECRET header."""
+    """Relay entry point for the Telegram bot.
+
+    HF blocks outbound calls to api.telegram.org, so a Cloudflare Worker (see
+    TELEGRAM_SETUP.md) receives the webhook, asks this endpoint for the reply
+    and sends it back. Protected by TITAN_WEBHOOK_SECRET.
+    """
     expected = os.getenv("TITAN_WEBHOOK_SECRET", "").strip()
     if expected and x_webhook_secret != expected:
         raise HTTPException(status_code=401, detail="Invalid X-Webhook-Secret header")
 
-    # A subscriber's link attempt or linked chat is answered from their own
-    # workspace, and logged there - never in the founder's log.
+    # Subscriber chats are answered from their own workspace and logged there,
+    # not in the founder's log.
     theirs = telegram_subscribers.handle(req.chat_id, req.text, req.sender)
     if theirs is not None:
         return {"reply": theirs}
@@ -128,7 +130,7 @@ class JobScanRequest(BaseModel):
 @router.post("/jobs/scan", tags=["jobs"])
 def jobs_scan(req: JobScanRequest) -> dict:
     if cockpit_scope.is_customer():
-        # A live web search on the platform's key, like the War Room.
+        # Uses the platform's search key, so it shares the War Room's hourly limit.
         from .growth import limit_subscriber
         limit_subscriber()
     return jobs.scan(req.query, STORE)
@@ -140,8 +142,9 @@ class ProfileRequest(BaseModel):
 
 @router.post("/jobs/profile", tags=["jobs"])
 def jobs_profile(req: ProfileRequest) -> dict:
-    """A subscriber says what they offer. The founder's profile is his CV in
-    engines/jobs.py and is not edited here."""
+    """Save what a subscriber offers. (The founder's profile is fixed in
+    engines/jobs.py.)
+    """
     _me()
     from .. import persistence
     out = jobs.set_profile(req.profile, STORE)

@@ -14,8 +14,8 @@ const SUGGESTIONS = [
   "Generate this week's report",
 ];
 
-// The founder's suggestions sell his products. A subscriber's are about
-// running their own business.
+// The founder's suggestions are about the founder's products; a subscriber's
+// are about running their own business.
 const CUSTOMER_SUGGESTIONS = [
   "Draft a post about this week's offer",
   "Plan how to get 10 new customers",

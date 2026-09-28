@@ -1,54 +1,44 @@
-"""Durable state on a free private Hugging Face Dataset repo.
+"""Durable state in a free, private Hugging Face Dataset repo.
 
-The problem this solves
------------------------
-A free Space has an ephemeral filesystem. ``/tmp`` is wiped on every rebuild,
-which takes with it every account, organisation, audit row and — worst —
-``site_fix``'s snapshots of the previous content of pages Titan has changed on
-somebody's live website. Losing that store does not merely lose history, it
-loses the ability to undo a change Titan made to another business.
+A free Space has an ephemeral filesystem: ``/tmp`` is wiped on every rebuild,
+along with every account, organisation and audit row, and ``site_fix``'s
+snapshots of pages Titan changed on someone's live site. Losing those means
+losing the ability to undo those changes.
 
-Hugging Face's own answer is persistent storage mounted at ``/data``, which is
-a paid add-on. Their *other* documented answer costs nothing: **a Dataset repo
-is a durable store, and a Space can push to one.** The Hub docs say it plainly
-— "use a dataset as a data store" for anything that must outlive the Space.
-A private Dataset repo is free.
+Hugging Face's persistent storage at ``/data`` is a paid add-on. Their other
+documented option is free: a Space can push to a Dataset repo and use it as a
+data store, and a private Dataset repo costs nothing.
 
 Why not ``CommitScheduler``
 ---------------------------
-``huggingface_hub`` ships a ``CommitScheduler`` for exactly this, and it is the
-wrong tool here. Its contract is **append-only**: the docs warn that
-"deleting or overwriting a file might corrupt your repository", and it uploads
-whatever is in a watched folder on a timer. A SQLite database is the opposite
-of append-only — it is rewritten in place, constantly, including while the
-uploader is reading it. Watching the live database directly would ship torn
-files.
+``huggingface_hub``'s ``CommitScheduler`` is append-only - the docs warn that
+deleting or overwriting a file might corrupt the repository - and it uploads
+a watched folder on a timer. A SQLite database is rewritten in place
+constantly, including while the uploader reads it, so watching it directly
+would ship torn files.
 
-So this pushes a **verified snapshot** instead. ``core/backup.py`` already
-takes a consistent copy through SQLite's own backup API and proves it by
-restoring it into a scratch database and counting the rows. Only a backup that
-passed that check is ever uploaded. The upload itself is a plain
-``upload_file`` — a git commit replacing one blob, which is safe to overwrite
-in a way the scheduler's incremental diffing is not.
+Instead this pushes a verified snapshot. ``core/backup.py`` takes a
+consistent copy with SQLite's backup API and checks it by restoring it into a
+scratch database and counting rows; only a backup that passes is uploaded.
+The upload is a plain ``upload_file`` commit replacing one blob, which is safe
+to overwrite.
 
-What this is honestly worth
----------------------------
-It is **not** continuous durability. It is snapshot durability with a recovery
-point equal to the backup interval: a rebuild loses at most the work since the
-last successful push, and :func:`status` reports that window rather than
-implying otherwise. Persistent storage is still better. This is free.
+Limits
+------
+This is snapshot durability, not continuous: a rebuild loses at most the work
+since the last successful push, and :func:`status` reports that window.
+Persistent storage would be better; this is free.
 
-Restoring only ever happens **towards** an empty database. If a state file
-already exists locally, nothing is pulled — overwriting a live database with an
-older snapshot is the one direction that can destroy data, so it is not a code
-path that exists.
+Restoring only ever happens into an empty database. If a state file already
+exists locally nothing is pulled, since overwriting a live database with an
+older snapshot is the one direction that destroys data.
 
 Configuration (all free)
 ------------------------
-* ``HF_TOKEN`` — a write token, set as a Space secret. Already required by the
-  deploy path.
-* ``TITAN_STATE_REPO`` — e.g. ``careermind2026/titan-state``. Created private
-  and automatically on first push.
+* ``HF_TOKEN`` - a write token, set as a Space secret. Already needed for
+  deploys.
+* ``TITAN_STATE_REPO`` - e.g. ``careermind2026/titan-state``. Created
+  private, automatically, on the first push.
 """
 
 from __future__ import annotations
@@ -58,22 +48,20 @@ import threading
 import time
 from typing import Optional
 
-# One well-known name. The repo keeps the history; the working copy is always
-# "the latest", so a restore never has to guess which file it wants.
+# One fixed filename. The repo keeps the history; the working copy is always
+# the latest, so a restore never has to guess.
 STATE_FILENAME = "titan_state.db"
 MANIFEST_FILENAME = "titan_state.manifest.json"
 
 _lock = threading.RLock()
 
-# Set by a successful push, read by status(). Proof, not intent: a token being
-# present says somebody meant to configure this, and says nothing about whether
-# a byte ever reached the Hub.
+# Set by a successful push and read by status(). A token being present only
+# shows intent; this shows a snapshot actually reached the Hub.
 _last_push: dict = {}
 
-# What happened to the restore on THIS container's boot. Empty until the boot
-# path records something, which it does on every outcome including the boring
-# ones — "a local file already existed" and "no token is set" are answers, and
-# an empty dict would be indistinguishable from "the boot code never ran".
+# What happened to the restore on this container's boot. Recorded for every
+# outcome, including "a local file already existed" and "no token set", so an
+# empty dict can only mean the boot code never ran.
 _last_restore: dict = {}
 
 
@@ -85,9 +73,9 @@ def repo_id() -> str:
     """Where snapshots go.
 
     Defaults to ``<owner>/titan-state``, derived from ``SPACE_ID``, which
-    Hugging Face sets on every Space automatically. That is deliberate: the
-    fewer variables somebody has to get exactly right at 2am, the fewer ways
-    this silently does nothing. Setting ``TITAN_STATE_REPO`` overrides it.
+    Hugging Face sets on every Space - fewer variables to get right means
+    fewer ways for this to silently do nothing. ``TITAN_STATE_REPO``
+    overrides it.
     """
     explicit = os.getenv("TITAN_STATE_REPO", "").strip()
     if explicit:
@@ -108,16 +96,14 @@ def missing() -> list:
     if not token():
         out.append("HF_TOKEN")
     if not repo_id():
-        # Only reachable off-Space: on a Space, SPACE_ID supplies the default.
+        # Only reachable off-Space; on a Space, SPACE_ID supplies the default.
         out.append("TITAN_STATE_REPO")
     return out
 
 
 def _api():
-    # Imported inside the function, never at module load. reportlab took the
-    # whole API down once by being imported at module level and absent; a
-    # missing huggingface_hub must degrade to "not configured", not to a dead
-    # deployment.
+    # Imported inside the function, never at module load, so a missing
+    # huggingface_hub means "not configured" rather than a failed startup.
     from huggingface_hub import HfApi
     return HfApi(token=token())
 
@@ -126,10 +112,9 @@ def _api():
 def push(path: str, *, note: str = "") -> dict:
     """Upload one verified snapshot. Never raises.
 
-    `path` must be a backup that ``core/backup.py`` has already verified. This
-    function does not check that for you, and deliberately does not verify it
-    itself: a second opinion computed from the same file by the same process is
-    not an independent one.
+    `path` must be a backup that ``core/backup.py`` has already verified. It
+    isn't re-verified here: a second check of the same file by the same
+    process isn't an independent one.
     """
     if not configured():
         return {"ok": False, "reason": "not configured",
@@ -176,9 +161,8 @@ def push(path: str, *, note: str = "") -> dict:
 def pull(dest: str) -> dict:
     """Download the latest snapshot to `dest`. Never raises.
 
-    **Refuses if `dest` already exists.** Overwriting a live database with an
-    older snapshot is the one direction that loses data, so it is not
-    something this function can be asked to do.
+    Refuses if `dest` already exists: overwriting a live database with an
+    older snapshot is the one direction that loses data.
     """
     if not configured():
         return {"ok": False, "reason": "not configured", "missing": missing()}
@@ -197,9 +181,8 @@ def pull(dest: str) -> dict:
     try:
         import shutil
         os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
-        # Copy rather than move: hf_hub_download returns a path inside its own
-        # cache, and moving it out from under the cache makes the next call
-        # re-download a file it believes it already has.
+        # Copy rather than move: hf_hub_download returns a path inside its cache, and
+        # moving it would make the next call re-download a file it thinks it has.
         shutil.copyfile(cached, dest)
     except Exception as exc:                                   # noqa: BLE001
         return {"ok": False, "reason": f"could not place the snapshot: {exc}"}
@@ -210,9 +193,8 @@ def pull(dest: str) -> dict:
 def record_restore(outcome: str, detail: dict | None = None) -> None:
     """Remember how the boot restore went, so it can be asked about later.
 
-    Called from the lifespan for EVERY outcome, not only failures. A dashboard
-    that shows nothing when a restore was skipped looks exactly like one that
-    shows nothing because the restore code was never reached.
+    Called for every outcome, not just failures; otherwise "restore skipped"
+    would look the same as "restore code never ran".
     """
     import time as _time
     _last_restore.clear()
@@ -226,8 +208,9 @@ def last_restore() -> dict | None:
 
 
 def remote_manifest() -> Optional[dict]:
-    """What the Hub currently holds, or None. Used to prove a snapshot exists
-    rather than assuming one does because a token is set."""
+    """What the Hub currently holds, or None. Proves a snapshot exists rather
+    than assuming it does because a token is set.
+    """
     if not configured():
         return None
     try:
@@ -247,9 +230,8 @@ def remote_manifest() -> Optional[dict]:
 def status(*, check_remote: bool = False) -> dict:
     """Where the state actually lives, and what would be lost.
 
-    `check_remote` costs a network round trip, so it is off by default and the
-    caller decides. Without it this reports what THIS process has done, which
-    is the honest local answer.
+    `check_remote` costs a network round trip, so it's off by default. Without
+    it this reports what this process has done.
     """
     from .. import persistence
 
@@ -264,8 +246,8 @@ def status(*, check_remote: bool = False) -> dict:
         "local_path": local,
         "local_is_ephemeral": on_temp,
         "last_push": dict(_last_push) or None,
-        # Whether the accounts came BACK on this boot. A backup nobody has
-        # watched restore is a hope, not a backup.
+        # Whether the accounts came back on this boot. A backup that's never been
+        # seen to restore can't be relied on.
         "last_restore": dict(_last_restore) or None,
         "cost": "free — a private Hugging Face Dataset repo",
     }
@@ -278,9 +260,9 @@ def status(*, check_remote: bool = False) -> dict:
 
 
 def recovery_window_seconds() -> Optional[float]:
-    """How much work a rebuild would lose, from the backup interval.
+    """How much work a rebuild would lose, based on the backup interval.
 
-    None when nothing is configured — an unknown window is not a zero one.
+    None when nothing is configured - an unknown window isn't zero.
     """
     if not configured():
         return None

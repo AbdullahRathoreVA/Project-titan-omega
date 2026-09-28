@@ -1,33 +1,18 @@
 """Signed, expiring, revocable session tokens.
 
-What this replaces, and why each part mattered:
+A token is ``payload.signature``: base64url JSON carrying subject, kind, issue
+time, expiry and a random id, signed with HMAC-SHA256.
 
-* **The founder token was ``hmac(secret, username)``.** Deterministic, so the
-  same string every time it was issued; non-expiring, so a token copied from a
-  browser in March still worked in August; and unrevocable, because there was
-  nothing to revoke — the only way to invalidate it was to change
-  ``TITAN_SECRET`` and log out of everything everywhere.
-* **Subscriber sessions were a module-level dict.** Every paying customer was
-  silently signed out by a restart, which on a free-tier host happens often.
+1. Verification is stateless, so a restart doesn't sign anyone out and no
+   session table is needed.
+2. Revocation therefore needs explicit state, because a stateless token is
+   valid until it expires. A small list of revoked ids is persisted, and
+   entries are dropped once the token they refer to would have expired
+   anyway.
 
-A token is now ``payload.signature``: base64url JSON carrying subject, kind,
-issue time, expiry and a random id, signed with HMAC-SHA256. Two consequences
-worth stating:
-
-1. **Verification is stateless**, so a restart no longer signs anyone out —
-   the fix for the subscriber problem falls out of the format rather than
-   needing a session table.
-2. **Revocation therefore needs explicit state**, because a stateless token is
-   valid until it expires by definition. A small revoked-id list is persisted;
-   it is bounded because entries can be dropped once the token they refer to
-   would have expired anyway.
-
-Signature comparison is constant-time. Expiry is checked after the signature,
-so an unsigned token can never reveal timing information about a valid one.
-
-**Existing tokens stop working.** Anyone signed in must sign in again once.
-That is the correct trade for a credential that previously never expired, and
-it is a one-time cost while there are no paying customers.
+Signature comparison is constant-time, and expiry is checked after the
+signature, so an unsigned token can't reveal timing information about a valid
+one.
 """
 
 from __future__ import annotations
@@ -42,8 +27,8 @@ import threading
 import time
 from typing import Optional
 
-# Founder sessions are long enough not to be irritating, short enough that a
-# leaked token is not permanent. Guests are read-only, so shorter still.
+# Founder sessions are long enough not to be annoying and short enough that a
+# leaked token isn't permanent. Guests are read-only, so shorter still.
 DEFAULT_TTL = int(os.getenv("TITAN_SESSION_TTL", str(14 * 86400)))
 GUEST_TTL = int(os.getenv("TITAN_GUEST_TTL", str(6 * 3600)))
 ACCOUNT_TTL = int(os.getenv("TITAN_ACCOUNT_TTL", str(30 * 86400)))
@@ -55,20 +40,18 @@ _revoked: dict[str, float] = {}
 
 # "kind:subject" -> the moment every session for that subject stopped counting.
 #
-# revoke() can only invalidate a token somebody is HOLDING, and these tokens
-# are stateless: nothing here knows which jti belongs to whom. So there was no
-# way to end all of one person's sessions — which is the entire point of
-# changing a password. Telling somebody to change it because it leaked, while
-# leaving whoever leaked it signed in, is theatre.
+# revoke() can only invalidate a token someone is holding, and since tokens are
+# stateless nothing here knows which ids belong to whom. This is how all of one
+# person's sessions are ended, e.g. after a password change.
 #
-# One float per subject, bounded the same way _revoked is: a cutoff is useless
-# once no token issued before it could still be valid.
+# One float per subject, bounded like _revoked: a cutoff is useless once no
+# token issued before it could still be valid.
 _cutoffs: dict[str, float] = {}
 
 
 def _secret() -> bytes:
-    # One door — see core/appsecret.py. Signing sessions with a fallback that
-    # is printed in the repository makes every token forgeable.
+    # Through core/appsecret.py, so sessions are never signed with a fallback
+    # that's published in the repository.
     from . import appsecret
     return appsecret.key()
 
@@ -86,20 +69,16 @@ def issue(subject: str, kind: str = "founder",
     """Mint a token. Two calls never produce the same string."""
     now = time.time()
     ttl = ttl if ttl is not None else DEFAULT_TTL
-    # `iat` carries sub-second precision on purpose. It used to be int(now),
-    # and a whole-second stamp cannot be compared against a "sign everyone out"
-    # moment without either leaving a one-second hole for the attacker or
-    # killing the replacement token minted in the same second. Neither is a
-    # rounding decision. `exp` stays whole — nothing compares against it that
-    # finely.
+    # `iat` keeps sub-second precision on purpose. With whole seconds, comparing
+    # against a "sign everyone out" moment would either leave a one-second gap or
+    # kill a replacement token minted in the same second. `exp` stays whole;
+    # nothing compares against it that finely.
     iat = round(now, 3)
     with _lock:
-        # Signing somebody back in immediately after ending their sessions is a
-        # normal thing to do — it is what a password change does. Wall-clock
-        # alone cannot express "after" at this resolution, so the stamp is
-        # nudged past the cutoff rather than left to collide with it. Without
-        # this the replacement session dies on arrival and the person is logged
-        # out by the act of securing their account.
+        # Signing someone back in right after ending their sessions is normal - it's
+        # what a password change does. Wall-clock time can't express "after" at this
+        # resolution, so the stamp is nudged past the cutoff; otherwise the new
+        # session would die immediately.
         cutoff = _cutoffs.get(f"{kind}:{subject}")
         if cutoff is not None and iat <= cutoff:
             iat = round(cutoff + 0.001, 3)
@@ -116,8 +95,8 @@ def verify(token: str, kind: Optional[str] = None) -> Optional[dict]:
         return None
     body, _, sig = token.partition(".")
     expected = _b64(hmac.new(_secret(), body.encode(), hashlib.sha256).digest())
-    # Constant-time, and checked BEFORE anything is parsed or compared, so a
-    # forged token cannot leak timing information about a valid one.
+    # Constant-time, and checked before anything is parsed or compared, so a
+    # forged token can't leak timing information about a valid one.
     if not hmac.compare_digest(sig, expected):
         return None
     try:
@@ -135,9 +114,9 @@ def verify(token: str, kind: Optional[str] = None) -> Optional[dict]:
             return None
         # Every session for this subject was ended after this token was minted.
         cutoff = _cutoffs.get(f"{payload.get('kind')}:{payload.get('sub')}")
-        # <=, not <. A token stamped in the same millisecond as the change dies
-        # with the ones before it. Anything issued afterwards is nudged past
-        # the cutoff by issue(), so nothing legitimate lands on this boundary.
+        # <=, not <. A token stamped in the same millisecond as the change dies with
+        # the older ones. Anything issued afterwards is nudged past the cutoff by
+        # issue(), so nothing legitimate lands on this boundary.
         if cutoff is not None and float(payload.get("iat", 0)) <= cutoff:
             return None
     return payload
@@ -151,15 +130,13 @@ def subject(token: str, kind: Optional[str] = None) -> Optional[str]:
 def invalidate_all(subject_: str, kind: str = "account") -> float:
     """End every session this subject currently holds. Returns the cutoff.
 
-    Tokens issued from now on are unaffected, so the caller can sign the person
-    straight back in — a password change should not require a second login, and
-    one that does is a password change people avoid making.
+    Tokens issued from now on are unaffected, so the caller can sign the
+    person straight back in; a password change shouldn't force a second
+    login.
     """
-    # Rounded to the SAME precision `iat` carries. Keeping more here than a
-    # token can record means a token minted a microsecond later still compares
-    # as older than the cutoff, and the replacement session dies on arrival.
-    # A test caught exactly that; a manual check with more slack between the
-    # two calls had not.
+    # Rounded to the same precision as `iat`. With more precision here, a token
+    # minted a microsecond later could still compare as older than the cutoff and
+    # the replacement session would die on arrival.
     now = round(time.time(), 3)
     with _lock:
         _cutoffs[f"{kind}:{subject_}"] = now
@@ -169,7 +146,8 @@ def invalidate_all(subject_: str, kind: str = "account") -> float:
 
 def revoke(token: str) -> bool:
     """Invalidate one token before its expiry. Returns False if it was never
-    valid — revoking a forged token is not a success."""
+    valid - revoking a forged token isn't a success.
+    """
     if not token or "." not in token:
         return False
     body, _, sig = token.partition(".")
@@ -192,7 +170,7 @@ def _prune() -> None:
     for jti in [j for j, exp in _revoked.items() if exp <= now]:
         del _revoked[jti]
     # A cutoff stops mattering once no token issued before it could still be
-    # valid. The longest any token lives is ACCOUNT_TTL, so that is the window.
+    # valid. The longest any token lives is ACCOUNT_TTL, so that's the window.
     oldest_useful = now - max(DEFAULT_TTL, GUEST_TTL, ACCOUNT_TTL)
     for key in [k for k, at in _cutoffs.items() if at <= oldest_useful]:
         del _cutoffs[key]
@@ -208,9 +186,9 @@ def revoked_count() -> int:
 def export_state() -> dict:
     with _lock:
         _prune()
-        # Cutoffs persist for the same reason revocations do: a restart that
-        # un-ends everybody's sessions would hand the account back to whoever
-        # the password was changed to lock out.
+        # Cutoffs persist for the same reason revocations do: a restart that un-ends
+        # everyone's sessions would hand the account back to whoever the password
+        # change was meant to lock out.
         return {"revoked": dict(_revoked), "cutoffs": dict(_cutoffs)}
 
 
@@ -219,9 +197,8 @@ def import_state(data: dict) -> None:
         return
     rows = data.get("revoked")
     if not isinstance(rows, dict):
-        # Older snapshots have no cutoffs either, and returning here used to be
-        # harmless. It is not any more: skipping the rest would silently drop
-        # every "sign everyone out" that had been recorded.
+        # Older snapshots have no cutoffs; returning early here would drop any
+        # "sign everyone out" already recorded.
         rows = {}
     with _lock:
         _revoked.clear()

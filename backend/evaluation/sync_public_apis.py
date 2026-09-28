@@ -1,13 +1,11 @@
 """Parse the public-apis catalogue into Titan's API registry.
 
-Source of truth: https://github.com/public-apis/public-apis (README.md).
+Source: https://github.com/public-apis/public-apis (README.md).
 
-This is the `titan api sync` step from the brief. It is a BUILD-TIME script,
-not a runtime dependency: the parsed catalogue is committed as JSON so the
-product never needs GitHub to be reachable to answer "what APIs exist".
-
-Parses dynamically rather than hard-coding the category list, so a future
-change to the upstream repository is picked up by re-running this.
+A build-time script, not a runtime dependency: the parsed catalogue is
+committed as JSON so the app never needs GitHub to answer "what APIs exist".
+Categories are parsed rather than hard-coded, so re-running picks up upstream
+changes.
 
 Run:  python -m evaluation.sync_public_apis
       python -m evaluation.sync_public_apis --offline   (reuse cached README)
@@ -50,17 +48,16 @@ def fetch(offline: bool = False) -> str:
 def _clean(s: str) -> str:
     s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s or "")   # strip md links
     s = re.sub(r"<[^>]+>", "", s)                          # strip html
-    s = s.replace("`", "")                                 # upstream wraps
-    return re.sub(r"\s+", " ", s).strip()                  # auth in backticks
+    s = s.replace("`", "")                                 # upstream wraps auth in backticks
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _auth(raw: str) -> str:
     """Normalise the auth column into a small closed set.
 
-    Upstream writes `apiKey`, `OAuth`, `No`, and a handful of one-offs like
-    `X-Mashape-Key` and `User-Agent`. Left raw these fragment the registry —
-    "apikey" and "`apikey`" would be two different auth types and a filter for
-    "no credential needed" would miss half the free APIs.
+    Upstream uses `apiKey`, `OAuth`, `No` and one-offs like `X-Mashape-Key` and
+    `User-Agent`. Left raw, "apikey" and "`apikey`" would be different auth
+    types and a "no credential needed" filter would miss half the free APIs.
     """
     v = _clean(raw).lower()
     if v in ("", "no", "none"):
@@ -75,7 +72,7 @@ def _auth(raw: str) -> str:
         return "basic"
     if v == "documentation":
         # Upstream uses this where the auth scheme is only described in the
-        # provider's docs. Unknown is the honest label, not "none".
+        # provider's docs. "unknown", not "none".
         return "unknown"
     # X-Mashape-Key, User-Agent, and friends: a header-carried credential.
     return "header"
@@ -84,8 +81,8 @@ def _auth(raw: str) -> str:
 def _tri(v: str):
     """Yes / No / anything else. Unknown stays None, never False.
 
-    The upstream table uses "Unknown" in real rows. Collapsing that to False
-    would state as fact that an API lacks HTTPS or CORS when nobody checked.
+    Upstream has real rows marked "Unknown"; turning that into False would
+    claim an API lacks HTTPS or CORS when nobody checked.
     """
     v = _clean(v).lower()
     if v.startswith("yes"):

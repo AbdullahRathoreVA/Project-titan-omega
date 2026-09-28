@@ -1,33 +1,28 @@
-"""One hardened path for every outbound call to a third-party API.
+"""The single path for outbound calls to third-party APIs.
 
-The registry says what exists. This is the only thing allowed to actually
-reach any of it, and it exists so that 1,675 potential providers do not become
-1,675 separate places where SSRF, unbounded responses and prompt injection can
-each be reinvented badly.
+The registry says what exists; this is the only code that reaches any of it,
+so SSRF protection, response limits and prompt-injection handling live in one
+place instead of per provider.
 
 Every call goes through, in order:
 
-  SSRF guard      `safe_fetch.check` — resolves and rejects private, loopback,
-                  link-local and cloud-metadata addresses, re-checked per hop.
-  Timeout         hard wall-clock cap, no exceptions.
+  SSRF guard      `safe_fetch.check` - rejects private, loopback, link-local
+                  and cloud-metadata addresses, re-checked per redirect.
+  Timeout         hard wall-clock cap.
   Size cap        the body is read in bounded chunks and abandoned past the
-                  limit. A provider that streams forever must not exhaust the
+                  limit, so a provider that streams forever can't exhaust the
                   container.
   Content check   JSON only. An endpoint answering HTML is a landing page, not
-                  an API, and parsing it as data is how a "working provider"
-                  turns out to be a 404 page.
-  Untrusted wrap  the response is DATA. It is never returned in a shape that
-                  invites a model to follow it — see `core/untrusted.py`.
+                  an API.
+  Untrusted wrap  the response is data, never shaped so a model would follow
+                  it - see `core/untrusted.py`.
 
-Failures are classified rather than collapsed into "error", because the
-classification is what routing needs: a rate limit means try later, DNS
-failure means the provider is gone, and a schema mismatch means the adapter is
-stale. The vocabulary is the brief's.
+Failures are classified rather than collapsed into "error", because routing
+needs the difference: a rate limit means try later, a DNS failure means the
+provider is gone, a schema mismatch means the adapter is stale.
 
-**Politeness is enforced here, not left to callers.** A per-host minimum
-interval and a global concurrency cap mean the prober cannot become a
-denial-of-service tool even if someone loops it. The brief's §47 is a hard
-requirement and it is implemented as a lock, not a guideline.
+Politeness is enforced here, not left to callers: a per-host minimum interval
+and a global concurrency cap mean even a looped prober can't hammer anyone.
 """
 
 from __future__ import annotations
@@ -38,7 +33,7 @@ import time
 from typing import Optional
 from urllib.parse import urlparse
 
-# Failure vocabulary from the brief.
+# Failure classes.
 OK = "OK"
 NETWORK_FAILURE = "NETWORK_FAILURE"
 DNS_FAILURE = "DNS_FAILURE"
@@ -55,7 +50,7 @@ UNKNOWN = "UNKNOWN"
 
 TIMEOUT_S = 12.0
 MAX_BYTES = 512_000
-# Minimum gap between two requests to the SAME host. One request per provider
+# Minimum gap between two requests to the same host. One request per provider
 # is a health check; a burst is abuse.
 PER_HOST_INTERVAL = 2.0
 
@@ -63,8 +58,8 @@ UA = "TitanOmega/1.0 (+https://titanomega-ai.com; API health check)"
 
 _lock = threading.RLock()
 _last_hit: dict[str, float] = {}
-# Consecutive failures per host. A provider that has failed repeatedly is not
-# contacted again this run — the circuit breaker from the brief.
+# Consecutive failures per host. A host that keeps failing isn't contacted again
+# this run (circuit breaker).
 _failures: dict[str, int] = {}
 BREAKER_THRESHOLD = 3
 
@@ -77,7 +72,7 @@ def _host(url: str) -> str:
 
 
 def _wait_turn(host: str) -> None:
-    """Block until this host may be contacted again. Politeness as a lock."""
+    """Block until this host may be contacted again."""
     while True:
         with _lock:
             now = time.monotonic()
@@ -122,17 +117,13 @@ def call(url: str, *, timeout: float = TIMEOUT_S,
          expect_json: bool = True, method: str = "GET") -> dict:
     """One request against a third-party API. Never raises.
 
-    Returns a classified result. `data` is present only on a genuine JSON
-    success, and even then it is the caller's job to treat it as untrusted.
+    Returns a classified result. `data` is only present on a JSON success, and
+    even then the caller must treat it as untrusted.
 
-    **GET and POST only, and POST never carries a body.** POST exists here for
-    exactly one shape of API: the trigger, where the whole request is in the
-    query string and the verb is POST only because the provider chose it.
-    MDN's HTTP Observatory is the case that forced it — `GET /api/v2/scan` is
-    a 404 there, measured. Allowing a request body would turn the single
-    hardened outbound path into a general-purpose write channel to 1,675
-    catalogued origins, which is a different thing entirely and is not what
-    this module is for.
+    GET and POST only, and POST never carries a body. POST is here for trigger
+    APIs where the whole request is in the query string (MDN's HTTP
+    Observatory: `GET /api/v2/scan` returns 404). Allowing a body would turn
+    this into a general write channel to every catalogued origin.
     """
     from . import obs, safe_fetch
 
@@ -196,9 +187,8 @@ def call(url: str, *, timeout: float = TIMEOUT_S,
     if result["status"] >= 400:
         result["outcome"] = _classify(result["status"])
         result["error"] = f"HTTP {result['status']}"
-        # A 401/403/429 means the provider is ALIVE and answering, so it must
-        # not trip the breaker — that is a credential or quota problem, not a
-        # dead host.
+        # A 401/403/429 means the provider is alive and answering - a credential or
+        # quota problem, not a dead host - so it mustn't trip the breaker.
         _record(url, result["outcome"] in (AUTH_FAILURE, RATE_LIMIT))
         return result
 
@@ -226,11 +216,10 @@ def call(url: str, *, timeout: float = TIMEOUT_S,
 
 
 def safe_summary(result: dict, *, source: str = "third-party API") -> dict:
-    """Render a result for a model WITHOUT handing it instructions.
+    """Render a result for a model without handing it instructions.
 
-    An API response is external content. Passing it into a prompt raw is the
-    same defect that was closed for crawled pages, on a surface with 1,675
-    potential origins.
+    An API response is external content, and passing it into a prompt raw
+    would allow prompt injection, same as with crawled pages.
     """
     from . import untrusted
 

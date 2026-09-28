@@ -1,14 +1,8 @@
-"""Live GitHub connector.
+"""GitHub connector.
 
-This is the first *real* connector: it pulls actual repository data from the
-GitHub REST API instead of seeded numbers, so the Universal Business Connector
-genuinely monitors your code. Read-only — it observes, it never pushes.
-
-Repos to watch are configured in ``WATCHED`` (your Career Mind AI repo and this
-one by default). Private repos need a token: set ``GITHUB_TOKEN`` in the
-backend's environment. If the API is unreachable or a repo is private with no
-token, the connector degrades gracefully and the dashboard keeps its last known
-values — nothing breaks.
+Pulls live repository stats from the GitHub REST API for the repos in
+WATCHED. Read-only. Private repos need GITHUB_TOKEN. If a repo can't be
+reached, the connector keeps its last known values.
 """
 
 from __future__ import annotations
@@ -19,7 +13,7 @@ from typing import List, Optional, Tuple
 from ..domain.enums import ConnectorKind, ConnectorStatus
 from ..store import STORE, Store, now
 
-# (owner, repo) pairs the empire monitors. Add more here or via add_watch().
+# (owner, repo) pairs to monitor. Add more here or with add_watch().
 WATCHED: List[Tuple[str, str]] = [
     ("AbdullahRathoreVA", "career-mind"),
     ("AbdullahRathoreVA", "Project-titan-omega"),
@@ -29,7 +23,7 @@ _API = "https://api.github.com/repos/{owner}/{repo}"
 
 
 def _verify():
-    # Use the agent proxy's CA bundle when present (this sandbox); plain TLS at deploy.
+    # Use the local proxy's CA bundle when one is present; plain TLS otherwise.
     bundle = os.getenv("TITAN_CA_BUNDLE") or "/root/.ccr/ca-bundle.crt"
     if os.path.exists(bundle):
         import ssl
@@ -86,7 +80,7 @@ def refresh(store: Store = STORE) -> List[dict]:
         existing = store.connectors.get(cid, {})
 
         if data is None:
-            # Couldn't reach it — mark status, keep any prior metrics.
+            # Couldn't reach it - mark the status and keep any earlier metrics.
             conn = {
                 **existing,
                 "id": cid,

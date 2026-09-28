@@ -13,12 +13,12 @@ import { api } from "@/lib/api";
 import { isCustomer } from "@/lib/session";
 import type { JobItem, JobsState } from "@/lib/types";
 
-// Job Radar page: live-found remote jobs/gigs, fit scores, tailored proposals.
-// Compliant by design — Titan finds + drafts, Abdullah clicks apply.
+// Job Radar: remote jobs/gigs found live, fit scores, tailored proposals.
+// Titan finds and drafts; a person clicks apply.
 //
-// In a subscriber's cockpit it hunts for work THEIR business could win -
+// In a subscriber's cockpit it looks for work their business could win -
 // projects, contracts, orders - from the profile they write here. The
-// founder's auto-apply links are for a personal job search and are not shown.
+// founder's auto-apply links are for a personal job search and aren't shown.
 export function JobRadar() {
   const [customer] = useState(() => isCustomer());
   const [profile, setProfile] = useState("");

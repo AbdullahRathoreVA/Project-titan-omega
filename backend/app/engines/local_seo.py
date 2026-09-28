@@ -1,27 +1,23 @@
-"""Local SEO scoring built on measured 2026 ranking weights.
+"""Local SEO scoring based on published ranking-factor studies.
 
-client_seo.py checks whether markup exists. This scores what actually MOVES a
-local business in search, using published weightings rather than intuition:
+client_seo.py checks whether markup exists; this scores what moves a local
+business in search, using published weights:
 
   proximity to searcher      55.2%  (Search Atlas ML study)
   Google Business Profile    32%    (Whitespark 2026)
   review signals            ~20%    (Whitespark 2026, up from 16%)
-  dedicated service pages    #1 local organic factor AND #2 AI visibility factor
+  dedicated service pages    top local organic and AI visibility factor
 
-Two facts reshape the advice for a restaurant:
+Two findings shape the advice:
 
-1. AI now decides local recommendations. 45% of consumers use ChatGPT for local
-   picks, up from 6%, and it converts at 15.9% against Google organic's 1.76%.
-   ChatGPT does NOT read Google Business Profile — it sources from the Bing
-   index, Yelp, TripAdvisor and Reddit. So "claim Bing Places" is not a footnote,
-   it is how a restaurant appears in AI answers at all.
+1. AI assistants now drive local recommendations. ChatGPT doesn't read Google
+   Business Profile; it draws on the Bing index, Yelp, TripAdvisor and Reddit,
+   so claiming Bing Places matters for appearing in AI answers.
+2. Recent reviews beat review count: rankings drop after about three weeks
+   without a new review (Sterling Sky).
 
-2. Review VELOCITY beats review count. Sterling Sky's 18-day rule: rankings fall
-   off a cliff after roughly three weeks with no new review. A restaurant with
-   200 old reviews loses to one with 30 recent ones.
-
-Everything returned names its source and says plainly what cannot be measured
-from outside the site.
+Every result names its source and says what can't be measured from outside
+the site.
 """
 
 from __future__ import annotations
@@ -30,7 +26,7 @@ import json
 import re
 from typing import Optional
 
-# Weights as published, normalised to 100 for scoring.
+# Published weights, normalised to 100.
 DIMENSIONS = {
     "gbp": {"weight": 25, "label": "Google Business Profile signals"},
     "reviews": {"weight": 20, "label": "Reviews and reputation"},
@@ -40,10 +36,8 @@ DIMENSIONS = {
     "authority": {"weight": 10, "label": "Local authority signals"},
 }
 
-# Vertical knowledge now lives in one place. It used to be split across two
-# dicts here whose key sets had drifted apart: VERTICAL_SCHEMA listed dentist,
-# auto and store, VERTICAL_SIGNALS did not, so those three could never be
-# detected and every dental practice silently received generic advice.
+# Vertical-specific data lives in engines/verticals.py (one source, so the
+# schema and signal lists can't drift apart).
 from . import verticals as _verticals   # noqa: E402
 
 VERTICAL_SCHEMA = _verticals.VERTICAL_SCHEMA

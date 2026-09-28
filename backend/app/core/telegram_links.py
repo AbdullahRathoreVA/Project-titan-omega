@@ -1,22 +1,19 @@
-"""Subscribers' Telegram chats, linked to Titan's bot by a one-time code.
+"""Subscribers' Telegram chats, linked to Titan's bot with a one-time code.
 
-Titan's Space cannot reach api.telegram.org (Hugging Face blocks it - see
-TELEGRAM_SETUP.md), so the founder's bot runs through a Cloudflare Worker that
-forwards each message to /api/telegram/handle and sends the reply back. A
-subscriber cannot run their own bot through that, but they can use the same
-one, the way most products do it: their cockpit shows a link that opens the
-bot with a one-time code (`t.me/<bot>?start=<code>`), and from then on their
-chat is answered from their own workspace.
+HF blocks api.telegram.org, so the bot runs through a Cloudflare Worker that
+forwards each message to /api/telegram/handle and sends the reply back (see
+TELEGRAM_SETUP.md). Subscribers can't run their own bot through that, so they
+share Titan's: their cockpit shows a link with a one-time code
+(t.me/<bot>?start=<code>), and from then on their chat is answered from their
+own workspace.
 
-The rules:
+- A code lasts ten minutes and works once.
+- A chat belongs to one account; linking it again moves it.
+- The founder's chat (TELEGRAM_CHAT_ID) is never linked to a subscriber.
+- Each subscriber's command log is kept here, separate from the founder's.
 
-* A code lasts ten minutes and works once.
-* A chat belongs to one account. Linking it again moves it.
-* The founder's own chat (TELEGRAM_CHAT_ID) is never linked to a subscriber.
-* Each subscriber's command log is kept here, apart from the founder's.
-
-Titan still cannot push a message out, so there are no notifications: a
-subscriber asks (/status, /decision...) and gets their answer.
+Titan can't send messages out on its own, so there are no notifications:
+subscribers ask (/status, /decision, ...) and get an answer.
 """
 
 from __future__ import annotations
@@ -54,8 +51,10 @@ def new_code(email: str) -> dict:
 
 
 def redeem(chat_id: str, code: str) -> Optional[str]:
-    """Link this chat to the account the code was issued to. None if the code
-    is unknown or expired, or if this is the founder's own chat."""
+    """Link this chat to the account the code was issued to.
+
+    Returns None for an unknown or expired code, or for the founder's own chat.
+    """
     founder_chat = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not chat_id or (founder_chat and str(chat_id) == founder_chat):
         return None
@@ -101,7 +100,7 @@ def history(email: str, limit: int = 50) -> list:
 
 
 def export_state() -> dict:
-    """Links and logs survive a restart. Codes do not - they last ten minutes."""
+    """Links and logs survive a restart; codes don't (they only last ten minutes)."""
     with _lock:
         return {"links": dict(_links), "logs": {e: list(v) for e, v in _logs.items()}}
 

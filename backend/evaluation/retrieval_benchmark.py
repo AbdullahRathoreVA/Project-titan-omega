@@ -1,30 +1,25 @@
-"""Retrieval benchmark — measure before changing anything.
+"""Retrieval benchmark. Measure before changing any retrieval setting.
 
-The brief's rule, and this codebase's: never claim an improvement that was not
-measured, and never tune a threshold without a benchmark to prove the tuning.
+The corpus is a small business website, since that's Titan's actual market
+and the failure being measured only shows up there: four short pages modelled
+on a leather wholesaler, not a 10,000-document research corpus.
 
-The corpus is a small business website, because that is Titan's actual market
-and the failure mode being measured only appears there. It is modelled on the
-leather wholesaler that is the real client: four short pages, the kind of site
-a business actually has, not a 10,000-document research corpus.
-
-Metrics reported:
+Metrics:
 
   hit@1        the top result is a correct passage
   hit@3        a correct passage is anywhere in the top 3
   MRR          mean reciprocal rank
-  silence      the retriever returned NOTHING for an answerable question
-  false_answer the retriever returned something for an UNANSWERABLE question
+  silence      nothing returned for an answerable question
+  false_answer something returned for an unanswerable question
 
-  small_site_* the same questions with each page indexed ALONE, as a one-page
+  small_site_* the same questions with each page indexed alone, as a one-page
                business site: answerable misses, unanswerable answered, and
                near-miss (another page's question) answered
 
-`silence` and `false_answer` are the two that matter commercially and they pull
-against each other. Silence on an answerable question is the defect being
-chased. A false answer on an unanswerable one is worse — it is the receptionist
-inventing an opening time — so the benchmark measures both and any change must
-not trade one for the other.
+`silence` and `false_answer` pull against each other. Silence on an
+answerable question is the problem being fixed; a false answer is worse (the
+receptionist inventing an opening time). A change must not trade one for the
+other.
 
 Run:  python -m evaluation.retrieval_benchmark
 """
@@ -33,7 +28,7 @@ from __future__ import annotations
 
 import sys
 
-# Four pages of a real small business. Section headings matter — the ingester
+# Four pages of a small business. Section headings matter - the ingester
 # splits on them.
 CORPUS = {
     "https://triad.example/about": """
@@ -87,8 +82,8 @@ ANSWERABLE = [
     ("how long does sampling take", "two weeks"),
 ]
 
-# Questions the site genuinely does not answer. Returning anything here is the
-# receptionist inventing a fact, which is worse than silence.
+# Questions the site doesn't answer. Returning anything here means the
+# receptionist invents a fact, which is worse than silence.
 UNANSWERABLE = [
     "do you offer a lifetime warranty",
     "can I visit the factory in Berlin",
@@ -99,21 +94,19 @@ UNANSWERABLE = [
 
 
 def run(use_embeddings: bool = False, backfill: bool = False) -> dict:
-    """`backfill` reproduces the steady state the heartbeat now maintains.
+    """`backfill` reproduces the steady state the heartbeat maintains.
 
-    Without it this measures the COLD state: pages indexed while the embedding
-    model was still downloading, which keep no vectors. That was production's
-    permanent state until the backfill was wired to the heartbeat, because
-    knowledge.backfill() existed but nothing ever called it.
+    Without it this measures the cold state: pages indexed while the embedding
+    model was still downloading, which have no vectors.
     """
     import time as _t
 
     from app.core import embeddings, knowledge
 
-    # A private store for this thread: improve._measure runs this inside the
-    # live server, and it used to wipe every real client's knowledge. With
-    # embeddings off, the keyword path is isolated — a background model
-    # download deciding the result is not a measurement.
+    # A private store for this thread: improve._measure runs this inside the live
+    # server, and it mustn't touch real clients' knowledge. With embeddings off the
+    # keyword path is isolated, so a background model download can't decide the
+    # result.
     with knowledge.sandbox(use_embeddings=use_embeddings):
         for url, html in CORPUS.items():
             knowledge.ingest("bench", html, url)
@@ -176,11 +169,11 @@ def run(use_embeddings: bool = False, backfill: bool = False) -> dict:
 
 
 def _small_sites(knowledge) -> dict:
-    """The case the four-page corpus cannot show: a business whose WHOLE site
-    is one page. BM25's IDF shrinks with the passage count, so an absolute
-    score cut-off calibrated on the full corpus can silence a small site on
-    questions whose words are literally on the page. Each page is indexed
-    alone and asked the questions it answers, plus every UNANSWERABLE one.
+    """What the four-page corpus can't show: a business whose whole site is one
+    page. BM25's IDF shrinks with the passage count, so a score cut-off tuned
+    on the full corpus can silence a small site on questions whose words are on
+    the page. Each page is indexed alone and asked the questions it answers,
+    plus every UNANSWERABLE one.
     """
     silent, false, near = [], [], []
     answerable = probes = near_probes = 0
@@ -192,8 +185,8 @@ def _small_sites(knowledge) -> dict:
             found = knowledge.search(cid, question, k=3)
             hits = found.get("hits", []) if found.get("ok") else []
             if needle.lower() not in text:
-                # Answered on ANOTHER page, so not on this one-page site: the
-                # hard case, because it shares the site's vocabulary.
+                # Answered on another page, so not on this one-page site. The hard case,
+                # because it shares the site's vocabulary.
                 near_probes += 1
                 if hits:
                     near.append((url.rsplit("/", 1)[-1], question))

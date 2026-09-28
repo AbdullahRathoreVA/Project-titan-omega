@@ -1,12 +1,11 @@
 "use client";
 
 /**
- * ClientCommand — the agency side of Titan, inside the command centre.
+ * ClientCommand - the agency side of Titan, inside the command centre.
  *
- * Until now /portal and /clients were standalone HTML pages living outside the
- * dashboard. That worked but made Titan feel like three products. This folds
- * client management into the same shell as Universe, Mission and War Room, so
- * managing a paying business is a first-class view rather than a side door.
+ * Client management lives in the same shell as Universe, Mission and War
+ * Room, so managing a client business is a first-class view rather than a
+ * separate page.
  *
  * Everything here reads /api/admin/*, which stays behind the founder token.
  */

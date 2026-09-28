@@ -1,36 +1,26 @@
-"""Feature flags, and an answer to "why is this on for them and off for me".
+"""Feature flags, with an answer to "why is this on for them and off for me".
 
-The brief asks for flags scoped by plan, user, tenant, environment and an
-executive override. That list is five different ways for a feature to be on,
-which means the interesting question is never "is it on" — it is **which of the
-five decided**. A flag system you cannot interrogate is worse than no flag
-system, because a support conversation about it becomes guesswork.
-
-So :func:`is_enabled` answers the question and :func:`explain` shows the work:
-every layer that was consulted, what it said, and which one won.
+A flag can be set by plan, user, tenant, environment or an override, so the
+useful question is usually which of those decided. :func:`is_enabled` gives
+the answer and :func:`explain` shows every layer consulted, what it said, and
+which one won.
 
 Resolution order, most specific first
 -------------------------------------
-1. **user** — an override for one person. The executive escape hatch, and the
-   thing you reach for at 2am when one customer is blocked.
-2. **org** — an override for one tenant.
-3. **environment** — ``TITAN_FLAG_<KEY>``. Above plan on purpose: it is how a
-   deployment turns something off *right now*, without a database write, when
-   the database is the thing that is broken.
-4. **plan** — which subscription tiers include the feature.
-5. **default** — what the flag ships as.
+1. user - an override for one person, e.g. when one customer is blocked.
+2. org - an override for one tenant.
+3. environment - ``TITAN_FLAG_<KEY>``. Above plan so a deployment can switch
+   something off immediately without a database write, even when the database
+   is what's broken.
+4. plan - which subscription tiers include the feature.
+5. default - what the flag ships as.
 
-Decisions worth defending
--------------------------
-* **The flag set is closed.** An unknown key raises rather than returning
-  False. A typo silently meaning "off" is how a feature disappears for
-  everybody and nobody can find out why — the same reasoning that makes
-  ``identity`` and ``orgs`` refuse an unknown role.
-* **Overrides record who set them.** A flag flipped by nobody, at no time, is
-  an unexplainable production state.
-* **A missing plan is not a denied plan.** ``plans=None`` means "every plan",
-  not "no plan"; a flag with no plan list should be on for everyone rather
-  than silently off for everyone.
+* The flag set is closed. An unknown key raises instead of returning False, so
+  a typo can't silently switch a feature off for everyone (same reasoning as
+  ``identity`` and ``orgs`` refusing unknown roles).
+* Overrides record who set them.
+* A missing plan list isn't a denial. ``plans=None`` means every plan, so a
+  flag without a plan list is on for everyone rather than off.
 """
 
 from __future__ import annotations
@@ -55,11 +45,10 @@ class FlagError(ValueError):
 class FlagDisabled(PermissionError):
     """A feature was asked to run while its flag is off.
 
-    A distinct type from FlagError on purpose: "you named a flag that does not
-    exist" is a programming mistake, and "this capability is switched off" is
-    an operating decision. Callers handle them differently, and an endpoint
-    that returns 500 for the second one has not implemented a kill switch, it
-    has implemented a crash.
+    Separate from FlagError: naming a flag that doesn't exist is a programming
+    mistake, while a switched-off capability is an operating decision, and
+    callers handle them differently. An endpoint that returns 500 here hasn't
+    implemented a kill switch, it's implemented a crash.
     """
 
 
@@ -68,24 +57,17 @@ class Flag:
     key: str
     description: str
     default: bool = False
-    # None means every plan. An empty frozenset would mean NO plan, which is a
-    # very different thing and is why this is not defaulted to one.
+    # None means every plan. An empty frozenset would mean no plan at all, which
+    # is why it isn't the default.
     plans: Optional[frozenset] = None
-    # WHERE this flag is actually consulted. Empty means NOWHERE, and that is
-    # published as `enforced: false` rather than hidden.
-    #
-    # This field exists because every flag in this dict was unenforced for a
-    # whole release. The screen said "site_fix: enabled", an operator could set
-    # it to disabled, and core/site_fix.py never asked. Somebody would have
-    # believed they had stopped Titan editing a live website.
-    #
-    # A kill switch that does not kill is worse than no kill switch: no kill
-    # switch at least tells you to go and pull the plug yourself.
+    # Where this flag is actually checked. Empty means nowhere, and that's shown as
+    # `enforced: false` rather than hidden, so nobody switches a flag off believing
+    # it stopped something when no code reads it.
     enforced_at: tuple = ()
 
 
-# The closed set. Adding a capability means adding it here, which is the point:
-# a grep for this dict is a complete list of what can be turned on and off.
+# The closed set. Adding a capability means adding it here, so this dict is a
+# complete list of what can be turned on and off.
 FLAGS: dict[str, Flag] = {
     "organisations": Flag(
         "organisations",
@@ -183,9 +165,8 @@ def explain(key: str, *, user_id: str = "", org_id: str = "",
             plan: str = "") -> dict:
     """Every layer that was consulted, and which one decided.
 
-    This is the function that makes the flag system supportable. "It is off for
-    this customer" is not an answer anybody can act on; "the plan layer said no
-    because `site_fix` is not in the free tier" is.
+    "It's off for this customer" isn't actionable; "the plan layer said no
+    because `site_fix` isn't in the free tier" is.
     """
     flag = _require(key)
     layers = []
@@ -203,7 +184,7 @@ def explain(key: str, *, user_id: str = "", org_id: str = "",
                    "value": env_value,
                    "variable": f"TITAN_FLAG_{key.upper()}"})
 
-    # plans=None means every plan. Not "no plan" — see the dataclass.
+    # plans=None means every plan, not no plan - see the dataclass.
     plan_value = None
     if flag.plans is not None and plan:
         plan_value = plan in flag.plans
@@ -227,8 +208,8 @@ def explain(key: str, *, user_id: str = "", org_id: str = "",
         "decided_by": decided_by,
         "description": flag.description,
         "layers": layers,
-        # Whether anything consults this flag. A switch that changes nothing
-        # must say so where it is offered, not in a docstring nobody opens.
+        # Whether anything checks this flag. A switch that changes nothing must say so
+        # where it's offered.
         "enforced": bool(flag.enforced_at),
         "enforced_at": list(flag.enforced_at),
         "note": (None if flag.enforced_at else
@@ -247,10 +228,8 @@ def require(key: str, *, user_id: str = "", org_id: str = "",
             plan: str = "") -> None:
     """Raise FlagDisabled unless this capability is switched on.
 
-    The enforcement half. `is_enabled` returning False and nobody acting on it
-    is how this module spent a whole release as decoration, so the intended way
-    to gate a feature is this function, whose return value cannot be ignored by
-    forgetting to write an `if`.
+    This is the intended way to gate a feature: unlike checking `is_enabled`,
+    you can't forget to act on the result.
     """
     verdict = explain(key, user_id=user_id, org_id=org_id, plan=plan)
     if not verdict["enabled"]:
@@ -260,10 +239,10 @@ def require(key: str, *, user_id: str = "", org_id: str = "",
 
 
 def enforced(key: str) -> bool:
-    """Does any code actually consult this flag?
+    """Does any code actually check this flag?
 
-    False means turning it off changes nothing, which a screen offering a
-    switch is obliged to say out loud.
+    False means turning it off changes nothing, and a screen offering the
+    switch has to say so.
     """
     return bool(_require(key).enforced_at)
 
@@ -275,8 +254,9 @@ def all_flags(*, user_id: str = "", org_id: str = "", plan: str = "") -> list:
 
 
 def overrides(key: str = "") -> list:
-    """Every override currently stored. Small by design — an override is an
-    exception, and a long list of them means a plan is wrong."""
+    """Every override currently stored. Small by design: an override is an
+    exception, and a long list of them means a plan is wrong.
+    """
     try:
         if key:
             rows = _conn().execute(

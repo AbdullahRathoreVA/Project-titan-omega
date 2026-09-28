@@ -1,24 +1,16 @@
-"""Typed event bus — the seam every subsystem talks through.
+"""Typed event bus.
 
-Spec Part 2 ("Everything communicates through events. Never tightly couple
-services") and Part 7 ("All events should be logged, traceable, and
-documented").
+STORE.emit() is a human-readable activity feed for the dashboard; nothing can
+subscribe to it. This adds typed events with structured payloads,
+synchronous subscribers and a bounded trace, and mirrors notable events into
+the feed.
 
-Titan already had ``STORE.emit()``, but that is a *human-readable activity feed*:
-free-text messages for the dashboard. It cannot be subscribed to, carries no
-structured payload, and nothing can react to it. This adds the machine-readable
-layer beside it — typed events, structured payloads, synchronous subscribers,
-and a bounded trace — and mirrors anything worth seeing into the existing feed
-so the dashboard keeps working unchanged.
+Synchronous and in-process on purpose: Titan is a single container, and a
+broker would be infrastructure with no consumer yet. Only this file would
+change if the transport did.
 
-Deliberately synchronous and in-process. Titan runs as one container on a free
-tier; a broker would be infrastructure to pay for and operate with no subscriber
-that needs it yet. The interface is what matters — swapping the transport later
-touches only this file.
-
-A failing subscriber must never break the thing that emitted the event. Handler
-exceptions are captured onto the event record rather than propagated: a broken
-listener degrades observability, not the business action that fired it.
+A failing subscriber never breaks the code that emitted the event: handler
+exceptions are recorded on the event instead of propagating.
 """
 
 from __future__ import annotations
@@ -28,9 +20,8 @@ import time
 from typing import Callable, Optional
 
 # ---------------------------------------------------------------- taxonomy --
-# Spec Part 7 names these explicitly. Keeping them as constants rather than bare
-# strings means a typo is an AttributeError at import, not an event nobody
-# receives and nobody notices.
+# Constants rather than bare strings, so a typo fails at import instead of
+# producing an event nobody receives.
 TASK_CREATED = "TaskCreated"
 TASK_ASSIGNED = "TaskAssigned"
 TASK_COMPLETED = "TaskCompleted"
@@ -62,7 +53,7 @@ KNOWN_EVENTS = frozenset({
     NOTIFICATION_SENT, CLIENT_ONBOARDED, AUDIT_FINISHED,
 })
 
-MAX_TRACE = 500          # bounded: this runs in a 512MB free-tier container
+MAX_TRACE = 500          # bounded: the container has 512 MB
 
 _lock = threading.RLock()
 _subscribers: dict[str, list[Callable]] = {}
@@ -73,9 +64,8 @@ _counter = 0
 def subscribe(event: str, handler: Callable[[dict], None]) -> Callable[[], None]:
     """Register a handler. Returns an unsubscribe callable.
 
-    Unknown event names are allowed — refusing them would make the bus a
-    bottleneck on every new feature — but they are recorded so an event nobody
-    documented still shows up in ``stats()``.
+    Unknown event names are allowed but recorded, so undocumented events still
+    show up in stats().
     """
     with _lock:
         _subscribers.setdefault(event, []).append(handler)
@@ -111,8 +101,7 @@ def emit(event: str, payload: Optional[dict] = None, *,
         try:
             handler(record)
         except Exception as exc:
-            # A broken subscriber degrades observability; it must not break the
-            # business action that emitted the event.
+            # A broken subscriber shouldn't break the action that emitted the event.
             record["errors"].append(f"{type(exc).__name__}: {str(exc)[:160]}")
 
     with _lock:
@@ -131,7 +120,7 @@ def trace(limit: int = 50, event: str = "") -> list[dict]:
 
 
 def stats() -> dict:
-    """What has been happening, for the dashboard and for health checks."""
+    """Recent activity, for the dashboard and health checks."""
     with _lock:
         counts: dict[str, int] = {}
         failures = 0
@@ -153,7 +142,7 @@ def stats() -> dict:
 
 
 def reset() -> None:
-    """Test seam. Not called by application code."""
+    """Test seam."""
     global _counter
     with _lock:
         _subscribers.clear()

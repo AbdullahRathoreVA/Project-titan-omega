@@ -1,10 +1,9 @@
 """A subscriber's own businesses, for the cockpit's Clients and SEO tabs.
 
-Same shapes as the founder's /api/admin/* routes, so the same screens render
-them, but only ever the caller's own businesses. Reached only through
-/api/me/mine/* (main._serve_customer_cockpit authenticates the account and
-binds it); called any other way there is no subscriber and every route here
-answers 404.
+Same response shapes as the founder's /api/admin/* routes, so the same
+screens can render them, limited to the caller's businesses. Only reachable
+through /api/me/mine/*; called any other way there is no subscriber bound
+and every route returns 404.
 """
 
 from __future__ import annotations
@@ -28,8 +27,10 @@ def _me() -> str:
 
 
 def _owned(cid: str) -> str:
-    """The caller's email, if this business is theirs. Otherwise the same 404
-    as a business that does not exist - two answers would enumerate others."""
+    """The caller's email if they own this business, else 404.
+
+    Same 404 as a missing business, so ids can't be probed.
+    """
     email = _me()
     if cid not in billing.owned_clients(email) or not clients.get(cid):
         raise HTTPException(status_code=404, detail="Client not found")
@@ -111,10 +112,10 @@ def watch_my_client_now(cid: str) -> dict:
 
 @router.get("/seo-overview", tags=["cockpit"])
 def my_seo_overview() -> dict:
-    """The Executive tab's SEO panel for the caller's own businesses.
+    """SEO panel for the Executive tab, limited to the caller's businesses.
 
-    `titan` is None: the founder's panel sets Titan's own score beside his
-    clients', which is his business and not theirs."""
+    `titan` is None here: Titan's own score is only shown to the founder.
+    """
     from .router import SEO_OVERVIEW_NOTE, seo_rows
     rows, scored = seo_rows(only=_mine())
     return {
@@ -128,8 +129,10 @@ def my_seo_overview() -> dict:
 
 @router.get("/discovery", tags=["cockpit"])
 def my_discovery(live: bool = Query(False)) -> dict:
-    """Sellable work across the caller's own businesses, from their stored
-    audits. `live` is ignored: a re-crawl of every site is not a GET."""
+    """Sellable work across the caller's businesses, from their stored audits.
+
+    `live` is ignored - re-crawling every site isn't something a GET should do.
+    """
     from ..engines import discovery
     only = _mine()
     cache = {}

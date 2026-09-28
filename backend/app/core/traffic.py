@@ -1,29 +1,23 @@
-"""Who opened the website — visitor analytics with no third party and no cost.
+"""Website visitor analytics with no third party and no cost.
 
-Abdullah asked to see "how many ppl have opened my website" beside signups and
-subscriptions. Google Analytics would answer that, but it means a third-party
-script, a consent banner under GDPR (his market is the EU, and his own audit
-already flagged Titan for a missing privacy policy), and one more account to
-manage. This measures it in-process instead: no script, no cookie, no vendor,
-no bill.
+Google Analytics would mean a third-party script, a GDPR consent banner (the
+market is the EU) and another account. This counts visits in-process instead:
+no script, no cookie, no vendor, no bill.
 
-**Privacy is the design constraint, not a footnote.** A raw IP address is
-personal data under GDPR, and Titan sells legal compliance — storing visitor
-IPs while charging clients to fix their compliance would be indefensible. So:
+Privacy shapes the design. A raw IP address is personal data under GDPR, and
+Titan sells compliance, so:
 
-- The IP is never stored. It is hashed with the user agent and a salt that
-  **changes every day**, which makes the resulting id useless for linking a
-  person across days. That is a deliberate accuracy trade: unique visitors is
-  a per-day figure only, and the report says so rather than summing daily
-  uniques into a bigger, wronger number.
-- Referrers are reduced to a **host** before storage. The full URL of the page
-  someone came from can itself carry personal data in its query string.
-- Only HTML page loads are counted. Counting asset and API requests would turn
-  one visit into thirty and make every number on the screen meaningless.
+- The IP is never stored. It's hashed with the user agent and a salt that
+  changes every day, so ids can't link a person across days. The trade-off:
+  unique visitors is a per-day figure only, and the report doesn't sum daily
+  uniques into a bigger, wrong number.
+- Referrers are reduced to a host before storage, since the full URL can
+  carry personal data in its query string.
+- Only HTML page loads are counted; counting asset and API requests would
+  turn one visit into thirty.
 
-Obvious crawlers are counted **separately**, never folded into human traffic.
-A bot hit is real traffic but it is not a person who might sign up, and mixing
-the two is how a dashboard starts lying about its funnel.
+Obvious crawlers are counted separately from human traffic, since a bot
+isn't a potential signup.
 """
 
 from __future__ import annotations
@@ -37,12 +31,12 @@ import time
 from typing import Optional
 
 # 90 days of daily buckets is a few KB. The per-day visitor sets are the only
-# thing that can grow, and they are capped.
+# thing that can grow, and they're capped.
 MAX_DAYS = 90
 MAX_VISITORS_PER_DAY = 20_000
 
-# Substrings that identify a non-human client. Deliberately conservative — a
-# false positive here silently deletes a real visitor from the funnel.
+# Substrings that identify a non-human client. Conservative, because a false
+# positive silently removes a real visitor from the funnel.
 BOT_MARKERS = (
     "bot", "crawler", "spider", "slurp", "curl", "wget", "python-requests",
     "httpx", "headlesschrome", "lighthouse", "pingdom", "uptimerobot",
@@ -60,17 +54,16 @@ def _today() -> str:
 
 
 def _daily_salt(day: str) -> str:
-    """A salt that rotates daily. Yesterday's ids cannot be recomputed, so the
-    stored hashes cannot be used to follow anyone over time — by construction,
-    not by promise."""
+    """A salt that rotates daily. Yesterday's ids can't be recomputed, so stored
+    hashes can't be used to follow anyone over time.
+    """
     global _salt_day, _salt
     with _lock:
         if _salt_day != day:
             _salt_day = day
-            # Through the one door (core/appsecret.py) like every other reader.
-            # The random half already carries the entropy; routing this one too
-            # is what lets a test assert that exactly ONE module reads
-            # TITAN_SECRET from the environment.
+            # Through core/appsecret.py like every other reader, so a test can assert
+            # that only one module reads TITAN_SECRET from the environment. The random
+            # half already carries the entropy.
             from . import appsecret
             _salt = appsecret.value() + secrets.token_hex(16)
         return _salt
@@ -83,9 +76,8 @@ def is_bot(user_agent: str) -> bool:
 
 _MOBILE = re.compile(r"iphone|android.*mobile|windows phone|ipod", re.I)
 _TABLET = re.compile(r"ipad|android(?!.*mobile)|tablet", re.I)
-# Order matters twice over. An iPhone announces itself as "like Mac OS X", so
-# iOS must be tested BEFORE macOS or every iPhone is filed as a Mac — caught
-# by a test rather than by wondering why nobody browses on a phone.
+# Order matters: an iPhone announces itself as "like Mac OS X", so iOS has to
+# be tested before macOS or every iPhone is filed as a Mac.
 _OS = (("Windows", re.compile(r"windows nt", re.I)),
        ("iOS", re.compile(r"iphone|ipad|ipod", re.I)),
        ("Android", re.compile(r"android", re.I)),
@@ -103,10 +95,8 @@ _BROWSER = (("Edge", re.compile(r"edg[ea]?/", re.I)),
 def device_of(user_agent: str) -> dict:
     """Device class, OS and browser from the user agent.
 
-    Deliberately coarse. The user agent is volunteered by the browser and is
-    not personal data at this granularity — "Android phone, Chrome" describes
-    a category, not a person. Anything finer would be fingerprinting, which is
-    exactly what a company selling GDPR compliance must not do.
+    Deliberately coarse: "Android phone, Chrome" describes a category, not a
+    person. Anything finer would be fingerprinting.
     """
     ua = user_agent or ""
     kind = ("mobile" if _MOBILE.search(ua) else
@@ -132,8 +122,9 @@ def _bucket(day: str) -> dict:
 
 def record(path: str, ip: str = "", user_agent: str = "",
            referrer: str = "", country: str = "") -> None:
-    """Count one page load. Never raises — a counter must never be able to
-    take down the page it is counting."""
+    """Count one page load. Never raises - a counter mustn't be able to take
+    down the page it's counting.
+    """
     try:
         day = _today()
         with _lock:
@@ -159,10 +150,9 @@ def record(path: str, ip: str = "", user_agent: str = "",
                              ("browsers", d["browser"])):
                 b[key][val] = b[key].get(val, 0) + 1
 
-            # Country only — supplied free by Cloudflare's CF-IPCountry header,
-            # so no IP database and, more importantly, no IP stored. City-level
-            # location would need the address itself, which this refuses to
-            # keep. A country is a market; a city plus a device is a person.
+            # Country only, from Cloudflare's CF-IPCountry header, so no IP database
+            # and no stored IP. City-level location would need the address itself; a
+            # country is a market, a city plus a device is a person.
             cc = (country or "").strip().upper()[:2]
             if cc and cc.isalpha():
                 b["countries"][cc] = b["countries"].get(cc, 0) + 1
@@ -193,7 +183,7 @@ def _referrer_host(referrer: str) -> str:
 
 
 def report(days: int = 30) -> dict:
-    """Traffic, and honestly what it can and cannot tell you."""
+    """Traffic, and what it can and can't tell you."""
     from . import billing
 
     today = _today()
@@ -243,7 +233,7 @@ def report(days: int = 30) -> dict:
                                  key=lambda kv: -kv[1])[:20]),
         "busiest_hours_utc": dict(sorted(rolled["hours"].items())),
         "signups_total": signups,
-        # Said plainly because it was asked for and cannot be delivered.
+        # Stated explicitly: this was asked for and can't be provided.
         "not_collected": {
             "phone_number": ("A website visit carries no phone number. "
                              "Nothing in a browser exposes one, and no "
@@ -257,10 +247,8 @@ def report(days: int = 30) -> dict:
             "identity": ("Visitors are counted, never identified. The visitor "
                          "id is a hash with a salt that rotates every 24h."),
         },
-        # Deliberately NOT a visitors→signups percentage. Unique visitors is a
-        # per-day figure (the id salt rotates daily), so there is no honest
-        # total to divide by. Publishing a conversion rate here would be
-        # inventing the denominator.
+        # Not a visitors-to-signups percentage. Unique visitors is a per-day figure
+        # (the salt rotates daily), so there's no total to divide by.
         "conversion_note": (
             "Unique visitors is per-day only — the visitor id is salted with a "
             "salt that rotates every 24h, so the same person on two days "

@@ -1,8 +1,5 @@
-"""Core enumerations shared across the Titan Omega platform.
-
-These values intentionally mirror the language of the operating model: divisions,
-agents, opportunities and executions all flow through a small, well-defined set
-of states so the Executive Intelligence Core can reason about them uniformly.
+"""Enumerations shared across the platform: divisions, agent autonomy, and the
+states opportunities and executions move through.
 """
 
 from __future__ import annotations
@@ -11,11 +8,10 @@ from enum import Enum
 
 
 class AutonomyLevel(str, Enum):
-    """How much a digital employee is trusted to act without human sign-off.
+    """How far an agent may act without human sign-off.
 
-    The platform is autonomous by design but keeps a human in the loop for the
-    highest-impact decisions. Autonomy is therefore a per-agent capability, not
-    a global switch.
+    Set per agent rather than globally, so the highest-impact actions keep a
+    human in the loop.
     """
 
     OBSERVE = "observe"          # read-only: gather signal, never act
@@ -32,7 +28,7 @@ class AgentStatus(str, Enum):
 
 
 class Division(str, Enum):
-    """The autonomous divisions of the empire. Every agent belongs to one."""
+    """The divisions of the company. Every agent belongs to one."""
 
     EXECUTIVE = "executive"
     OPERATIONS = "operations"

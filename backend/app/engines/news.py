@@ -1,8 +1,7 @@
-"""Free live news headlines via Google News RSS (no API key required).
+"""Live news headlines from Google News RSS (no API key needed).
 
-Used by the Growth Studio 'Latest news' feature to ground market analysis in
-what's actually happening today. Degrades gracefully — returns [] on any error
-so the dashboard never breaks.
+Used by Growth Studio's "Latest news" to ground market analysis in today's
+headlines. Returns [] on any error so the dashboard keeps working.
 """
 
 from __future__ import annotations

@@ -1,36 +1,22 @@
-"""Structured logging — so a production incident is diagnosable at all.
+"""Structured logging, so production incidents can be diagnosed.
 
-Measured before this existed: **zero** matches for `request_id`, `structlog`
-or `logging.getLogger` in the entire backend. Titan had a rich activity feed
-for humans (`STORE.emit`) and a typed event bus for subsystems
-(`core/events.py`), and neither is a log. When something failed in production
-there was no way to answer "which request was that, what did it do, and how
-long did it take".
+STORE.emit is an activity feed for people and core/events.py is an event bus
+for subsystems; neither answers "which request was that, what did it do, and
+how long did it take". This does.
 
-Three deliberate decisions.
+- One line of JSON per event on stdout. Hugging Face Spaces, Docker, Render
+  and log shippers all read stdout; a log file would be wiped on rebuild.
+- A request id that follows the work. It's generated per request, held in a
+  context variable, and picked up by every log line while the request is in
+  flight, including from worker threads it starts. It's returned in the
+  `X-Request-Id` header so a customer reporting a problem can quote it.
+- Nothing sensitive is logged. Titan holds customers' site credentials,
+  subscriber emails and voice transcripts, so redaction happens here rather
+  than relying on every caller. Emails become a stable hash and any key that
+  looks like a credential is replaced (see `_REDACT_KEYS`). A test checks
+  that a credential passed to a log call doesn't appear in the output.
 
-**One line of JSON per event, on stdout.** Hugging Face Spaces, Docker, Render
-and every log shipper read stdout. A file would be wiped by the same rebuild
-that wipes everything else, and a log nobody can retrieve after the container
-dies is decoration.
-
-**A request id that follows the work.** Generated per request, attached to a
-context variable, and picked up automatically by every log line emitted while
-that request is in flight — including from a worker thread the request spawned.
-It is returned in the `X-Request-Id` response header so a customer reporting a
-problem can quote a number that finds the exact request.
-
-**Nothing sensitive is ever logged.** Titan holds customers' website
-credentials, subscriber emails and voice transcripts. This module carries an
-explicit redaction pass rather than trusting every future caller to remember,
-because "just don't log secrets" is a convention and conventions leak. Emails
-are reduced to a stable hash, and anything whose key looks like a credential is
-replaced — see `_REDACT_KEYS`. There is a test that a credential passed
-straight into a log call does not appear in the output.
-
-Cost and duration follow the same rule as everywhere else in this codebase:
-duration is measured wall time, and a value that was not measured is `null`
-rather than `0`.
+Durations are measured wall time; a value that wasn't measured is null, not 0.
 """
 
 from __future__ import annotations
@@ -49,8 +35,8 @@ from typing import Any, Optional
 _LEVELS = {"debug": 10, "info": 20, "warn": 30, "warning": 30, "error": 40}
 LEVEL = _LEVELS.get(os.getenv("TITAN_LOG_LEVEL", "info").strip().lower(), 20)
 
-# Off in tests unless asked for — 300 tests each emitting JSON to stdout makes
-# a failure impossible to read.
+# Can be turned off for tests - hundreds of tests each writing JSON to stdout
+# makes failures unreadable.
 ENABLED = os.getenv("TITAN_LOG_ENABLED", "1").strip() not in ("0", "false", "")
 
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar(
@@ -60,13 +46,12 @@ _tenant: contextvars.ContextVar[str] = contextvars.ContextVar(
 
 _lock = threading.RLock()
 # A small ring buffer so /api/founder/logs can show recent lines without a log
-# shipper. Bounded: this container has 512MB.
+# shipper. Bounded: the container has 512MB.
 MAX_RECENT = 300
 _recent: list[dict] = []
 
-# Any key matching these is replaced before it can reach stdout. Substring
-# match, case-insensitive — `wp_application_password` and `X-Account-Token`
-# both hit.
+# Any key matching these is replaced before it reaches stdout. Substring match,
+# case-insensitive, so `wp_application_password` and `X-Account-Token` both hit.
 _REDACT_KEYS = ("password", "secret", "token", "api_key", "apikey",
                 "credential", "authorization", "cookie", "session",
                 "private", "signature")
@@ -84,8 +69,8 @@ def _redact(value: Any, key: str = "") -> Any:
     if isinstance(value, (list, tuple)):
         return [_redact(v, key) for v in value]
     if isinstance(value, str):
-        # An email is personal data. A stable hash still lets two lines be
-        # correlated as the same person without storing who they are.
+        # An email is personal data. A stable hash still lets two lines be linked to
+        # the same person without storing who they are.
         if "@" in value and "." in value.split("@")[-1] and len(value) < 200:
             return "email:" + hashlib.sha256(value.encode()).hexdigest()[:12]
     return value
@@ -108,7 +93,7 @@ def current_request_id() -> str:
 
 
 def log(event: str, level: str = "info", **fields: Any) -> dict:
-    """Emit one structured line. Never raises — logging must not break a request."""
+    """Emit one structured line. Never raises; logging mustn't break a request."""
     try:
         severity = _LEVELS.get(level.lower(), 20)
         record = {
@@ -127,8 +112,8 @@ def log(event: str, level: str = "info", **fields: Any) -> dict:
                 del _recent[:len(_recent) - MAX_RECENT]
 
         if ENABLED and severity >= LEVEL:
-            # default=str so an unexpected object degrades to its repr instead
-            # of raising inside a log call.
+            # default=str so an unexpected object falls back to its repr instead of
+            # raising inside a log call.
             sys.stdout.write(json.dumps(record, default=str) + "\n")
             sys.stdout.flush()
         return record
@@ -152,8 +137,8 @@ class timed:
     """Context manager that logs measured wall time.
 
     Used as `with obs.timed("crawl", url=url): ...`. On an exception it logs
-    the failure with the duration it got to and re-raises — a timing helper
-    that swallowed errors would hide the very thing being diagnosed.
+    the failure with the elapsed time and re-raises; swallowing errors here
+    would hide exactly what's being diagnosed.
     """
 
     def __init__(self, event: str, **fields: Any):
@@ -176,7 +161,7 @@ class timed:
 
 
 def recent(limit: int = 100, level: str = "", event: str = "") -> list[dict]:
-    """Recent lines, newest first. Real records only — nothing synthesised."""
+    """Recent lines, newest first."""
     with _lock:
         rows = list(_recent)
     if level:
@@ -200,8 +185,7 @@ def stats() -> dict:
         "by_level": counts,
         "level": next((k for k, v in _LEVELS.items() if v == LEVEL), "info"),
         "enabled": ENABLED,
-        # None, not 0.0 — "nothing timed anything yet" is not "everything is
-        # instant".
+        # None, not 0.0: "nothing timed yet" isn't "everything is instant".
         "slowest_ms": max(measured) if measured else None,
         "timed_operations": len(measured),
         "note": ("An in-process ring buffer of the last "

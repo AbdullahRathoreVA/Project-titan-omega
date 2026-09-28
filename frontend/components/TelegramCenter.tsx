@@ -6,8 +6,8 @@ import { api } from "@/lib/api";
 import { isCustomer } from "@/lib/session";
 import type { TelegramLogEntry, TelegramStatus } from "@/lib/types";
 
-// A subscriber uses Titan's own bot. Titan's server cannot reach Telegram
-// directly, so there is no bring-your-own bot: they link their chat with a
+// A subscriber uses Titan's own bot. Titan's server can't reach Telegram
+// directly, so there's no bring-your-own bot: they link their chat with a
 // one-time code, and the bot answers it from their workspace only.
 function SubscriberLink({
   status,

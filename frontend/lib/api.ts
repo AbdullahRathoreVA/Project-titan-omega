@@ -1,4 +1,4 @@
-// Thin API client for the Executive Intelligence Core.
+// Thin API client for the backend.
 
 import type {
   AgentView,
@@ -58,8 +58,10 @@ export function apiBase(): string {
   return isCustomer() ? "/api/me" : "/api";
 }
 
-/** The founder cockpit falls back to sample figures when the core is
- *  unreachable. A subscriber must never be shown those as if they were theirs. */
+/**
+ * The founder cockpit falls back to sample figures when the backend is
+ * unreachable. A subscriber must never be shown those as if they were theirs.
+ */
 function fb<T>(founder: T, customer: T): T {
   return isCustomer() ? customer : founder;
 }
@@ -146,8 +148,10 @@ export async function verifyToken(): Promise<boolean> {
   }
 }
 
-/** Questions about the session itself (is auth on? what is this founder
- *  token?) always go to /api with the FOUNDER token, whoever is signed in. */
+/**
+ * Questions about the session itself (is auth on? what is this founder
+ * token?) always go to /api with the founder token, whoever is signed in.
+ */
 async function getRoot<T>(path: string, fallback: T): Promise<T> {
   try {
     const token = getToken();
@@ -172,10 +176,12 @@ async function get<T>(path: string, fallback: T): Promise<T> {
   }
 }
 
-/** The demo account may look at everything and change nothing; the server
- *  answers every write with 403 {demo: true}. Most screens treat a failed
- *  write as "nothing happened", so the cockpit is told once, here, and shows
- *  the visitor why (CommandCenter listens for this event). */
+/**
+ * The demo account can look at everything and change nothing; the server
+ * answers every write with 403 {demo: true}. Most screens treat a failed
+ * write as "nothing happened", so the cockpit is told once, here, and shows
+ * the visitor why (CommandCenter listens for this event).
+ */
 export const DEMO_READ_ONLY_EVENT = "titan-demo-read-only";
 
 export function noticeDemoRefusal(res: Response): void {
@@ -217,8 +223,8 @@ async function del<T>(path: string): Promise<T | null> {
 
 export const api = {
   // External API command centre. `get` returns the fallback on any error, so
-  // these pass a shaped failure object rather than null — the panel renders
-  // the reason instead of silently showing nothing.
+  // these pass a failure object rather than null and the panel can show the
+  // reason.
   apisIntegrated: () =>
     get<any>("/apis/integrated", { integrated: { capabilities: [], count: 0, providers: [], note: "" }, catalogued: 0, adapters_written: 0 }),
   apisRates: (base = "USD", symbols = "PKR,EUR,GBP") =>
@@ -255,11 +261,13 @@ export const api = {
       demo: boolean;
       guest?: boolean;
       guest_available?: boolean;
-      /** Which login is answering. `identity` = real accounts with roles;
-       *  `legacy` = the single TITAN_USERNAME/TITAN_PASSWORD gate. The sign-in
-       *  form asks for an email under one and a username under the other, so
-       *  the label is read from here rather than guessed. Carries no address:
-       *  this endpoint answers before anyone has signed in. */
+      /**
+       * Which login is answering. `identity` = real accounts with roles;
+       * `legacy` = the single TITAN_USERNAME/TITAN_PASSWORD gate. The sign-in form
+       * asks for an email under one and a username under the other, so the label
+       * comes from here. Carries no address: this endpoint answers before anyone
+       * has signed in.
+       */
       identity?: {
         mode: "identity" | "legacy";
         founder_email_configured: boolean;
@@ -272,8 +280,10 @@ export const api = {
       guest: false,
       guest_available: true,
     }),
-  /** What kind of session does the stored token represent? Authoritative —
-   *  never infer this from browser storage. */
+  /**
+   * What kind of session the stored token represents. Authoritative - never
+   * infer this from browser storage.
+   */
   sessionKind: () =>
     getRoot<{ founder: boolean; guest: boolean }>("/session", { founder: false, guest: false }),
   /** Start the public read-only demo session (no login). */
@@ -288,17 +298,17 @@ export const api = {
       return false;
     }
   },
-  /** Sign in, at whichever of the two doors this person actually belongs to.
+  /**
+   * Sign in at whichever of the two doors this person belongs to.
    *
-   *  There are two account systems: the FOUNDER (core/auth.py, `/api/login`)
-   *  and SUBSCRIBERS (core/billing.py, `/api/account/login`). The box on the
-   *  login screen said "Account holders and the owner sign in here" and only
-   *  ever called the founder one, so a customer created from the Executive
-   *  screen typed correct credentials and was told "Invalid username or
-   *  password" forever. Their credentials were fine; the door was not theirs.
+   * There are two account systems: the founder (core/auth.py, `/api/login`)
+   * and subscribers (core/billing.py, `/api/account/login`). The login box
+   * serves both, so a customer created from the Executive screen can sign in
+   * here with their own credentials.
    *
-   *  Founder first, because that is the common case on this screen and a
-   *  subscriber's email can never match the environment gate anyway. */
+   * Founder first, since that's the common case on this screen and a
+   * subscriber's email can never match the environment gate anyway.
+   */
   async login(
     username: string,
     password: string,
@@ -320,7 +330,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: username, password }),
     });
-    // Rate-limited is not "wrong password"; saying so sends people round in
+    // Rate-limited isn't "wrong password"; saying so would send people round in
     // circles retyping a password that was right.
     if (acct.status === 429 || res.status === 429) return "limited";
     if (!acct.ok) return null;

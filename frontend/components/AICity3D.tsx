@@ -1,8 +1,8 @@
 "use client";
 
-// The AI City: every real division is a floating neon district arranged in a
-// ring around the Titan core. Energy strings tie the city together; clicking a
-// district flies the camera to it (no page change — the camera travels).
+// The AI City: each division is a floating neon district in a ring around the
+// Titan core, tied together by energy strings. Clicking a district flies the
+// camera to it (no page change).
 
 import { useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
@@ -141,8 +141,8 @@ function Core({ intensity }: { intensity: number }) {
 }
 
 function CameraRig({ selectedPos }: { selectedPos: [number, number, number] | null }) {
-  // Home sits higher and farther back so the full city — ground ring included —
-  // fits the frame on every screen (the old angle clipped the bottom).
+  // Home sits higher and further back so the whole city, ground ring included,
+  // fits the frame on every screen.
   const home = useMemo(() => new THREE.Vector3(0, 6.8, 13.6), []);
   const look = useRef(new THREE.Vector3(0, 0.4, 0));
 

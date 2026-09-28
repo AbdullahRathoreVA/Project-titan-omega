@@ -9,13 +9,12 @@
 <meta name="theme-color" content="#05070d">
 <meta name="description" content="SEO, local ranking and legal compliance audits for any business, in any jurisdiction. Free tier includes the full legal check.">
 <!--
-  Served as static HTML rather than a Next route on purpose: this is the page a
-  stranger lands on before they have any reason to download a 175 kB dashboard
-  bundle, and it must render instantly on a slow connection.
+  Static HTML rather than a Next route: a visitor lands here before they have
+  any reason to download the dashboard bundle, so it has to render instantly
+  on a slow connection.
 
-  Prices are FETCHED from /api/plans, never hardcoded here. A pricing page that
-  disagrees with what the server enforces is how customers end up billed for
-  something they were not shown.
+  Prices are fetched from /api/plans, never hardcoded, so this page always
+  matches what the server charges.
 -->
 <style>
   :root{--void:#05070d;--panel:#0a0e1a;--edge:#16203a;--cyan:#22d3ee;
@@ -83,9 +82,8 @@
     <div class="card"><div class="note">Loading plans&hellip;</div></div>
   </div>
 
-  <!-- Titan's own audit score, from the engine being sold. Rendered only when
-       it has actually run; a placeholder score would be the exact fabrication
-       this product exists to catch. -->
+  <!-- Titan's own audit score, from the engine being sold. Only rendered once
+       the audit has actually run; never a placeholder score. -->
   <div id="selfseo" style="margin-top:38px"></div>
 
   <footer>
@@ -118,7 +116,7 @@ let chosen = 'free';
 
 const lim = n => n === -1 ? 'unlimited' : n;
 // Errors come back as a sentence, a rate-limit verdict object or FastAPI's
-// validation list; the last two used to print "[object Object]".
+// validation list; turn each into a readable sentence.
 function errText(body, status, fallback) {
   const d = body && body.detail;
   if (typeof d === 'string' && d) return d;
@@ -202,9 +200,9 @@ $('#go').onclick = async () => {
       body: JSON.stringify({ email, password, plan: chosen }),
     });
     const body = await r.json();
-    // An existing account choosing a paid plan is an UPGRADE, not an error.
-    // This dialog is the only way into checkout, so stopping at "already
-    // exists" left every free customer with no way to pay.
+    // An existing account choosing a paid plan is an upgrade, not an error.
+    // This dialog is the only way into checkout, so free customers must be
+    // able to continue from here.
     const existing = !r.ok && chosen !== 'free' &&
       /already exists/i.test(String(body.detail || ''));
     if (!r.ok && !existing) {
@@ -226,8 +224,8 @@ $('#go').onclick = async () => {
     });
     const login = await lr.json().catch(() => ({}));
     if (!lr.ok) {
-      // Without this a wrong password fell through to a 401 from checkout and
-      // was reported as "paid plans are not accepting payment yet".
+      // Catch a wrong password here, before checkout, so it's reported as a
+      // wrong password.
       msg.className = 'msg err';
       msg.textContent = lr.status === 429
         ? errText(login, 429, '')
@@ -252,8 +250,8 @@ $('#go').onclick = async () => {
       msg.textContent = done + ' Opening secure checkout…';
       await openCheckout(out, email, msg);
     } else {
-      // Honest degradation: the account is real and free works. Say that
-      // rather than leaving them staring at a dead button.
+      // The account is real and Free works; say that rather than leave them
+      // with a dead button.
       msg.className = 'msg';
       msg.textContent = done + ' The paid plan could not be started: ' +
         errText(out, cr.status, out.needs || 'payments are not available yet.') +
@@ -267,12 +265,8 @@ $('#go').onclick = async () => {
 
 
 // --- opening the processor's own checkout ---------------------------------
-// This used to be one line saying "Continue in PayPal to activate" and doing
-// nothing at all. A customer who chose a paid plan was told to continue
-// somewhere that did not exist.
-//
-// The processor is read from the SERVER response, never assumed. Same rule the
-// prices follow: a page that hardcodes a processor lies the day it changes.
+// The processor is read from the server response, never assumed - same rule as
+// the prices.
 //
 // Titan never sees a card number in any branch below.
 function loadScript(src) {
@@ -282,8 +276,8 @@ function loadScript(src) {
     var s = document.createElement('script');
     s.src = src;
     s.onload = resolve;
-    // A blocked script fails SILENTLY otherwise, which is how a CSP problem
-    // becomes "the button does nothing" with no explanation anywhere.
+    // A blocked script otherwise fails silently, and a CSP problem just looks
+    // like a button that does nothing.
     s.onerror = function () { reject(new Error('blocked or unreachable: ' + src)); };
     document.head.appendChild(s);
   });
@@ -299,8 +293,8 @@ async function openCheckout(out, email, msg) {
       if (out.environment !== 'production') Paddle.Environment.set('sandbox');
       Paddle.Initialize({
         token: out.client_token,
-        // After paying, the customer was left on the pricing page with
-        // nowhere to go. The plan itself is set by the webhook, not here.
+        // Send the customer on after paying. The plan itself is set by the
+        // webhook, not here.
         eventCallback: (e) => {
           if (e && e.name === 'checkout.completed') {
             msg.className = 'msg ok';
@@ -323,8 +317,8 @@ async function openCheckout(out, email, msg) {
       window.location.href = out.checkout_url || out.url;
       return;
     }
-    // Ready, but this page does not know how to open it. Say exactly that
-    // rather than leaving a dead button and a cheerful message.
+    // Ready, but this page doesn't know how to open it. Say so rather than
+    // leave a dead button.
     msg.className = 'msg';
     msg.textContent = 'Your account is created. This page cannot open the ' +
       (out.processor || 'configured') + ' checkout automatically — please ' +

@@ -51,20 +51,17 @@ export function Sidebar({
   agents: AgentView[];
 }) {
   const [selected, setSelected] = useState<AgentView | null>(null);
-  // Collapsed on a phone. Fourteen rows of channel and agent names is a
-  // roster, and a roster is something you go and look at, not something a
-  // dashboard opens on. Desktop never sees this state — the body is `lg:flex`
-  // and the toggle is `lg:hidden`.
+  // Collapsed on a phone: fourteen rows of channel and agent names is something
+  // to look up, not something the dashboard should open on. Desktop never sees
+  // this state - the body is `lg:flex` and the toggle is `lg:hidden`.
   const [open, setOpen] = useState(false);
   const heads = [...agents]
     .filter((a) => a.is_head)
     .sort((a, b) => b.impact_score - a.impact_score)
     .slice(0, 8);
 
-  // The collapsed line has to carry real information or collapsing just hides
-  // things. Nothing loaded yet is NOT "0 connected" — an empty list means the
-  // fetch has not landed, and reporting a count for it would be a number
-  // nobody measured.
+  // The collapsed line has to carry real information. Nothing loaded yet isn't
+  // "0 connected" - an empty list means the fetch hasn't landed.
   const summaryParts: string[] = [];
   if (channels.length > 0) {
     const connected = channels.filter((c) => c.status === "connected").length;

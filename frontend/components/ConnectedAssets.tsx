@@ -10,7 +10,7 @@ const ICON: Record<string, typeof Plug> = {
   marketplace: Store,
 };
 
-// Override icon for Kindle
+// Kindle gets its own icon.
 function getIcon(c: Connector) {
   if (c.name?.toLowerCase().includes("kindle") || c.name?.toLowerCase().includes("amazon")) {
     return BookOpen;

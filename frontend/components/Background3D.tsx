@@ -1,7 +1,6 @@
 "use client";
 
-// A subtle full-viewport 3D field that sits behind the entire dashboard, so the
-// whole app reads as a living 3D space — not just the core/lattice. Kept light
+// A subtle full-viewport 3D field behind the whole dashboard. Kept light
 // (sparse points, capped dpr, low opacity) so panels stay readable and weak
 // devices cope. Loaded via next/dynamic (ssr:false) by Background.tsx.
 

@@ -1,23 +1,14 @@
-"""Discovery — Titan finding work nobody told it about.
+"""Discovery: finds sellable work in real client data.
 
-The opportunity engine scores a hardcoded seed pool. That pool was written once,
-by hand, so Titan can only ever rank ideas someone already had. Aether solved
-the same problem by mining live data for niches outside its configured list;
-this is the equivalent for a service business.
+The opportunity engine only ranks a fixed seed pool. This looks at what the
+audits actually found:
 
-Two sources, both grounded in real client data rather than imagination:
+1. Client gaps. A finding shared by several clients (say, four sites missing
+   LocalBusiness schema) is one productised offer, not four tickets.
+2. Portfolio gaps. Trials expiring without converting, clients who never
+   signed in, businesses with no website on file.
 
-1. CLIENT GAPS. Every audit produces findings. If four clients all lack
-   LocalBusiness schema, that is not four tickets — it is one productised
-   offer worth selling to all of them and to every future client. This turns
-   accumulated audit output into revenue opportunities automatically.
-
-2. PORTFOLIO GAPS. Trials expiring without conversion, clients who have never
-   logged in, businesses with no website on file. These are the things that
-   quietly lose money and that nobody notices until the client churns.
-
-Everything produced here is evidence-backed: each opportunity names the exact
-clients it came from and how many. No invented market research.
+Every opportunity names the clients it came from and how many.
 """
 
 from __future__ import annotations
@@ -29,8 +20,8 @@ from typing import Optional
 from ..core import clients
 from . import client_seo
 
-# What a recurring finding is actually worth selling as, and roughly what for.
-# Prices are conservative one-off figures for a small local business in EUR.
+# What a recurring finding sells as, and roughly for how much (conservative
+# one-off prices for a small local business, EUR).
 PRODUCTISED = {
     "local_business": {
         "offer": "Local business schema setup",
@@ -115,10 +106,10 @@ PRODUCTISED = {
 
 def scan_client_gaps(audit_cache: Optional[dict] = None,
                      live: bool = False) -> list[dict]:
-    """Recurring findings across all clients, turned into sellable offers.
+    """Recurring findings across clients, turned into sellable offers.
 
-    live=True re-audits every client (slow, network-bound). Otherwise it uses
-    whatever was passed in, so a caller can batch audits on its own schedule.
+    live=True re-audits every client (slow, network-bound); otherwise it uses the
+    audits passed in, so callers can batch audits on their own schedule.
     """
     audits = dict(audit_cache or {})
 
@@ -161,7 +152,7 @@ def scan_client_gaps(audit_cache: Optional[dict] = None,
             "effort": p["effort"],
             "pitch": p["pitch"],
             "urgent": bool(p.get("urgent")),
-            # Evidence, not a guess: this many clients demonstrably have it.
+            # Evidence: this many clients actually have it.
             "evidence": f"found on {n} of {len(audits)} audited client site(s)",
         })
 
@@ -170,11 +161,11 @@ def scan_client_gaps(audit_cache: Optional[dict] = None,
 
 
 def scan_portfolio_risks(only=None) -> list[dict]:
-    """Things quietly losing money that nobody is watching.
+    """Things losing money that nobody is watching.
 
-    `only` is a subscriber's own businesses. Their access comes from their
-    plan and they sign in as themselves, so the trial and never-signed-in
-    checks (about businesses the founder onboards by hand) do not apply.
+    `only` limits it to a subscriber's own businesses. They sign in as
+    themselves and their access comes from their plan, so the trial and
+    never-signed-in checks (for businesses the founder onboards) don't apply.
     """
     rows = [c for c in clients.all_clients() if only is None or c["id"] in only]
     subscriber = only is not None

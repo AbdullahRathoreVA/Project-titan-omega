@@ -1,23 +1,17 @@
-"""The PDF a client actually receives — the deliverable that justifies the fee.
+"""The PDF report a client receives.
 
-A dashboard proves the work exists. A PDF is what a restaurant owner forwards
-to their business partner, prints, or hands to whoever maintains their website.
-It is also what makes a free trial feel like a service rather than a demo.
+A client forwards it, prints it, or hands it to whoever maintains their
+site, so:
 
-Design decisions that matter:
+- Legal exposure comes first. For a German client the Impressum finding
+  matters more than every keyword tip, so it gets its own block with the
+  statute and fine range.
+- Findings are ordered by severity and each comes with its fix.
+- The client's logo goes on the cover when they supplied one.
+- Nothing is estimated: where a number can't be measured (traffic,
+  rankings) the report names the tool that would provide it.
 
-  - Legal exposure leads. For a German client the Impressum finding is worth
-    more than every keyword tip combined, so it sits above the SEO section in
-    its own framed block with the statute and the fine range stated plainly.
-  - Findings are ordered by severity and each carries its fix. A report that
-    lists problems without remedies gets ignored.
-  - The client's own logo goes on the cover when they supplied one, because
-    the report is theirs, not ours.
-  - Nothing is invented. Where a number cannot be measured (traffic, rankings)
-    the report says which tool would provide it instead of guessing.
-
-Built on reportlab, which is already installed — no new dependency, and no
-Docker container needed for what is fundamentally text on a page.
+Uses reportlab.
 """
 
 from __future__ import annotations
@@ -26,13 +20,8 @@ import io
 import time
 from typing import Optional
 
-# reportlab is imported defensively on purpose. A hard top-level import of an
-# optional dependency took the ENTIRE API down in production on 2026-08-01:
-# reportlab was installed locally but missing from requirements.txt, so the
-# container raised ModuleNotFoundError at startup and every endpoint died —
-# for a feature nobody had called yet. One optional capability must never be
-# able to kill the whole service, so a missing library now degrades to a clear
-# error from this one endpoint instead.
+# reportlab is imported defensively: if it's missing, only the PDF endpoint
+# fails, with a clear error, instead of the whole API failing at startup.
 try:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_LEFT
@@ -49,9 +38,8 @@ except Exception as _e:            # noqa: BLE001 - any import failure must be s
     REPORTLAB_ERROR = f"{type(_e).__name__}: {_e}"
     colors = None  # type: ignore[assignment]
 
-# These MUST tolerate reportlab being absent. Guarding only the import while
-# leaving colors.HexColor() calls at module level would still crash on import —
-# which is the exact failure this whole block exists to prevent.
+# These must also work without reportlab; calling colors.HexColor() at module
+# level would still crash the import.
 if REPORTLAB_AVAILABLE:
     INK = colors.HexColor("#15202b")
     MUT = colors.HexColor("#5b6b7d")
@@ -75,7 +63,7 @@ SEV_LABEL = {
 
 
 def available() -> tuple[bool, str]:
-    """Whether PDF generation can run, and why not if it cannot."""
+    """Whether PDF generation can run, and if not, why."""
     return REPORTLAB_AVAILABLE, REPORTLAB_ERROR
 
 
@@ -141,7 +129,7 @@ def build(client: dict, seo: dict, *, social: Optional[dict] = None,
                                kind="proportional"))
                 F.append(Spacer(1, 6 * mm))
         except Exception:
-            pass  # a missing logo must never break the report
+            pass  # a missing logo must not break the report
 
     F.append(Paragraph(_esc(name), st["h1"]))
     F.append(Paragraph(
@@ -243,11 +231,8 @@ def build(client: dict, seo: dict, *, social: Optional[dict] = None,
                 Spacer(1, 3.5 * mm),
             ]))
 
-    # ---------------------------------------------------------- social -----
-    # A pack whose coverage says "not measured for this industry" carries no
-    # week and no pillars. Printing the section anyway would put a page of
-    # restaurant positioning theory into a wholesaler's report under a heading
-    # that promises a plan.
+    # A pack whose coverage says "not measured for this industry" has no week or
+    # pillars, so skip the section rather than print an empty plan.
     if social and not (social.get("coverage") or {}).get("covered", True):
         F.append(PageBreak())
         F.append(Paragraph("Social media plan", st["h2"]))

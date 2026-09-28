@@ -5,8 +5,8 @@ import { Trophy } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Progress } from "@/lib/types";
 
-// Founder XP — computed ONLY from real events (revenue, wins, shipped work).
-// No fake progress: at $0 and zero activity this honestly shows Level 1, 0 XP.
+// Founder XP, computed only from real events (revenue, wins, shipped work). At
+// $0 and no activity it shows Level 1, 0 XP.
 export function ProgressStrip() {
   const [p, setP] = useState<Progress | null>(null);
 

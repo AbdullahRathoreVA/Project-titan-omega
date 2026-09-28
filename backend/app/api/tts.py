@@ -1,14 +1,11 @@
-"""Premium text-to-speech via ElevenLabs — optional, founder-only, $0-safe.
+"""Premium text-to-speech through ElevenLabs. Optional and founder-only.
 
-Design decisions that keep this free and un-abusable:
-  * Only runs when ELEVENLABS_API_KEY is set AND the caller is the authenticated
-    founder. Public guest visitors NEVER trigger it, so the small free monthly
-    quota (~10k chars) is never burned by demo traffic — the demo just uses the
-    browser's built-in voice.
-  * The API key lives only in the backend (a Space secret) and is never exposed
-    to the browser.
-  * Identical lines are cached in-process so repeated boots/briefings cost 0.
-  * Any failure returns 204 so the front end silently falls back to browser TTS.
+- Runs only when ELEVENLABS_API_KEY is set and the caller is the signed-in
+  founder. Guests never trigger it, so demo traffic can't use up the small
+  free quota; the demo uses the browser's voice instead.
+- The key stays on the server.
+- Identical lines are cached in-process, so repeated briefings cost nothing.
+- Any failure returns 204 and the frontend falls back to browser speech.
 """
 
 from __future__ import annotations
@@ -23,7 +20,7 @@ from ..core import auth
 
 router = APIRouter(prefix="/api", tags=["tts"])
 
-# Cached result of the (zero-credit) key validity check.
+# Cached result of the key check (costs no credits).
 _health_cache: dict = {"ts": 0.0, "data": None}
 
 # A calm, clear default voice ("Adam"); override with ELEVENLABS_VOICE_ID.
@@ -34,8 +31,9 @@ _cache: dict[str, bytes] = {}
 
 
 def _authed(request: Request) -> bool:
-    """Founder only. If auth is disabled entirely (local dev) allow it; if it's a
-    guest demo deploy, never allow it."""
+    """Founder only. Allowed when auth is off entirely (local dev); never on a
+    guest demo deploy.
+    """
     if auth.guest_mode():
         return False
     if not auth.require_auth():
@@ -48,7 +46,7 @@ def _authed(request: Request) -> bool:
 async def tts(request: Request) -> Response:
     key = os.getenv("ELEVENLABS_API_KEY", "").strip()
     if not key or not _authed(request):
-        return Response(status_code=204)  # → browser falls back to native TTS
+        return Response(status_code=204)  # browser falls back to its own voice
 
     try:
         body = await request.json()
@@ -90,9 +88,11 @@ async def tts(request: Request) -> Response:
 
 @router.get("/tts/health")
 def tts_health() -> dict:
-    """Open diagnostic: is the ElevenLabs key present AND valid, and how much
-    free quota is left? Uses the /user/subscription endpoint, which costs ZERO
-    TTS credits. Cached 60s. Safe to open in a browser."""
+    """Diagnostic: is the ElevenLabs key present and valid, and how much free
+    quota is left?
+
+    Uses /user/subscription, which costs no TTS credits. Cached for 60s.
+    """
     import time as _t
 
     key = os.getenv("ELEVENLABS_API_KEY", "").strip()
@@ -124,8 +124,8 @@ def tts_health() -> dict:
                     out["characters_limit"] = limit
                     out["characters_remaining"] = max(0, limit - used)
             else:
-                # /user 401/403 can mean a *scoped* key (TTS allowed, account-read
-                # not). Settle it definitively with a tiny 2-char TTS probe.
+                # A 401/403 from /user can mean a scoped key (TTS allowed, account read not),
+                # so confirm with a tiny 2-character TTS request.
                 probe = c.post(
                     f"https://api.elevenlabs.io/v1/text-to-speech/{_VOICE}",
                     headers={"xi-api-key": key, "accept": "audio/mpeg", "content-type": "application/json"},

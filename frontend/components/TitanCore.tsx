@@ -2,7 +2,7 @@
 
 // Wrapper around the WebGL scene: dynamic import (ssr:false) keeps the static
 // export from rendering WebGL at build time, and the error boundary + CSS core
-// guarantee something on weak devices or when WebGL is unavailable.
+// show something on weak devices or when WebGL is unavailable.
 
 import { Component, type ReactNode } from "react";
 import dynamic from "next/dynamic";

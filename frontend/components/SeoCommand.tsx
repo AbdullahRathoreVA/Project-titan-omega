@@ -1,18 +1,15 @@
 "use client";
 
 /**
- * SeoCommand — the SEO view of the command centre.
+ * SeoCommand - the SEO view of the command centre.
  *
- * The engines already existed (client_seo, local_seo, compliance,
- * client_watch) but the only way to see their output was the client-facing
- * portal or a PDF. That is backwards: the person doing the work had the least
- * detailed view of it.
+ * Shows the output of the SEO engines (client_seo, local_seo, compliance,
+ * client_watch) in full detail, not just the client portal or PDF summary.
  *
- * The one rule this view exists to preserve: legal exposure is shown BESIDE
- * the SEO score, never folded into it. A missing Impressum is not "8 points
- * off" — it is a fine and an open invitation for a competitor Abmahnung, and
- * averaging it into a 0-100 number hides the single most valuable finding the
- * product produces.
+ * Legal exposure is shown next to the SEO score, never folded into it. A
+ * missing Impressum isn't "8 points off" - it's a fine and an opening for a
+ * competitor Abmahnung, and averaging it into a 0-100 number would hide the
+ * most valuable finding.
  *
  * Everything here reads /api/admin/*, which stays behind the founder token.
  */
@@ -154,10 +151,10 @@ export default function SeoCommand() {
   const [selected, setSelected] = useState<string>("");
   const [detail, setDetail] = useState<ClientRow | null>(null);
   const [watch, setWatch] = useState<WatchSummary | null>(null);
-  // Kept as {firstRun, items} rather than a bare list: an empty list means two
-  // different things — "no baseline yet" on the first check, and "nothing
-  // changed" on every check after — and showing the first message for the
-  // second case tells the client the monitoring never ran.
+  // Kept as {firstRun, items} rather than a bare list: an empty list means "no
+  // baseline yet" on the first check and "nothing changed" on every later one,
+  // and showing the first message for the second case would suggest monitoring
+  // never ran.
   const [changes, setChanges] =
     useState<{ firstRun: boolean; items: WatchChange[] } | null>(null);
   const [schema, setSchema] = useState<string>("");

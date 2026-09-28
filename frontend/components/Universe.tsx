@@ -1,9 +1,9 @@
 "use client";
 
-// Neural Command Universe — wrapper. Maps Titan's REAL live data into the 3D
-// scene (metric nodes, division galaxies, activity comets) and renders the
-// glassmorphic hologram window when something is selected. Nothing here is
-// decorative: every glow and comet is driven by actual state.
+// Neural Command Universe wrapper. Maps Titan's live data into the 3D scene
+// (metric nodes, division galaxies, activity comets) and renders the
+// glassmorphic hologram window when something is selected. Every glow and
+// comet is driven by actual state.
 
 import { Component, useMemo, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
@@ -129,13 +129,10 @@ export function Universe({
     : [];
 
   return (
-    // 78vh with a 540px floor took 658px of an 844px phone — 78% of the
-    // screen for the visualization, pushing every actionable control below
-    // the fold. On desktop that cinematic scale is the point; on a phone it
-    // is the reason the dashboard cannot be operated.
-    //
-    // 52vh/320px floor on mobile leaves room for the stat cards and the tab
-    // strip in the same screen. Desktop is unchanged from `sm` up.
+    // The scene's height is capped on phones (52vh, 320px floor) so the stat
+    // cards and the tab strip still fit on the same screen; a taller scene would
+    // push every control below the fold. Desktop keeps the larger size from `sm`
+    // up.
     <div className="relative h-[52vh] min-h-[320px] overflow-hidden rounded-xl border border-edge/60 sm:h-[78vh] sm:min-h-[540px]">
       <div className="absolute inset-0">
         <Boundary>

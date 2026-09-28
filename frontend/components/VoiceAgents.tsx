@@ -1,22 +1,20 @@
 "use client";
 
 /**
- * VoiceAgents — the Voice Agent OS command screen.
+ * VoiceAgents - the Voice Agent OS screen.
  *
- * The rule this screen is built to: **every visual state maps to a real
- * backend event, every metric comes from actual data.** Nothing here is
- * decorative. Concretely:
+ * Every visual state maps to a real backend event and every metric to real
+ * data:
  *
- * - Each orbiting node is one live session from `/api/voice/live`. No sessions
- *   means no nodes — not a demo ring of fake agents.
- * - Node colour is the session's real state from the server's state machine.
- *   The machine refuses illegal transitions, so a colour on this screen is a
- *   state the agent genuinely occupied.
- * - Latency renders only where it was measured. Cost renders as "not billed"
- *   because no provider is charging — never `$0.00`, which would claim a
- *   measurement nobody took.
- * - Approve buttons hit the real approval gate. A sensitive tool cannot be
- *   marked executed without one, and the server returns 403 if you try.
+ * - Each orbiting node is one live session from `/api/voice/live`. No
+ *   sessions means no nodes.
+ * - Node colour is the session's state from the server's state machine, which
+ *   refuses illegal transitions, so a colour here is a state the agent was
+ *   really in.
+ * - Latency only shows where it was measured. Cost shows as "not billed"
+ *   because no provider is charging, never `$0.00`.
+ * - Approve buttons go through the real approval gate. A sensitive tool can't
+ *   be marked executed without one, and the server returns 403 if you try.
  *
  * The orbital view is plain canvas, like VoiceSphere: no 3D library, no new
  * dependency, and it runs on integrated graphics.
@@ -78,7 +76,7 @@ type Capabilities = Record<string, { ready: boolean; cost: string; note: string 
   channels: string[];
 };
 
-/** State → colour. One place, so the orbit and the list can never disagree. */
+/** State -> colour, in one place so the orbit and the list always agree. */
 const STATE_TONE: Record<string, { text: string; dot: string; rgb: string }> = {
   idle:        { text: "text-slate-400",    dot: "bg-slate-500",     rgb: "148,163,184" },
   listening:   { text: "text-hud-emerald",  dot: "bg-hud-emerald",   rgb: "52,211,153" },
@@ -109,7 +107,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
   }
 }
 
-/** Orbiting session nodes. One node per live session — never a decorative ring. */
+/** Orbiting session nodes, one per live session. */
 function Orbit({ sessions }: { sessions: SessionRow[] }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const rowsRef = useRef<SessionRow[]>(sessions);
@@ -161,8 +159,8 @@ function Orbit({ sessions }: { sessions: SessionRow[] }) {
         const depth = (Math.sin(a) + 1) / 2;      // front nodes larger
         const c = tone(s.state).rgb;
 
-        // Active states pulse; idle and ended sit still. The motion IS the
-        // state — an idle node that throbbed would be decoration.
+        // Active states pulse; idle and ended sit still, so the motion itself shows
+        // the state.
         const live = s.state === "speaking" || s.state === "listening" || s.state === "thinking";
         const pulse = live ? 1 + Math.sin(t * 4 + i) * 0.18 : 1;
         const rad = (5 + depth * 5) * pulse;
@@ -216,8 +214,8 @@ export default function VoiceAgents() {
   const [history, setHistory] = useState<SessionRow[] | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [alerts, setAlerts] = useState<NotificationPermission | "unsupported">("default");
-  // Previous counts, so an alert fires on a genuine INCREASE rather than on
-  // every poll while a number simply stays high.
+  // Previous counts, so an alert fires on a real increase rather than on every
+  // poll while a number stays high.
   const seen = useRef<{ escalated: number; pending: number } | null>(null);
 
   useEffect(() => {
@@ -610,8 +608,8 @@ export default function VoiceAgents() {
                           )}
                         </span>
                         {c.status === "pending" ? (
-                          // Hits the real gate. Without this the server returns
-                          // 403 on execution — the block is not cosmetic.
+                          // Goes through the real gate; without an approval the server returns 403
+                          // on execution.
                           <button
                             onClick={() => void approve(detail.id, c.id)}
                             disabled={acting === c.id}

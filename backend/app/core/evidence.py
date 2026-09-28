@@ -1,40 +1,26 @@
-"""Evidence ledger — facts about a business, priced by how they were observed.
+"""Evidence ledger: facts about a business, weighted by where they were observed.
 
-Pattern ported from trycompai/crm (MIT), whose README states the rule plainly:
+The idea comes from trycompai/crm (MIT); no code is copied. Tools never
+report a confidence score, since a model grading its own certainty tends to
+be wrong in the direction that makes it look useful. They report what they
+observed and where, and the source decides the weight. Strong evidence
+writes to the record; weak evidence becomes a suggestion for a person to
+settle. A confidently wrong fact is worse than a blank field, because nobody
+can tell it's wrong.
 
-    "Nothing about a person is guessed. No tool accepts a confidence score,
-    because a model asked to grade its own certainty will, and it will be wrong
-    in the direction that makes it look useful. Tools report what they
-    *observed* ... and a ledger prices the evidence. Strong evidence writes to
-    the record. Weak evidence becomes a suggestion a human settles. A
-    confidently wrong fact about a customer is worse than a blank field,
-    because nobody can tell it is wrong."
+Titan already crawls client sites for the SEO and compliance audit, so the
+same fetch can record facts. Sources, strongest first:
 
-No code is copied — that project is a TypeScript/Bun monorepo and this is
-Python. What is ported is the idea, which Titan needed badly: its CRM stored a
-name, a phone and an address with no record of where any of them came from, so
-a value scraped from a page footer was indistinguishable from one Abdullah
-typed himself.
-
-Titan is unusually well placed to apply it, because it already crawls client
-sites for the SEO and compliance audit. The same fetch can *observe* facts.
-
-The source ranking is not a guess about accuracy in the abstract — it is a
-claim about how strongly each surface is tied to being correct:
-
-  manual          Abdullah typed it. Nothing outranks a human.
-  site.impressum  German law (§5 DDG) REQUIRES the operator's real legal name
-                  and physical address here, and getting it wrong is the fine
-                  Titan's whole compliance pitch is about. That makes it the
-                  strongest machine-observable source on the internet for these
-                  fields — stronger than schema, which nobody audits.
-  site.schema     Published JSON-LD. Deliberate, structured, but self-declared.
+  manual          Typed in by a person. Nothing outranks it.
+  site.impressum  German law (§5 DDG) requires the operator's real legal name
+                  and address here, and getting it wrong means a fine, so it's
+                  the strongest machine-readable source for these fields -
+                  stronger than schema, which nobody audits.
+  site.schema     Published JSON-LD. Deliberate and structured, but
+                  self-declared.
   site.contact    A contact page. Intentional, unstructured.
-  site.footer     Footer NAP. Often stale, often a template default.
-  site.title      The page title. Weak: marketing copy, not a fact.
-
-A model is never asked "how sure are you". It is only ever asked what it saw,
-and the source it saw it on decides the weight.
+  site.footer     Footer NAP. Often stale or a template default.
+  site.title      The page title. Marketing copy, not a fact.
 """
 
 from __future__ import annotations
@@ -79,10 +65,10 @@ SOURCES: dict[str, Source] = {
         "Marketing copy. Weak evidence for a fact about the business."),
 }
 
-# At or above this, an observation writes straight to the record. Below it, the
-# observation is filed as a SUGGESTION for a human to settle. The line sits
-# between schema (0.85, published deliberately) and a contact page (0.70,
-# unstructured), because that is where "the business asserted this" stops.
+# At or above this, an observation writes straight to the record; below it,
+# it's filed as a suggestion for a person to settle. The line sits between
+# schema (0.85, published deliberately) and a contact page (0.70,
+# unstructured).
 WRITE_THRESHOLD = 0.75
 
 _lock = threading.RLock()
@@ -92,10 +78,10 @@ _ledger: dict[str, dict[str, list]] = {}
 
 def observe(subject_id: str, field: str, value: str, source: str,
             note: str = "") -> dict:
-    """File one observation. Never raises, never guesses.
+    """Record one observation. Never raises, never guesses.
 
-    `source` must be a known observation surface. A caller cannot pass a
-    confidence number — that is the entire point of the pattern.
+    `source` must be a known observation surface. Callers can't pass a
+    confidence number; that's the point.
     """
     src = SOURCES.get(source)
     if src is None:
@@ -128,8 +114,8 @@ def observe(subject_id: str, field: str, value: str, source: str,
 def _ranked(subject_id: str, field: str) -> list:
     with _lock:
         rows = list(_ledger.get(subject_id, {}).get(field, []))
-    # Strongest source first; newer wins a tie, because a business that changed
-    # its phone number republished it, it did not republish the old one.
+    # Strongest source first; newer wins a tie, since a business that changed its
+    # phone number republished the new one.
     return sorted(rows, key=lambda r: (-r["strength"], -r["ts"]))
 
 
@@ -142,11 +128,11 @@ def best(subject_id: str, field: str) -> Optional[dict]:
 
 
 def suggestions(subject_id: str) -> list:
-    """Observations too weak to write, awaiting a human decision.
+    """Observations too weak to write, waiting for a person to decide.
 
-    A field that already has a strong value produces no suggestion — there is
-    nothing to settle. Conflicts between two WEAK observations are surfaced,
-    because that is precisely the case where guessing does damage.
+    A field that already has a strong value produces no suggestion. Conflicts
+    between two weak observations are surfaced, since that's where guessing
+    does damage.
     """
     out = []
     with _lock:
@@ -173,7 +159,7 @@ def suggestions(subject_id: str) -> list:
 
 
 def settle(subject_id: str, field: str, value: str) -> dict:
-    """A human decides. Recorded as manual, so it outranks everything after."""
+    """A person decides. Recorded as manual, so it outranks later observations."""
     with _lock:
         for row in _ledger.get(subject_id, {}).get(field, []):
             row["settled"] = True
@@ -183,8 +169,8 @@ def settle(subject_id: str, field: str, value: str) -> dict:
 def record(subject_id: str) -> dict:
     """What Titan believes about this business, and why.
 
-    Every field carries its provenance. A blank field is an honest blank, not a
-    plausible guess — which is the whole reason this module exists.
+    Every field carries its source. A blank field stays blank rather than
+    being filled with a plausible guess.
     """
     with _lock:
         fields = sorted(_ledger.get(subject_id, {}))
@@ -221,17 +207,15 @@ def record(subject_id: str) -> dict:
 
 def observe_from_page(subject_id: str, html: str, *,
                       impressum: bool = False) -> list:
-    """Extract facts from a page Titan already fetched, and file each with the
+    """Extract facts from a page Titan already fetched and record each with the
     surface it was seen on.
 
-    This is the whole point of the pattern: the audit crawl is happening
-    anyway, so the same bytes that produce SEO findings can also produce a
-    provenance-tagged record of the business — for free, with no model asked to
-    guess anything.
+    The audit crawl happens anyway, so the same HTML also builds a sourced
+    record of the business, with no model guessing anything.
 
-    `impressum=True` marks the page as the legally-required imprint, which
-    upgrades everything found on it to the strongest machine-observable source.
-    Only pass it when the page genuinely is that page.
+    `impressum=True` marks the page as the legally required imprint, which
+    upgrades everything on it to the strongest machine-readable source. Only
+    pass it when the page really is that page.
     """
     import json as _json
     import re
@@ -287,7 +271,7 @@ def observe_from_page(subject_id: str, html: str, *,
         file("email", mail.group(1).strip(), surface)
 
     # A German Impressum must state the VAT id when the operator has one, so
-    # finding it there is unusually strong evidence of the legal entity.
+    # finding it there is strong evidence of the legal entity.
     vat = re.search(r'\b(DE\d{9}|ATU\d{8}|[A-Z]{2}\d{8,12})\b', html)
     if vat and impressum:
         file("vat_id", vat.group(1), "site.impressum")

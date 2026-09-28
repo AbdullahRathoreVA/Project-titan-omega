@@ -1,18 +1,17 @@
 """Demo-safe payloads for the public guest session.
 
-One Space now serves both the founder's real dashboard and a public demo. The
-guest must NEVER see real business data, so every endpoint carrying private
-information is intercepted and answered from here instead of the live store.
+One Space serves both the founder's dashboard and a public demo. Guests must
+never see real business data, so every endpoint with private information is
+intercepted and answered from here instead of the live store.
 
-What a guest DOES see live (genuinely impressive, zero private data): the 102
-agents working through their division pipelines, divisions, opportunities,
-the universe, council decisions and the activity feed (revenue lines filtered).
+Guests see live: the 102 agents working through their division pipelines,
+divisions, opportunities, the universe, council decisions and the activity
+feed (revenue lines filtered out).
 
-What a guest NEVER sees: real revenue/ledger, expenses, CRM leads, Telegram
-logs, job-radar applications, generated deliverables.
+Guests never see: real revenue/ledger, expenses, CRM leads, Telegram logs,
+Job Radar applications, generated deliverables.
 
-Every figure below is clearly marked SAMPLE — the honesty rule applies to
-demos too.
+Every figure below is marked SAMPLE.
 """
 
 from __future__ import annotations
@@ -24,15 +23,10 @@ from ..store import STORE, now
 
 # Paths whose real content is private. Anything not listed passes through live.
 #
-# THIS LIST IS THE WHOLE GUARD, and it fails OPEN: an endpoint added later and
-# not registered here silently serves the founder's real data to every visitor
-# who clicks "View the live demo". That is exactly what happened — /api/bi,
-# /api/routing, /api/reflection and /api/events all shipped leaking, because
-# the list was written before those endpoints existed.
-#
-# There is a test (test_every_founder_endpoint_is_hidden_from_guests) that
-# enumerates the live route table and fails when a new private-looking endpoint
-# is not covered, so the next one cannot leak silently.
+# This list is the whole guard, and it fails open: an endpoint added later and
+# not registered here would serve real data to every demo visitor.
+# test_every_founder_endpoint_is_hidden_from_guests walks the live route table
+# and fails when a new private-looking endpoint isn't covered.
 _SENSITIVE_PREFIXES = (
     "/api/finance",
     "/api/leads",
@@ -40,9 +34,8 @@ _SENSITIVE_PREFIXES = (
     "/api/telegram",
     "/api/jobs",
     "/api/deliverables",
-    # Executive intelligence. Real revenue, real provider error messages, the
-    # internal event trace and what the platform has learned about itself —
-    # none of it is a demo asset.
+    # Executive intelligence: real revenue, provider error messages, the internal
+    # event trace and what the platform has learned about itself.
     "/api/bi",
     "/api/reflection",
     "/api/routing",
@@ -52,42 +45,33 @@ _SENSITIVE_PREFIXES = (
     "/api/learning",
     "/api/evolution",
     "/api/decisions",
-    # The self-improvement engine. Abdullah IS the approval step, so every
-    # route under this changes — or is one call away from changing — how the
-    # live product behaves. There is no demo-safe version of an approval.
+    # The self-improvement engine. Every route here changes, or is one call away
+    # from changing, how the live product behaves. There's no demo-safe approval.
     "/api/improve",
-    # The approval queue lists real client sites, real proposed edits to them
-    # and live call details. Every item is either his private business or a
-    # paying client's.
+    # The approval queue lists real client sites, proposed edits to them and live
+    # call details.
     "/api/approvals",
-    # AI spend and per-provider reliability is Abdullah's operating cost.
+    # AI spend and per-provider reliability are the founder's operating costs.
     "/api/economics",
-    # Client management. This one is the worst of the set: it is not Abdullah's
-    # data, it is his CLIENTS' — business names, websites, contact details and
-    # their audit findings. Leaking a paying client's information to a public
-    # demo is a breach of their trust and, for an EU client, a GDPR problem for
-    # the operator. Found by the route-table audit test, not by inspection.
+    # Client management: clients' business names, websites, contact details and
+    # audit findings. Showing a paying client's data in a public demo would breach
+    # their trust and, for an EU client, be a GDPR problem.
     "/api/admin",
-    # Founder analytics. Every row is a real subscriber's email address, their
-    # plan and what they did. This is the most personal data in the system and
-    # the demo has no business version of it — blocked outright, never
+    # Founder analytics. Every row is a real subscriber's email, plan and
+    # activity - the most personal data in the system. Blocked outright, never
     # substituted.
     "/api/founder",
-    # Voice sessions carry live transcripts — what a caller actually said, in
-    # their own words, plus whatever number or handle they were reached on.
-    # That is the most sensitive data Titan holds, so the whole prefix stays
-    # blocked. Two read-only endpoints (/live, /sessions) are SUBSTITUTED with
-    # sample sessions; everything else under here — transcripts above all —
-    # is still refused outright. Before the substitute existed the Voice tab
-    # had to be hidden from the demo entirely, which lost the pitch for a
-    # headline feature.
+    # Voice sessions carry live transcripts (what a caller actually said) plus the
+    # number or handle they were reached on, so the whole prefix stays blocked. Two
+    # read-only endpoints (/live, /sessions) are substituted with sample sessions;
+    # everything else, transcripts above all, is refused.
     "/api/voice",
 )
 
 _LEAD_STATUSES = ["new", "contacted", "replied", "won", "lost"]
 
-# One source of truth for the demo's headline numbers, so the status card, the
-# live SSE stream, the revenue ledger and the finance panel can never disagree.
+# One source for the demo's headline numbers, so the status card, the SSE
+# stream, the revenue ledger and the finance panel always agree.
 DEMO_MRR = 693.0
 DEMO_PIPELINE = 4200.0
 DEMO_TRAFFIC = 1280
@@ -104,7 +88,8 @@ def _iso(days_ago: int) -> str:
 
 def _epoch(days_ago: int) -> float:
     """Epoch seconds. The watch/alert payloads use numeric timestamps, not ISO,
-    because that is what the real client_watch.summary() returns."""
+    because that's what the real client_watch.summary() returns.
+    """
     return (now() - timedelta(days=days_ago)).timestamp()
 
 
@@ -128,11 +113,9 @@ def _sample_revenue_entries() -> list:
 def _sample_clients() -> dict:
     """Sample agency portfolio for the public demo.
 
-    This is the demo's most important screen, not a placeholder. A visitor
-    evaluating Titan needs to see the one thing no competitor's SEO report
-    does — a German Impressum finding priced as a fine and an Abmahnung risk —
-    because that is the reason to pay. Hiding the Clients and SEO tabs from the
-    demo removed the sales pitch along with the private data.
+    This is the demo's most important screen: it shows the thing other SEO
+    reports don't - a German Impressum finding priced as a fine and an
+    Abmahnung risk.
 
     Every value is marked [SAMPLE] and none of it is a real business.
     """
@@ -329,10 +312,9 @@ def _sample_watch() -> dict:
 
 def _sample_leads() -> list:
     return [
-        # stage_reached mirrors the real leads: it is the furthest stage the
-        # lead ever got to, which is what the funnel counts. The lost sample
-        # deliberately died at 'contacted' so the demo funnel shows a real leak
-        # rather than a clean staircase.
+        # stage_reached mirrors the real leads: the furthest stage the lead got to,
+        # which is what the funnel counts. The lost sample stopped at 'contacted' so
+        # the demo funnel shows a realistic drop-off.
         {"id": "lead-demo-1", "name": "[SAMPLE] Horizon Digital Agency", "source": "linkedin", "contact": "[SAMPLE]",
          "note": "[SAMPLE] Wants white-label AI dashboard", "status": "replied", "stage_reached": 2,
          "created_at": _iso(5), "updated_at": _iso(1)},
@@ -379,11 +361,8 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
             "forecast_monthly_revenue": 455.0, "forecast_monthly_profit": 430.0,
             "expenses": _sample_expenses(),
         }
-    # The agency portfolio and the SEO view are the demo's SELLING screens.
-    # They were briefly hidden from guests along with the genuinely private
-    # endpoints, which removed the pitch — a visitor could no longer see the
-    # German Impressum finding, which is the single reason to pay for this.
-    # Substituted rather than blocked.
+    # The agency portfolio and SEO view are the demo's main selling screens, so
+    # they're substituted with sample data rather than blocked.
     if path == "/api/admin/clients":
         return _sample_clients()
     if path == "/api/admin/discovery":
@@ -408,10 +387,9 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
                 return c
         return _sample_clients()["clients"][0]
 
-    # Voice. Guest-blocked like the rest of /api/voice, but SUBSTITUTED
-    # rather than refused: without this the tab had to be hidden from the
-    # demo entirely, which lost the pitch for a headline feature. Rendered
-    # through the real summariser so it cannot drift from the live shape.
+    # Voice: blocked for guests like the rest of /api/voice, but substituted
+    # rather than refused so the tab can be shown. Rendered through the real
+    # summariser so it can't drift from the live shape.
     if path == "/api/voice/live":
         from . import voice_sessions
         return voice_sessions.summarise(voice_sessions.demo_rows())
@@ -420,9 +398,8 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
         return voice_sessions.demo_rows()
 
     if path == "/api/leads":
-        # Built with the REAL funnel helper, not a copy of it. When the live
-        # endpoint grows a field, the demo grows it too — otherwise the guest
-        # view (the one prospects are shown) renders undefined for the new key.
+        # Built with the real funnel helper, not a copy, so when the live endpoint
+        # gains a field the demo does too.
         from ..api.finance import LEAD_STAGES, _funnel
 
         items = _sample_leads()
@@ -450,8 +427,8 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
     if path == "/api/deliverables":
         return []
     if path == "/api/progress":
-        # XP is computed from real revenue/leads, so it must be sampled too —
-        # otherwise the demo shows "LV 1 · 0 XP" beside $693 of sample earnings.
+        # XP is computed from revenue and leads, so it's sampled too - otherwise the
+        # demo would show "LV 1 · 0 XP" next to $693 of sample earnings.
         return {
             "xp": 7180, "level": 9, "level_floor": 6400, "next_level_xp": 8100,
             "milestones": [
@@ -470,7 +447,7 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
         from . import executive
 
         s = executive.empire_status(STORE)
-        s["mrr"] = DEMO_MRR          # SAMPLE — never the founder's real revenue
+        s["mrr"] = DEMO_MRR          # SAMPLE - never the founder's real revenue
         s["pipeline_value"] = DEMO_PIPELINE
         s["traffic"] = DEMO_TRAFFIC
         s["updated_at"] = s["updated_at"].isoformat() if hasattr(s["updated_at"], "isoformat") else s["updated_at"]
@@ -479,7 +456,7 @@ def guest_payload(path: str, limit: int = 50) -> Optional[Any]:
     if path == "/api/feed":
         out = []
         for e in STORE.recent_feed(limit):
-            # Never leak real order/revenue lines into the public demo.
+            # Never let real order/revenue lines into the public demo.
             if is_revenue_event(e):
                 continue
             ev = dict(e)

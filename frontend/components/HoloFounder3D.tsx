@@ -1,9 +1,9 @@
 "use client";
 
-// The Titan Founder: a holographic presence projected from an emitter base —
-// a particle bust (head + shoulders) with scan rings and a light beam. It
-// breathes when idle and blazes/jitters while Titan speaks (driven by the
-// global "titan-speech" events emitted by the voice layer).
+// The holographic founder projected from an emitter base: a particle bust
+// (head + shoulders) with scan rings and a light beam. It breathes when idle
+// and flares while Titan speaks (driven by the global "titan-speech" events
+// from the voice layer).
 
 import { useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";

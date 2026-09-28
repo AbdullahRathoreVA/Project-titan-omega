@@ -1,36 +1,21 @@
-"""Model profiling and measured routing.
+"""Model provider profiling and routing based on measured performance.
 
-Spec Part 6: "Do not depend on one AI model... Route requests using
-configurable policies", "Maintain statistics for every configured model:
-Average Latency, Token Usage, Failure Rate, Availability...", and crucially
-"Use measured performance rather than assumptions when routing."
+`llm._provider_chain()` has a fixed order based on free-tier quotas. On its
+own, a provider whose key died would stay first in the chain and every call
+would wait for its timeout before failing over. This records the outcome of
+each call, keeps per-provider statistics, and reorders the chain from them.
 
-What existed before: `llm._provider_chain()` returns a HARDCODED order derived
-from an assumption about free-tier quotas. It never learns. A provider whose key
-died still sits at the front of the chain being tried first on every single
-call, and every agent pays that provider's timeout before failing over.
-
-What this adds: an outcome record per call, per-provider statistics, and a
-routing order derived from those statistics.
-
-Three deliberate limits:
-
-1. **A provider is never removed from the chain.** It is only reordered. Losing
-   a provider entirely because of a transient outage would silence every agent
-   the moment a rate limit hit — the exact failure the existing failover
-   comment warns about. The worst a bad provider gets is last place.
-
-2. **Ranking needs evidence.** Below `MIN_CALLS` samples a provider keeps its
-   configured position, so one unlucky timeout on the first call does not
-   demote a good provider for the rest of the process.
-
-3. **Recovery is automatic.** A demoted provider is retried once its cooldown
-   expires, so a provider that was rate-limited an hour ago is not written off
-   forever.
+1. A provider is never removed, only reordered. Dropping one on a transient
+   outage could leave no provider at all when a rate limit hits; the worst a
+   bad provider gets is last place.
+2. Ranking needs evidence. Below `MIN_CALLS` samples a provider keeps its
+   configured position, so one unlucky timeout doesn't demote a good provider.
+3. Recovery is automatic. A demoted provider is retried normally once its
+   cooldown expires.
 
 State is persisted with the rest of the store: Hugging Face restarts Spaces
-frequently, and profiling that resets on every restart would never accumulate
-enough evidence to route on.
+often, and stats that reset on every restart would never accumulate enough
+evidence to route on.
 """
 
 from __future__ import annotations
@@ -48,7 +33,7 @@ MIN_CALLS = 3
 TRIP_AFTER = 3
 # How long a tripped provider stays demoted before it is tried normally again.
 COOLDOWN_SECONDS = 900
-# Bounded per-provider latency history — this runs in a small container.
+# Bounded per-provider latency history - this runs in a small container.
 MAX_SAMPLES = 50
 
 _lock = threading.RLock()
@@ -112,9 +97,9 @@ def _p50(values: list) -> int:
 def _score(p: dict) -> float:
     """Higher is better. Success rate dominates; latency breaks ties.
 
-    Latency must not outrank reliability: a provider that answers in 200ms and
-    fails half the time is worse than one that takes 2s and always works, because
-    every failure costs the caller a full retry through the chain.
+    A provider that answers in 200ms but fails half the time is worse than one
+    that takes 2s and always works, because every failure costs a full retry
+    through the chain.
     """
     if p["calls"] < MIN_CALLS:
         return 0.0
@@ -147,9 +132,9 @@ def order(chain: list) -> list:
         return (1, 0, -_score(p))                   # measured: best first
 
     ranked = sorted(enumerate(chain), key=sort_key)
-    # Group 0 keeps configured order; group 1 is measured-best-first. Interleave
-    # so a measured-good provider outranks an unmeasured one only when it has
-    # actually proven itself.
+    # Group 0 keeps configured order; group 1 is best-measured first. Interleaved
+    # so a measured provider only outranks an unmeasured one once it has proven
+    # itself.
     unmeasured = [n for i, n in ranked if sort_key((i, n))[0] == 0]
     measured = [n for i, n in ranked if sort_key((i, n))[0] == 1]
     tripped = [n for i, n in ranked if sort_key((i, n))[0] == 2]
@@ -189,8 +174,6 @@ def report() -> dict:
 
 
 # ---------------------------------------------------------- persistence --
-# HF restarts Spaces often; profiling that resets on restart never accumulates
-# enough evidence to route on.
 
 def export_state() -> dict:
     with _lock:
@@ -203,10 +186,9 @@ def import_state(data: dict) -> None:
     rows = data.get("profiles")
     if not isinstance(rows, dict):
         return
-    # Every value is coerced to its expected type. The state file is JSON on
-    # disk: it can be truncated by a crash mid-write or edited by hand, and a
-    # single bad value must not be able to 500 the dashboard or abort the rest
-    # of the restore.
+    # Every value is coerced to its expected type. The state file is JSON on disk
+    # and can be truncated by a crash mid-write or edited by hand; one bad value
+    # mustn't 500 the dashboard or abort the rest of the restore.
     def _int(v, default=0) -> int:
         try:
             return int(v)
@@ -235,8 +217,8 @@ def import_state(data: dict) -> None:
                 if isinstance(samples, list) else [])
             err = p.get("last_error")
             base["last_error"] = err[:200] if isinstance(err, str) else ""
-            # A corrupt file could claim more successes than calls, which would
-            # produce a success rate above 100%.
+            # A corrupt file could claim more successes than calls, giving a success rate
+            # above 100%.
             base["successes"] = min(base["successes"], base["calls"])
             base["failures"] = min(base["failures"], base["calls"])
             _profiles[name] = base

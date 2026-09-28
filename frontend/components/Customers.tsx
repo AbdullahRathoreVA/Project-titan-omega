@@ -1,24 +1,19 @@
 "use client";
 
 /**
- * Customers — the founder's account list, and the form that creates one.
+ * Customers - the founder's account list, and the form that creates one.
  *
- * `POST /api/founder/accounts` has worked for a long time with no interface at
- * all: the first Enterprise seat on this platform was granted by hand from a
- * browser console. A backend capability with no discoverable front end is a
- * capability nobody can use.
+ * The screen for `POST /api/founder/accounts`. Three rules:
  *
- * Three rules this screen obeys, all of them the codebase's own:
- *
- * 1. **A failed fetch is not an empty customer list.** State starts `null` and
- *    only becomes an array once a response actually arrives, so a 403 renders
- *    "could not load" rather than the much worse "no customers yet".
- * 2. **A granted seat is not a paying customer.** The grant is its own column
- *    and its own count. Nothing here has been charged — no payment processor is
- *    configured — and the panel says so instead of implying revenue.
- * 3. **The generated password is shown exactly once.** It is stored only as a
- *    PBKDF2 hash, so this is the only moment it can ever be read. The screen
- *    says that plainly rather than letting Abdullah assume he can come back.
+ * 1. A failed fetch isn't an empty customer list. State starts `null` and
+ *    only becomes an array once a response arrives, so a 403 shows "could not
+ *    load" rather than "no customers yet".
+ * 2. A granted seat isn't a paying customer. Grants get their own column and
+ *    count, and nothing here implies revenue while no payment processor is
+ *    configured.
+ * 3. The generated password is shown exactly once. It's stored only as a
+ *    PBKDF2 hash, so this is the only moment it can be read, and the screen
+ *    says so.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -80,8 +75,10 @@ function token(): string {
   );
 }
 
-/** GET that returns null on any failure — the caller renders the difference
- *  between "no answer" and "an empty answer". */
+/**
+ * GET that returns null on any failure, so the caller can tell "no answer"
+ * from "an empty answer".
+ */
 async function load<T>(path: string): Promise<T | null> {
   try {
     const r = await fetch(`/api${path}`, {
@@ -95,8 +92,10 @@ async function load<T>(path: string): Promise<T | null> {
   }
 }
 
-/** POST that keeps the server's reason. A form that swallows "A valid email
- *  address is required" and shows "failed" makes the founder guess. */
+/**
+ * POST that keeps the server's reason, so a message like "A valid email
+ * address is required" reaches the founder instead of a bare "failed".
+ */
 async function send<T>(
   path: string,
   body: unknown,
@@ -187,8 +186,8 @@ export default function Customers() {
       await navigator.clipboard.writeText(result.password);
       setCopied(true);
     } catch {
-      // Clipboard is blocked outside a secure context. The password is on
-      // screen and selectable, so this is a convenience, not the mechanism.
+      // Clipboard is blocked outside a secure context. The password is on screen
+      // and selectable, so this is only a convenience.
       setCopied(false);
     }
   };

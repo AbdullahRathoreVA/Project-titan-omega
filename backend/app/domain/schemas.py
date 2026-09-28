@@ -1,7 +1,7 @@
-"""Pydantic schemas that form the platform's API contract.
+"""Pydantic models for the API.
 
-Static identity (from :mod:`network`) is merged with live runtime state into these
-response models so the dashboard receives everything it needs in one shape.
+Static agent identity (domain/network.py) is merged with live runtime state
+so the dashboard gets everything it needs in one shape.
 """
 
 from __future__ import annotations
@@ -64,9 +64,8 @@ class Opportunity(BaseModel):
     risk: float = 0.0                      # 0-100, higher = riskier
     time_estimate_days: float = 0.0
     priority_score: float = 0.0            # composite, after learned re-rank
-    # The raw formula score before Titan applied what it learned about which
-    # opportunities Abdullah actually pursues, plus a plain-language reason.
-    # Surfacing both keeps the ranking auditable instead of a black box.
+    # Score before the learned re-rank, plus a plain-language reason, so the
+    # ranking can be checked rather than taken on trust.
     formula_score: Optional[float] = None
     rank_reason: Optional[str] = None
     execution_plan: List[str] = Field(default_factory=list)
@@ -109,7 +108,7 @@ class Deliverable(BaseModel):
     agent_name: str
     opportunity_id: Optional[str] = None
     content: str
-    source: str  # "ai" (Claude-generated) | "template" (no key configured)
+    source: str  # "ai" (LLM-generated) | "template" (no key configured)
     created_at: datetime
 
 

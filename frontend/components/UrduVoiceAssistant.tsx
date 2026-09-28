@@ -23,8 +23,8 @@ export function UrduVoiceAssistant({ status }: { status: EmpireStatus | null }) 
     setLoading(true);
 
     try {
-      // The founder's briefing needs his token now that it is not public; a
-      // subscriber hears their own from /api/me/voice-report.
+      // The founder's briefing needs the founder token; a subscriber hears their own
+      // from /api/me/voice-report.
       const res = await fetch(`${apiBase()}/voice-report`, {
         cache: "no-store",
         headers: authHeaders(),

@@ -1,23 +1,18 @@
-"""Learning layer — Titan adapting its ranking to Abdullah's actual judgement.
+"""Learning layer: adapt opportunity ranking to what the founder actually does.
 
-The opportunity engine scores candidates with a fixed formula over
-expected_revenue / difficulty / risk / time. That formula never changes, so
-Titan ranks the same way on day 500 as on day 1 no matter what Abdullah
-actually pursues or ignores.
+The opportunity engine scores candidates with a fixed formula over expected
+revenue, difficulty, risk and time, so ranking never changes with use. Here,
+every executed or dismissed opportunity becomes a labelled example. A Naive
+Bayes classifier over the title and rationale learns which kinds get acted on
+and re-ranks new candidates, blended with the formula score and weighted by
+how much evidence there is.
 
-This module closes that loop. Every time he executes an opportunity or dismisses
-one, that becomes a labelled example. A Naive Bayes classifier over the title
-and rationale learns which KINDS of opportunity he really acts on, and re-ranks
-future candidates by predicted pursuit — blended with the formula score, weighted
-by how much evidence exists.
-
-Design constraints, deliberately matching the rest of the codebase:
-  - pure stdlib. No numpy, no sklearn. The container is small and free-tier.
-  - honest by design: below MIN_TRAIN it refuses to predict and says so; it
-    reports cross-validated accuracy on held-out data, never training accuracy;
-    and its influence ramps with evidence so an early model cannot dominate.
-  - inspectable: the tokens it learned are exposed, so the dashboard can show
-    WHY something ranked high rather than gesturing at a black box.
+- Pure stdlib (no numpy/sklearn) for a small container.
+- Below MIN_TRAIN it doesn't predict. Accuracy is cross-validated on held-out
+  data, and the model's influence grows with evidence so an early model can't
+  dominate.
+- The learned tokens are exposed, so the dashboard can show why something
+  ranked high.
 """
 
 from __future__ import annotations
@@ -30,7 +25,7 @@ import time
 from collections import Counter
 from typing import Iterable
 
-MIN_TRAIN = 10          # below this, no prediction is honest
+MIN_TRAIN = 10          # too little data below this to predict
 CONFIDENT_AT = 35       # examples before the model fully outranks the formula
 
 STOPWORDS = {
@@ -45,7 +40,7 @@ STOPWORDS = {
 
 _lock = threading.RLock()
 
-# label 1 = he pursued it, 0 = he dismissed it
+# label 1 = pursued, 0 = dismissed
 _examples: list[tuple[str, int]] = []
 _model: "_NaiveBayes | None" = None
 _dirty = True
@@ -107,13 +102,13 @@ class _NaiveBayes:
 
 
 def record(text: str, pursued: bool) -> None:
-    """Log one real decision. Called when an opportunity is executed/dismissed."""
+    """Record one real decision. Called when an opportunity is executed/dismissed."""
     global _dirty
     if not text:
         return
     with _lock:
         _examples.append((text[:2000], 1 if pursued else 0))
-        # Keep memory bounded on a free-tier container.
+        # Keep memory bounded on a small container.
         if len(_examples) > 4000:
             del _examples[:1000]
         _dirty = True
@@ -159,7 +154,7 @@ def rerank(text: str, formula_score: float) -> tuple[float, str]:
     """Blend the learned prediction with the engine's formula score.
 
     formula_score is the existing 0..100 priority. Returns the adjusted score
-    and a human-readable reason, so the UI never shows an unexplained number.
+    and a readable reason, so the UI never shows an unexplained number.
     """
     m = _train()
     if m is None:
@@ -200,11 +195,9 @@ def stats() -> dict:
 
 
 # ----------------------------------------------------------------- teacher ---
-# Cold start removal. Waiting for Abdullah to execute or dismiss 10
-# opportunities means Titan ranks by the frozen formula for weeks. Instead we
-# let the LLM chain judge the seed opportunities against his actual situation,
-# and learn from that. His own decisions still override these later, because he
-# is ground truth and the model is only a bootstrap.
+# Cold start: waiting for 10 real decisions would leave ranking on the fixed
+# formula for weeks, so the LLM labels the seed opportunities first. Real
+# decisions override these later; the model is only a bootstrap.
 
 _TEACHER_SYSTEM = (
     "You advise a solo technical founder in Pakistan with no capital, no team, "
@@ -239,7 +232,7 @@ def teach_from_llm(items: Iterable[tuple[str, float]], max_items: int = 12) -> d
         if score is None:
             skipped += 1
             continue
-        # The middle is genuinely ambiguous - teaching from it adds noise.
+        # The middle is ambiguous - learning from it only adds noise.
         if 4.0 < score < 6.0:
             skipped += 1
             continue

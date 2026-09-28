@@ -9,9 +9,9 @@ import { isCustomer } from "@/lib/session";
 type ApproveResult = { sent?: boolean; channels?: string[] };
 type Outcome = { sent: boolean; channels: string[]; refused?: boolean };
 
-// The HUD "Next Post" card: shows the next AI-generated image + caption and lets
-// the founder approve (schedule it) or regenerate, in one click. Fresh AI images
-// can take 30-60s to generate server-side, so a failed load auto-retries with
+// The HUD "Next Post" card: shows the next generated image + caption and lets
+// the founder approve (schedule) or regenerate it in one click. New AI images
+// can take 30-60s to generate server-side, so a failed load retries with
 // backoff instead of sticking on a broken frame.
 export function NextPost({
   post,
@@ -55,8 +55,8 @@ export function NextPost({
     setResult(null);
     try {
       const out = await fn();
-      // Approving must report what actually happened. Clicking a button and
-      // seeing nothing change is why this looked broken.
+      // Approving must report what actually happened, not leave the button looking
+      // like nothing changed.
       if (key === "approve") {
         const r = out as ApproveResult | null;
         // No answer means nothing was scheduled - not "saved to the queue".
@@ -88,8 +88,8 @@ export function NextPost({
             caption and buttons always fit INSIDE the fixed-height card. */}
         <div className="relative min-h-[120px] w-full flex-1 overflow-hidden rounded-lg border border-edge bg-panel-2">
           {post?.unavailable ? (
-            // A placeholder has no image; saying it is "still rendering"
-            // would promise one that is never coming.
+            // A placeholder has no image; "still rendering" would promise one that
+            // isn't coming.
             <div className="flex h-full w-full items-center justify-center text-slate-600">
               <ImageOff className="h-7 w-7" />
             </div>
@@ -181,8 +181,8 @@ export function NextPost({
           </button>
           <button
             onClick={() => run("regen", () => api.regenerateNextPost())}
-            // Regenerating helps when the AI was down, not in the demo or
-            // before there is a business to write about.
+            // Regenerating helps when the AI was down, not in the demo or before
+            // there's a business to write about.
             disabled={busy !== null || post?.unavailable === "demo"
               || post?.unavailable === "no_business"}
             className="flex items-center justify-center gap-1.5 rounded-lg border border-edge bg-panel/80 px-3 py-2 text-xs text-slate-300 transition-colors hover:border-hud-cyan/40 hover:text-hud-cyan disabled:opacity-50"

@@ -1,21 +1,14 @@
 """What kind of business this is, and how to talk to it.
 
-Titan was written against one client — a German restaurant — and it shows in the
-audit's wording, not in its scoring. The scoring engine was always generic: six
-weighted local dimensions with no food assumption. But the advice a client reads
-said "Restaurant in {city}", offered "wood-fired chicken karahi" as the alt-text
-example, and told a law firm that "the food photography is the product".
-
-That wording is the product. An audit that calls a dentist a restaurant is not
-a credible €1,200 deliverable, so this file makes every client-facing string a
+The scoring engine is generic, but the advice a client reads has to fit the
+trade: a dentist shouldn't be told "the food photography is the product", or
+get a restaurant's alt-text example. Every client-facing string here is a
 function of the vertical.
 
-One source of truth. Previously the detection signals and the schema map lived
-in local_seo with different key sets — VERTICAL_SCHEMA listed dentist, auto and
-store, VERTICAL_SIGNALS did not, so those three could never actually be
-detected and silently fell back to generic advice.
+This is the single source for detection signals and the schema map, so the
+two can't drift apart and every vertical stays detectable.
 
-Adding a vertical means adding one entry here. Nothing else changes.
+Adding a vertical means adding one entry here.
 """
 
 from __future__ import annotations
@@ -29,15 +22,14 @@ class Vertical:
     label: str                 # "Restaurant", "Dental practice"
     schema_type: str           # correct Schema.org subtype
     signals: tuple             # detection words (English + German)
-    asset_noun: str            # what the imagery actually IS for this business
+    asset_noun: str            # what the imagery actually is for this business
     alt_example: str           # a concrete alt-text example in that trade
     title_example: str         # "{name} — {this} in {city}"
     extra_schema: str = ""     # subtype-specific properties worth adding
     share_context: str = ""    # why OG tags matter for this trade
-    # Does this trade actually serve customers from a PLACE? Almost all do, but
-    # a software product does not, and telling a SaaS to publish a street
-    # address, opening hours and LocalBusiness markup is wrong advice. Titan
-    # gave itself exactly that advice when it first audited its own site.
+    # Does this trade serve customers from a physical place? Most do, but a
+    # software product doesn't, and telling a SaaS to publish a street address,
+    # opening hours and LocalBusiness markup is wrong advice.
     local_business: bool = True
 
 
@@ -162,9 +154,9 @@ VERTICALS: dict[str, Vertical] = {
         "Product and Offer markup per SKU with priceSpecification and "
         "eligibleQuantity (the MOQ), plus areaServed for the markets you ship to",
         "catalogue links sent to buyers",
-        # A wholesaler is found by a buyer searching for the PRODUCT or the
-        # trade, not by someone standing nearby. Scoring it on Google Business
-        # Profile and review velocity produces a low number that means nothing.
+        # A wholesaler is found by buyers searching for the product or the trade, not
+        # by someone nearby. Scoring it on Google Business Profile and review velocity
+        # gives a low number that means nothing.
         local_business=False),
     "manufacturer": _V(
         "manufacturer", "Manufacturer", "Organization",
@@ -187,10 +179,8 @@ VERTICALS: dict[str, Vertical] = {
         "Platform",
         "applicationCategory, operatingSystem and an Offer per pricing tier",
         "links shared in comparison threads",
-        # Added because Titan audited ITSELF and was told to add LocalBusiness
-        # schema. A SaaS is not a local business, and advising a software
-        # company to publish an address and opening hours is wrong advice that
-        # would have been given to every SaaS client too.
+        # A SaaS isn't a local business; advising it to publish an address and
+        # opening hours would be wrong.
         local_business=False),
     "tradesperson": _V(
         "tradesperson", "Trades business", "HomeAndConstructionBusiness",
@@ -204,8 +194,8 @@ VERTICALS: dict[str, Vertical] = {
         "job photos shared by customers recommending you"),
 }
 
-# A generic profile so an unrecognised trade still gets sane, non-food advice
-# instead of being told its food photography is the product.
+# Generic profile, so an unrecognised trade still gets sensible, non-food
+# advice.
 GENERIC = Vertical(
     "", "Business", "LocalBusiness",  # noqa: E501 - generic fallback stays local
     (),
@@ -224,20 +214,19 @@ def profile(key: str) -> Vertical:
 def detect(html: str, industry_hint: str = "") -> str:
     """Best-matching vertical key, or "" when the evidence is too thin.
 
-    The industry hint carries more weight than page text: an owner declaring
+    The industry hint weighs more than page text: an owner declaring
     "Zahnarztpraxis" at onboarding is better evidence than a stray word in a
-    footer, and a single incidental keyword should never re-label a business.
+    footer, and one incidental keyword shouldn't re-label a business.
     """
     hint = (industry_hint or "").strip().lower()
     for key, v in VERTICALS.items():
         if hint == key or hint == v.label.lower():
             return key
     if hint:
-        # A hint can match several verticals at once — "Zahnarztpraxis"
-        # contains both "praxis" (healthcare) and "zahnarzt" (dentist). Taking
-        # the first match returned generic healthcare, so a dental practice was
-        # handed MedicalClinic schema when Dentist exists. The longest matched
-        # signal is the more specific term, and specificity is what wins.
+        # A hint can match several verticals: "Zahnarztpraxis" contains both "praxis"
+        # (healthcare) and "zahnarzt" (dentist). The longest matched signal is the
+        # more specific term, so it wins - otherwise a dental practice would get
+        # MedicalClinic schema instead of Dentist.
         best_key, best_len = "", 0
         for key, v in VERTICALS.items():
             for w in v.signals:

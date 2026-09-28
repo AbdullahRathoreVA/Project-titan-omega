@@ -1,15 +1,15 @@
-"""Adapters for the external projects named in the master spec.
+"""Adapters for the external projects Titan integrates with.
 
-One file, because Part 8 requires a single documented integration point per
-capability and it must be obvious at review time that nothing bypasses it.
+All in one file so there's a single, reviewable integration point per
+capability and it's obvious nothing bypasses it.
 
-Every adapter here is a *client*, not a copy. None of the upstream source is
-vendored. That is a licence requirement for Firecrawl (AGPL-3.0 against a
-commercial Titan) and simply good practice for the rest.
+Every adapter is a client, not a copy; no upstream source is vendored. That's
+a licence requirement for Firecrawl (AGPL-3.0, while Titan is commercial) and
+good practice for the rest.
 
-Each adapter degrades honestly: with nothing configured it reports exactly
-which environment variable is missing, and the crawl capability falls back to
-Titan's own stdlib fetcher so the platform is never dead in the water.
+With nothing configured, each adapter reports which environment variable is
+missing, and crawling falls back to Titan's own stdlib fetcher so the
+platform keeps working.
 """
 
 from __future__ import annotations
@@ -36,10 +36,9 @@ def _post_json(url: str, payload: dict, headers: dict) -> dict:
 
 
 # ------------------------------------------------------------- web crawling --
-# Firecrawl is AGPL-3.0. Titan calls it over HTTP against a SEPARATE instance and
+# Firecrawl is AGPL-3.0, so Titan only calls a separate instance over HTTP and
 # never imports it. FIRECRAWL_BASE_URL points at a self-hosted container (the
-# licence-clean option, and it can run in D:\stacks\ alongside the others);
-# FIRECRAWL_API_KEY targets their cloud instead.
+# licence-clean option); FIRECRAWL_API_KEY targets their cloud instead.
 
 def _firecrawl_scrape(url: str = "", formats: tuple = ("markdown",), **_) -> dict:
     if not url:
@@ -61,9 +60,9 @@ def _firecrawl_scrape(url: str = "", formats: tuple = ("markdown",), **_) -> dic
 def _stdlib_fetch(url: str = "", **_) -> dict:
     """Titan's own fetcher. Always available, no key, no third-party licence.
 
-    Not a replacement for Firecrawl — it returns raw HTML and cannot render
-    JavaScript — but it means "read a web page" never depends on an unconfigured
-    vendor, and it is what client_seo already audits with.
+    Not a Firecrawl replacement - it returns raw HTML and can't render
+    JavaScript - but "read a web page" never depends on an unconfigured
+    vendor, and client_seo already audits with it.
     """
     if not url:
         raise ValueError("url is required")
@@ -82,12 +81,11 @@ def _stdlib_fetch(url: str = "", **_) -> dict:
 
 # ---------------------------------------------------------- agent frameworks --
 def _praison_plan(goal: str = "", **_) -> dict:
-    """PraisonAI (MIT) — multi-agent orchestration.
+    """PraisonAI (MIT) - multi-agent orchestration.
 
-    Import is lazy and optional: the package is NOT in requirements.txt, because
-    adding a heavyweight agent framework to a container that currently boots in
-    seconds is a decision with a cost, and the spec says design and benchmark
-    before adopting. Titan's own planner covers this today.
+    Imported lazily and optional: it isn't in requirements.txt, because adding
+    a heavy agent framework to a container that boots in seconds has a cost.
+    Titan's own planner covers this for now.
     """
     try:
         import praisonaiagents  # noqa: F401
@@ -102,11 +100,11 @@ def _praison_plan(goal: str = "", **_) -> dict:
 
 # ------------------------------------------------------------------- voice --
 def _livekit_token(room: str = "", identity: str = "", **_) -> dict:
-    """LiveKit (Apache-2.0) — realtime voice transport.
+    """LiveKit (Apache-2.0) - realtime voice transport.
 
-    Mints a room join token. Placing actual PHONE calls needs a telephony
-    provider on top (SIP trunk / Twilio), which is a paid account in Abdullah's
-    name — see the tool's `needs` when unconfigured.
+    Mints a room join token. Real phone calls need a telephony provider on top
+    (SIP trunk / Twilio), which is a paid account - see the tool's `needs` when
+    unconfigured.
     """
     try:
         from livekit import api as lk_api  # type: ignore
@@ -126,14 +124,13 @@ def _livekit_token(room: str = "", identity: str = "", **_) -> dict:
 
 # ---------------------------------------------------------------- messaging --
 def _whatsapp_send(to: str = "", message: str = "", approved: bool = False, **_) -> dict:
-    """OpenWA (MIT) — WhatsApp automation.
+    """OpenWA (MIT) - WhatsApp automation.
 
-    Two independent gates, both deliberate:
+    Two independent gates:
       * `outbound=True` on the Tool, so nothing sends without explicit approval.
-      * Unofficial WhatsApp automation can get a number BANNED. For a client
-        paying for social management, a ban ends the service being sold — the
-        exact failure mode Abdullah's standing rule about never auto-posting
-        exists to prevent.
+      * Unofficial WhatsApp automation can get a number banned, which would end
+        the social management a client is paying for. Nothing is ever posted
+        automatically.
     """
     base = os.getenv("OPENWA_BASE_URL", "").rstrip("/")
     payload = {"chatId": to, "message": message}
@@ -145,11 +142,11 @@ def _whatsapp_send(to: str = "", message: str = "", approved: bool = False, **_)
 
 # --------------------------------------------------------------------- CRM --
 def _crm_sync(**_) -> dict:
-    """trycompai/crm (MIT) — external CRM sync.
+    """trycompai/crm (MIT) - external CRM sync.
 
-    Titan already has CRM-lite with a real lead funnel. This adapter exists so
-    a client who already runs a CRM can push leads in, not to replace what Titan
-    has. Wrapped, per Part 8: no vendor object ever reaches the rest of Titan.
+    Titan already has CRM-lite with a lead funnel. This lets a client who runs
+    their own CRM push leads in; it doesn't replace what Titan has. Wrapped so
+    no vendor object reaches the rest of Titan.
     """
     base = os.getenv("COMPAI_CRM_URL", "").rstrip("/")
     key = os.getenv("COMPAI_CRM_KEY", "").strip()
@@ -161,16 +158,13 @@ def _crm_sync(**_) -> dict:
 
 
 # -------------------------------------------------- keyless data capabilities --
-# The four things Titan can genuinely call today. They live in
-# `core/api_adapters.py`, which owns the provider choices and the evidence for
-# them, and they reach the network only through `api_runtime` (SSRF guard,
-# timeout, bounded read, breaker). What is added here is the AGENT SURFACE:
-# an agent asks a capability for what it wants and never learns which vendor,
-# how many of them, or in what order.
+# These live in `core/api_adapters.py`, which owns the provider choices, and
+# reach the network only through `api_runtime` (SSRF guard, timeout, bounded
+# read, breaker). This adds the agent-facing surface: an agent asks for a
+# capability and never sees which vendor, how many, or in what order.
 #
-# `weather.current` is the whole point. "Weather in Sialkot" is one call for
-# the caller and two upstream — geocode the name, then fetch the forecast for
-# the coordinate it returns. The caller sees neither step.
+# `weather.current` is one call for the caller and two upstream: geocode the
+# name, then fetch the forecast for those coordinates.
 
 def _weather(place: str = "", latitude=None, longitude=None, **_) -> dict:
     """Weather by place name, or by coordinate if the caller already has one."""
@@ -191,7 +185,7 @@ def _geocode(place: str = "", limit: int = 3, **_) -> dict:
 
 
 def _security_headers(host: str = "", url: str = "", **_) -> dict:
-    """Takes a hostname or a URL — callers hold client sites as URLs."""
+    """Takes a hostname or a URL, since callers hold client sites as URLs."""
     return api_adapters.security_headers(host or url)
 
 
@@ -240,7 +234,7 @@ def register_all() -> None:
         provenance_key="compai_crm",
         env_required=("COMPAI_CRM_URL",)))
 
-    # Registered so the licence verdict is visible in the dashboard rather than
+    # Registered so the licence verdict is visible in the dashboard, not
     # rediscovered by whoever tries to integrate it next.
     tools.register(tools.Tool(
         name="memory.external",
@@ -248,10 +242,9 @@ def register_all() -> None:
         run=lambda **_: {},
         provenance_key="tencent_memory"))
 
-    # No env_required and no package_required, so these report "ready" — and
-    # unlike everything above, that is not aspirational. They need no key,
-    # which is exactly why they could be verified against the live services
-    # before the adapters were written.
+    # No env_required and no package_required, so these report "ready" - and they
+    # really are: they need no key, which is why they could be checked against the
+    # live services before the adapters were written.
     tools.register(tools.Tool(
         name="weather.current",
         capability="Current weather for a place name or a coordinate",
@@ -267,8 +260,7 @@ def register_all() -> None:
         capability="Live exchange rates, with a second provider behind the first",
         run=_exchange_rates))
 
-    # The first capability that measures something Titan already has an opinion
-    # about, from a source that is not Titan.
+    # Measures something Titan already audits, from an independent source.
     tools.register(tools.Tool(
         name="security.headers",
         capability="Independent security-header grade for a site (MDN Observatory)",

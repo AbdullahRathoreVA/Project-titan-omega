@@ -1,25 +1,17 @@
-"""Business intelligence and forecasting.
+"""Business intelligence reports and forecasting.
 
-Spec Part 4C: reports with "Charts, Key Insights, Supporting Data,
-Recommendations, Action Items, Historical Comparisons", forecasting "where
-sufficient historical data exists", forecasts that "include uncertainty ranges
-and assumptions" — and, twice over, "Never fabricate numbers. Never invent
-analytics. Never fake benchmarks."
+Reports cover charts, key insights, supporting data, recommendations and a
+comparison with the previous period. Forecasts are only produced when there's
+enough history; otherwise the report says why there isn't one.
 
-Those two requirements are in tension, and this module resolves it in the only
-defensible direction: **it refuses to forecast rather than invent one.**
+A projection from two data points is just a number with a chart behind it,
+and planning against it means deciding on fiction. So every projection states
+its method, sample size, uncertainty band, and what would make it more
+reliable.
 
-That refusal is the feature, not a limitation. Titan currently has one client
-and no revenue. A forecasting engine that answers "€4,200 next month" from two
-data points is not a forecast, it is a number with a chart behind it, and a
-founder who plans against it makes real decisions on fiction. Every projection
-here states its method, its sample size, its uncertainty band, and the specific
-thing that would make it trustworthy.
-
-The forecast is ordinary least-squares on daily totals with a prediction
-interval — deliberately simple. Anything fancier would imply a precision the
-data does not have, and would be harder to explain to a client reading the
-report.
+The forecast is ordinary least squares on daily totals with a prediction
+interval. Kept simple on purpose: anything fancier would suggest precision
+the data doesn't have and would be harder to explain in a client report.
 """
 
 from __future__ import annotations
@@ -34,7 +26,7 @@ from ..store import STORE
 
 # Below this many distinct days with data, no projection is produced at all.
 MIN_POINTS_FOR_TREND = 5
-# Below this, a trend is reported but explicitly labelled provisional.
+# Below this, a trend is reported but labelled provisional.
 CONFIDENT_POINTS = 14
 
 PERIODS = {"daily": 1, "weekly": 7, "monthly": 30, "quarterly": 90}
@@ -67,8 +59,9 @@ def _within(rows: list, days: int) -> list:
 
 def _daily_totals(rows: list, days: int) -> dict:
     """{date -> summed amount} over the window. Days with nothing are absent,
-    not zero: a day with no entry is missing data, not a measured zero, and
-    treating it as zero would fabricate a downward trend."""
+    not zero: no entry means missing data, and treating it as zero would
+    invent a downward trend.
+    """
     out: dict[str, float] = {}
     cutoff = time.time() - days * 86400
     for r in rows:
@@ -81,10 +74,10 @@ def _daily_totals(rows: list, days: int) -> dict:
 
 
 def forecast(series: dict, horizon_days: int = 30) -> dict:
-    """Least-squares projection with a prediction interval, or an honest refusal.
+    """Least-squares projection with a prediction interval, or a refusal.
 
-    Returns `available: False` and the reason whenever the data cannot support
-    a projection. Callers must render the reason, not a zero.
+    Returns `available: False` and the reason whenever the data can't support
+    a projection. Callers must show the reason, not a zero.
     """
     points = sorted(series.items())
     n = len(points)
@@ -115,8 +108,8 @@ def forecast(series: dict, horizon_days: int = 30) -> dict:
 
     projected_daily = intercept + slope * (n + horizon_days / 2.0)
     projected_total = max(0.0, projected_daily * horizon_days)
-    # ~95% band. Widened by sqrt(horizon) because uncertainty compounds the
-    # further out the projection runs.
+    # ~95% band, widened by sqrt(horizon) because uncertainty grows the further
+    # out the projection runs.
     band = 1.96 * se * math.sqrt(horizon_days)
 
     return {
@@ -144,12 +137,10 @@ def forecast(series: dict, horizon_days: int = 30) -> dict:
 
 
 def _insights(rev_rows: list, exp_rows: list, days: int) -> tuple:
-    """(insights, actions) — each tied to a number that is actually present.
+    """(insights, actions), each tied to a number that's actually present.
 
-    Served to a subscriber's Executive tab too (/api/me/bi), so the client
-    list and the lead funnel are the caller's own. Both used to read the whole
-    platform: every business on file named in "Never audited", and every
-    account's leads counted in the founder's funnel.
+    Also served to a subscriber's Executive tab (/api/me/bi), so the client
+    list and the lead funnel are limited to the caller's own.
     """
     from ..core import cockpit_scope
     subscriber = cockpit_scope.customer_email()
@@ -177,7 +168,7 @@ def _insights(rev_rows: list, exp_rows: list, days: int) -> tuple:
                 f"over the same window.")
             actions.append("Cut or defer the largest recurring cost.")
 
-    # Clients and their audit coverage — real counts, no estimation.
+    # Clients and their audit coverage - real counts, no estimates.
     try:
         from ..core import clients as client_registry
         rows = client_registry.all_clients()
@@ -208,7 +199,7 @@ def _insights(rev_rows: list, exp_rows: list, days: int) -> tuple:
     except Exception:
         pass
 
-    # Lead funnel — reuse the real funnel, never recompute it differently here.
+    # Lead funnel - reuse the existing funnel rather than recompute it here.
     try:
         from ..api.finance import _funnel, _leads, _owner
         from ..core import crm
@@ -230,7 +221,7 @@ def _insights(rev_rows: list, exp_rows: list, days: int) -> tuple:
 
 
 def report(period: str = "monthly") -> dict:
-    """A period report built only from what has actually been recorded."""
+    """A period report built only from what's actually been recorded."""
     days = PERIODS.get(period, 30)
     rev_rows = _within(STORE.revenue_entries, days)
     exp_rows = _within(STORE.expenses, days)

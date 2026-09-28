@@ -1,10 +1,8 @@
-"""The Digital Employee Network.
+"""The agent network: every division and the 100+ agents that staff it.
 
-This module is the source of truth for the empire's org chart: the autonomous
-divisions and the 100+ specialized agents that staff them. Each division is led
-by a C-suite or head agent and contains specialists. The roster is declared as
-data and expanded into full :class:`AgentSpec` records at import time so the rest
-of the platform (Executive Core, dashboard, APIs) can treat agents uniformly.
+Each division has a head agent and specialists. The roster is plain data,
+expanded into AgentSpec records at import time so the rest of the platform
+can treat agents uniformly.
 """
 
 from __future__ import annotations
@@ -17,10 +15,10 @@ from .enums import AutonomyLevel, Division
 
 @dataclass(frozen=True)
 class AgentSpec:
-    """The static definition of a digital employee.
+    """Static definition of an agent.
 
-    Runtime state (status, current task, live KPI values) lives separately in the
-    store; this is the identity and contract of the agent.
+    Runtime state (status, current task, KPI values) lives in the store; this
+    is the agent's identity and role.
     """
 
     id: str
@@ -222,7 +220,7 @@ _ROSTER: List[tuple] = [
 ]
 
 
-# Default KPI sets keyed by division — what each division is measured on.
+# Default KPIs per division.
 _DIVISION_KPIS: Dict[Division, List[str]] = {
     Division.EXECUTIVE: ["empire_health", "decision_quality", "goal_attainment"],
     Division.OPERATIONS: ["automation_rate", "cycle_time", "sla_compliance"],
@@ -249,7 +247,7 @@ def _build_network() -> List[AgentSpec]:
         div_tools = _DIVISION_TOOLS[division]
         kpis = _DIVISION_KPIS[division]
 
-        # Division head — trusted with the highest autonomy and given routing tools.
+        # The division head gets the highest autonomy and routing tools.
         head_id = f"{division.value}-head"
         agents.append(
             AgentSpec(
@@ -292,7 +290,7 @@ AGENTS_BY_ID: Dict[str, AgentSpec] = {a.id: a for a in AGENT_NETWORK}
 
 
 def division_summary() -> Dict[str, int]:
-    """Count of agents per division — used by the dashboard org map."""
+    """Number of agents per division, for the dashboard's org map."""
     counts: Dict[str, int] = {}
     for agent in AGENT_NETWORK:
         counts[agent.division.value] = counts.get(agent.division.value, 0) + 1

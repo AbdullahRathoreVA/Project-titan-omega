@@ -1,31 +1,21 @@
 """Founder-only product analytics: who signed up, what they bought, what they did.
 
-This answers three questions Abdullah cannot currently answer about his own
-product: **who signed up**, **which plan they are on**, and **how they are
-actually using it**. Revenue is $0 and there are no paying customers, so the
-instrument that shows where people stop is worth more than another feature.
+Answers three questions: who signed up, which plan they're on, and how
+they're actually using the product.
 
-Three rules this module is built around, all of them learned the hard way in
-this codebase:
-
-1. **Derive from state before trusting the log.** The activity log starts empty
-   the day this ships, but accounts already exist. Every funnel step that can be
+1. Derive from state before trusting the log. The activity log starts empty
+   when this ships, but accounts already exist. Every funnel step that can be
    reconstructed from the billing record (signed up, added a business, ran an
-   audit, is paying) IS reconstructed from it, so the first screen is not
-   misleadingly empty. Only steps with no durable trace — opening checkout,
-   downloading a PDF, signing back in — come from the log alone, and those are
-   labelled as log-only so a zero is never read as "nobody did this".
-
-2. **Never invent a number.** No payment processor is configured, so no account
-   can complete a purchase. MRR is therefore reported as uncollectable with the
-   reason, not as ``0.0`` sitting next to a currency symbol — a zero implies
-   measurement, and this is not measured.
-
-3. **This is personal data.** Every row here is a real person's email address.
-   The route that serves it is registered in ``demo_data._SENSITIVE_PREFIXES``
-   and covered by ``test_every_founder_endpoint_is_hidden_from_guests``, which
-   walks the real route table. Deleting that registration leaks subscriber
-   emails to anyone clicking "View the live demo".
+   audit, is paying) is reconstructed from it. Steps with no durable trace
+   (opening checkout, downloading a PDF, signing back in) come from the log
+   and are labelled log-only, so a zero isn't read as "nobody did this".
+2. Never invent a number. Without a payment processor no account can pay, so
+   MRR is reported as uncollectable with the reason, not as 0.0.
+3. This is personal data: every row is a real person's email. The route is in
+   ``demo_data._SENSITIVE_PREFIXES`` and covered by
+   ``test_every_founder_endpoint_is_hidden_from_guests``, which walks the real
+   route table. Removing that registration would leak subscriber emails to
+   demo visitors.
 """
 
 from __future__ import annotations
@@ -34,17 +24,16 @@ import threading
 import time
 from typing import Optional
 
-# Bounded: this runs in a free-tier container alongside everything else. At
-# ~200 bytes a row this is well under a megabyte, and the derived funnel does
-# not depend on the log being complete.
+# Bounded, since this shares a small container with everything else. At ~200
+# bytes a row it's well under a megabyte, and the derived funnel doesn't
+# depend on the log being complete.
 MAX_EVENTS = 2000
 
 DAY = 86400.0
 
-# Actions worth recording. Unknown actions are still accepted — refusing them
-# would make this module a bottleneck on every new endpoint — but they are
-# listed separately in the report so an undocumented action is visible rather
-# than silently folded into the totals.
+# Actions worth recording. Unknown actions are still accepted (refusing them
+# would block every new endpoint), but they're listed separately in the report
+# so an undocumented action is visible.
 SIGNED_UP = "signed_up"
 SIGNED_IN = "signed_in"
 ADDED_BUSINESS = "added_business"
@@ -63,8 +52,9 @@ _events: list[dict] = []
 
 
 def record(email: str, action: str, **meta) -> None:
-    """File one thing a subscriber did. Never raises — analytics must never be
-    able to break the action it is measuring."""
+    """Record one thing a subscriber did. Never raises - analytics mustn't be
+    able to break the action it's measuring.
+    """
     try:
         email = (email or "").strip().lower()
         if not email or not action:
@@ -106,11 +96,9 @@ def _storage_warning() -> Optional[str]:
     if path.startswith("/data"):
         return None
 
-    # A free Dataset repo is a real answer to this, not a consolation prize,
-    # so the warning has to stop demanding a paid mount once one is in use.
-    # It still says what would be LOST, because snapshot durability is not
-    # continuous durability and pretending otherwise is the same lie in a
-    # nicer suit.
+    # A free Dataset repo is a real answer here, so the warning stops asking for
+    # a paid mount once one is in use. It still says what would be lost, because
+    # snapshot durability isn't continuous.
     try:
         from . import remote_state
         if remote_state.configured():
@@ -134,15 +122,11 @@ def _storage_warning() -> Optional[str]:
 
 
 def _is_granted(acct: dict) -> bool:
-    """Was this seat handed out by the founder, or bought?
+    """Was this seat given out by the founder, or bought?
 
     ``POST /api/founder/accounts`` records a grant by writing ``granted`` (or
-    ``granted:<note>``) into ``subscription_id``, and its own response warns
-    that a pile of grants would make MRR look real. **Nothing ever read that
-    flag back.** A granted Enterprise seat was active on a paid plan, so it
-    counted as a paying customer in the funnel and added its list price to
-    committed MRR. Provisioning a single pilot customer would have made this
-    dashboard report revenue that nobody was ever charged.
+    ``granted:<note>``) into ``subscription_id``. A granted seat on a paid plan
+    must not count as a paying customer or add its list price to MRR.
     """
     return str(acct.get("subscription_id", "")).startswith("granted")
 
@@ -150,9 +134,8 @@ def _is_granted(acct: dict) -> bool:
 def accounts_snapshot() -> dict:
     """Every account as one row, plus the counts derived from those rows.
 
-    Extracted from ``report()`` so the customers screen and the funnel cannot
-    disagree about what plan somebody is on: there is exactly one place in the
-    codebase that shapes an account row.
+    Shared by ``report()`` and the customers screen so they can't disagree
+    about someone's plan: there's exactly one place that shapes an account row.
     """
     from . import billing, clients as client_registry
     from ..engines import demo_workspace as _demo
@@ -172,8 +155,8 @@ def accounts_snapshot() -> dict:
         raw = {k: dict(v) for k, v in billing._accounts.items()}   # noqa: SLF001
 
     for email, acct in raw.items():
-        # The public demo's account is nobody: counting it would put a
-        # visitor-less row in the customer list and the funnel.
+        # The public demo's account isn't a person; counting it would add a fake row
+        # to the customer list and the funnel.
         if acct.get("is_demo"):
             continue
         plan_key = acct.get("plan", "free")
@@ -184,10 +167,9 @@ def accounts_snapshot() -> dict:
         cids = list(acct.get("client_ids", []))
         log = logged.get(email, {})
 
-        # Businesses actually still present in the registry. A stale id in the
-        # account is not a business the person can use, and a seeded demo site
-        # is not a business at all — counting either would make the funnel
-        # describe something other than real usage.
+        # Businesses still present in the registry. A stale id isn't a usable
+        # business, and a seeded demo site isn't a business at all, so neither
+        # counts.
         live_clients = []
         for cid in cids:
             row = client_registry.public(cid)
@@ -204,9 +186,8 @@ def accounts_snapshot() -> dict:
         by_status[status] = by_status.get(status, 0) + 1
         is_granted = _is_granted(acct)
         on_paid_plan = plan_key != "free" and status == "active"
-        # A granted seat is active on a paid plan and has paid nothing. Folding
-        # it into `paying` is precisely the invented number this codebase exists
-        # to avoid, so it is counted on its own and kept out of revenue.
+        # A granted seat is on a paid plan but paid nothing, so it's counted on its
+        # own and kept out of revenue.
         is_paying = on_paid_plan and not is_granted
         if is_paying:
             paying += 1
@@ -223,8 +204,8 @@ def accounts_snapshot() -> dict:
             "price_usd": plan.price_usd if plan else 0.0,
             "status": status,
             "paying": is_paying,
-            # Its own column on the customers screen: the founder has to be
-            # able to tell a pilot seat from a customer at a glance.
+            # Its own column on the customers screen, so a pilot seat is easy to tell
+            # apart from a customer.
             "granted": is_granted,
             "grant_note": (str(acct.get("subscription_id", "")).partition(":")[2]
                            if is_granted else ""),
@@ -239,8 +220,8 @@ def accounts_snapshot() -> dict:
             "last_seen_at": last_seen,
             "days_since_seen": (round((now - last_seen) / DAY, 1)
                                 if last_seen else None),
-            # An account that signed up and never came back is the single most
-            # actionable row on this screen.
+            # An account that signed up and never came back is the most actionable row on
+            # this screen.
             "returned_after_signup": bool(log.get("actions", {}).get(SIGNED_IN)),
         })
 
@@ -257,8 +238,9 @@ def accounts_snapshot() -> dict:
 
 
 def storage_warning() -> Optional[str]:
-    """Public reader. The customers screen has to be able to say out loud
-    whether the accounts it is listing survive a rebuild."""
+    """Public reader, so the customers screen can say whether the accounts it
+    lists survive a rebuild.
+    """
     return _storage_warning()
 
 
@@ -278,10 +260,10 @@ def report(days: int = 30, recent: int = 40) -> dict:
     total = len(accounts)
 
     # ---------------------------------------------------------------- funnel --
-    # `derived` steps are reconstructed from durable account state and are
-    # correct for every account ever created. `log_only` steps depend on the
-    # activity log, which began the day this shipped — a zero there means "not
-    # observed since analytics started", NOT "never happened".
+    # `derived` steps are reconstructed from durable account state and are correct
+    # for every account ever created. `log_only` steps depend on the activity log,
+    # so a zero there means "not seen since analytics started", not "never
+    # happened".
     def _count(pred) -> int:
         return sum(1 for a in accounts if pred(a))
 
@@ -335,9 +317,8 @@ def report(days: int = 30, recent: int = 40) -> dict:
         "collectable": processor_ready,
         "paying_accounts": paying,
         "committed_mrr_usd": round(committed_usd, 2) if processor_ready else None,
-        # Seats handed out by the founder, kept BESIDE mrr rather than inside
-        # it. The list value of a free seat is what that plan would have cost,
-        # not money anybody was charged.
+        # Seats given out by the founder, kept next to MRR rather than inside it. The
+        # list value of a free seat isn't money anyone was charged.
         "granted_paid_seats": snap["granted_paid_plans"],
         "granted_list_value_usd": snap["granted_list_value_usd"],
         "granted_note": (

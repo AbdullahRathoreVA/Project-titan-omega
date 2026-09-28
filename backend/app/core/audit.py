@@ -1,37 +1,21 @@
-"""An append-only record of who did what to whom.
+"""Append-only record of who did what to whom.
 
-Titan already had two things that look like this and are not:
+Different from core/obs.py (request logs on stdout, gone when the container
+recycles) and core/events.py (the live activity stream). This one answers
+"who suspended this organisation, and when" weeks later.
 
-* ``core/obs.py`` — structured request logging. Goes to stdout, is not stored,
-  and is gone when the container recycles.
-* ``core/events.py`` — the live activity stream the dashboard renders. It is a
-  feed for humans watching now, not a record for answering "who suspended this
-  organisation, and when" three weeks later.
+- There is no update or delete function at all. An audit log an admin can
+  edit proves nothing.
+- Secrets are redacted on the way in, not on the way out; once a value
+  reaches the table it's on disk and in every backup. Key names are matched
+  loosely so a new field like ``api_secret`` is caught without anyone
+  updating a list.
+- Failed actions are recorded too. Six refused attempts to remove an owner is
+  the signal worth alerting on.
+- It reports whether it survives a rebuild. On the current free-tier host it
+  doesn't (``durable: false``), so nobody relies on it by mistake.
 
-This is the third thing: a durable-as-the-database record of the actions that
-change who can do what. It exists so that a privilege change is answerable
-after the fact, which is the entire point of an audit log.
-
-Decisions worth defending
--------------------------
-* **There is no update, and there is no delete.** Not "there is one and it is
-  guarded" — the functions do not exist. An audit log an administrator can
-  edit is a log that proves nothing, and the cheapest way to guarantee that is
-  to never write the code.
-* **Secrets are redacted on the way in, not on the way out.** A value that
-  reaches the table has already been stored; filtering at read time leaves it
-  on disk and in every backup. The key names are matched loosely on purpose —
-  a new field called ``api_secret`` should be caught by the rule that already
-  exists rather than by somebody remembering to add it.
-* **A failed action is recorded too.** Six refused attempts to remove an owner
-  is the signal; recording only successes throws away the half worth alerting
-  on.
-* **It says whether it survives a rebuild.** On the current free-tier host it
-  does not (``durable: false``), and a compliance record that quietly
-  evaporates is worse than an absent one, because you would rely on it.
-
-Nothing here decides anything. It records what ``core/orgs.py`` and
-``core/identity.py`` already decided.
+It only records what core/orgs.py and core/identity.py decided.
 """
 
 from __future__ import annotations
@@ -48,17 +32,16 @@ OK = "ok"
 REFUSED = "refused"
 FAILED = "failed"
 
-# Substrings, not exact names. Anything whose key contains one of these has its
-# value replaced before it is written. Loose on purpose: the failure mode worth
-# designing out is a field nobody thought to add to a list.
+# Substrings, not exact names: any key containing one of these has its value
+# replaced before it's written. Loose on purpose, to catch fields nobody added
+# to a list.
 _SECRET_HINTS = ("password", "passwd", "secret", "token", "api_key", "apikey",
                  "authorization", "auth", "credential", "cookie", "session",
                  "private", "signature", "card", "cvv", "pan")
 
 REDACTED = "[redacted]"
 
-# Bounded so one runaway caller cannot turn the audit table into the whole
-# database on a host with no persistent storage to begin with.
+# Bounded so one runaway caller can't grow the audit table without limit.
 MAX_META_CHARS = 4000
 
 
@@ -71,9 +54,8 @@ def _conn():
 def redact(meta: Optional[dict]) -> dict:
     """Strip anything that looks like a credential, recursively.
 
-    Applied before the row is written. A secret that reaches the table has
-    already been persisted, and no amount of filtering at read time takes it
-    back off the disk or out of last night's backup.
+    Applied before the row is written: once a secret reaches the table, read
+    time filtering can't take it back off disk or out of a backup.
     """
     if not isinstance(meta, dict):
         return {}
@@ -94,9 +76,9 @@ def redact(meta: Optional[dict]) -> dict:
 
 def record(actor: str, action: str, target_type: str = "", target_id: str = "",
            result: str = OK, **meta) -> dict:
-    """Write one entry. Never raises — a failed audit write must not be the
-    thing that breaks the action being audited, and a caller that has to wrap
-    this in try/except will eventually forget to."""
+    """Write one entry. Never raises - a failed audit write mustn't break the
+    action being audited, and callers shouldn't need their own try/except.
+    """
     entry = {
         "id": "aud_" + uuid.uuid4().hex[:16],
         "ts": time.time(),
@@ -118,9 +100,8 @@ def record(actor: str, action: str, target_type: str = "", target_id: str = "",
                  entry["target_type"], entry["target_id"], entry["result"],
                  blob))
     except Exception:
-        # Deliberately swallowed. See the docstring: losing one audit row is
-        # bad, and refusing to suspend an abusive account because the audit
-        # table is unavailable is worse.
+        # Swallowed on purpose: losing one audit row is bad, but refusing to
+        # suspend an abusive account because the audit table is down is worse.
         pass
     return entry
 
@@ -172,9 +153,9 @@ def count() -> int:
 
 
 def stats() -> dict:
-    """Measured counts only. `durable` says out loud whether any of this
-    survives the next rebuild — on the current free tier it does not, and a
-    compliance record you wrongly believe is kept is worse than none."""
+    """Counts only. `durable` says whether any of this survives the next
+    rebuild; on the current free tier it doesn't.
+    """
     durable = False
     try:
         from . import db

@@ -1,32 +1,25 @@
 """SQLite storage for Titan's state.
 
-Replaces a single JSON file that was rewritten in full on every save. That file
-was the largest risk in the system, and the risk was data loss rather than
-speed:
+Replaces a single JSON file rewritten in full on every save, which had four
+problems:
 
-* **No atomicity.** A crash or a container stop mid-write left a truncated file
-  that failed to parse — losing every subsystem at once, including accounts.
-* **No concurrency control.** The heartbeat, an audit and a signup could all
-  call save() at the same moment; last writer won, silently.
-* **Full rewrite per save.** Every save serialised all fifteen subsystems,
-  so the cost of persisting one lead grew with the size of everything else.
-* **No schema and no migrations.** Any change to a stored shape risked the
-  account table with no way to roll forward or back.
+* No atomicity: a crash or container stop mid-write left a truncated file
+  that failed to parse, losing every subsystem at once, accounts included.
+* No concurrency control: the heartbeat, an audit and a signup could all save
+  at once, and the last writer silently won.
+* A full rewrite per save, so persisting one lead cost more as everything
+  else grew.
+* No schema or migrations.
 
-The design here is deliberately conservative. Each subsystem keeps its existing
-``export_state()`` / ``import_state()`` contract and is stored as one row of
-JSON in a ``state`` table. That fixes all four failure modes above without
-rewriting fifteen modules in one commit — a change that touches billing,
-transcripts and evidence simultaneously should not also be the change that
-redesigns their shapes.
+Each subsystem keeps its ``export_state()`` / ``import_state()`` contract and
+is stored as one JSON row in a ``state`` table. That fixes all four without
+redesigning every subsystem's data at the same time. Moving individual
+subsystems to real relational tables (accounts first) is a later, smaller
+step.
 
-Moving individual subsystems to real relational tables (accounts first) is a
-later, smaller, safer step, and this is the foundation that makes it possible.
-
-WAL mode is on so a reader is never blocked by the writer. ``synchronous=FULL``
-is deliberate: this container can be stopped without warning by the host, and
-losing the last committed transaction to an OS buffer is exactly the failure
-being designed out.
+WAL mode means readers are never blocked by the writer. ``synchronous=FULL``
+is deliberate: the host can stop this container without warning, and losing
+the last committed transaction to an OS buffer is exactly what this avoids.
 """
 
 from __future__ import annotations
@@ -47,7 +40,7 @@ _path: Optional[str] = None
 
 # --- migrations ------------------------------------------------------------
 # Append-only. Each entry runs once, in order, inside a transaction, and the
-# applied version is recorded. Never edit a shipped migration — add another.
+# applied version is recorded. Never edit a shipped migration - add another.
 MIGRATIONS: list[tuple[int, str]] = [
     (1, """
         CREATE TABLE IF NOT EXISTS state (
@@ -60,10 +53,9 @@ MIGRATIONS: list[tuple[int, str]] = [
             value TEXT NOT NULL
         );
     """),
-    # The durable work queue. A real table rather than another JSON blob in
-    # `state`, because a queue needs exactly what a blob cannot give: an atomic
-    # claim, an index on what is due, and a row that survives the container
-    # being killed halfway through the work.
+    # The durable work queue. A real table rather than a JSON blob in `state`,
+    # because a queue needs an atomic claim, an index on what's due, and rows that
+    # survive the container being killed mid-job.
     (2, """
         CREATE TABLE IF NOT EXISTS jobs (
             id           TEXT PRIMARY KEY,
@@ -94,14 +86,12 @@ MIGRATIONS: list[tuple[int, str]] = [
             ON jobs (dedupe_key)
             WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running');
     """),
-    # Self-improvement proposals. A table rather than a blob because the whole
-    # value of this record is that it is auditable afterwards: who approved a
-    # change to Titan's own behaviour, on what measured evidence, what the
-    # value was BEFORE it, and whether it was rolled back and why.
+    # Self-improvement proposals. A table because the record has to be auditable:
+    # who approved a change to Titan's behaviour, on what measured evidence, what
+    # the value was before, and whether it was rolled back and why.
     #
-    # `previous_value` is the exact value read off the live module at
-    # activation, not the shipped default — rollback has to restore what was
-    # actually running, which is not always what the source says.
+    # `previous_value` is read from the live module at activation, not the shipped
+    # default, because rollback has to restore what was actually running.
     (3, """
         CREATE TABLE IF NOT EXISTS proposals (
             id             TEXT PRIMARY KEY,
@@ -133,21 +123,15 @@ MIGRATIONS: list[tuple[int, str]] = [
             ON proposals (param)
             WHERE status IN ('proposed', 'evaluated', 'approved', 'active');
     """),
-    # Real identity. Until now "authentication" was a single operator gate:
-    # one username and one password compared in plaintext against environment
-    # variables, with `founder`/`titan` as the fallback. There was no concept
-    # of a person, so there was nothing for a role or an organisation to hang
-    # off — see core/identity.py.
+    # Real identity: people with passwords and roles, for organisations to build
+    # on (see core/identity.py).
     #
-    # A table rather than another JSON blob in `state`, for the reason the queue
-    # got one: a UNIQUE constraint on email is the only way to make "two people
-    # cannot register the same address" true under concurrency, rather than
-    # hopefully true.
+    # A table rather than a JSON blob because a UNIQUE constraint on email is the
+    # only way to guarantee two people can't register the same address under
+    # concurrency.
     #
-    # `pwhash` is self-describing (`pbkdf2_sha256$<iterations>$<salt>$<hash>`),
-    # so the cost can be raised later and old hashes stay verifiable — the
-    # iteration count travels with the hash instead of being a constant that
-    # silently invalidates everything when someone edits it.
+    # `pwhash` is self-describing (`pbkdf2_sha256$<iterations>$<salt>$<hash>`), so
+    # the cost can be raised later and old hashes stay verifiable.
     (4, """
         CREATE TABLE IF NOT EXISTS users (
             id                  TEXT PRIMARY KEY,
@@ -161,20 +145,15 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS users_role ON users (role);
     """),
-    # Organisations: several people, one account, different privileges.
+    # Organisations: several people sharing one account with different privileges,
+    # on top of the users table from migration 4. See core/orgs.py.
     #
-    # `core/billing.py` accounts ARE people - one email, one password, one
-    # plan - so two humans could not share one, and there was nothing for a
-    # role like "Manager" to attach to. This is that missing level, on top of
-    # the users table from migration 4. See core/orgs.py.
+    # `slug` is UNIQUE for the same reason as `users.email`: two organisations
+    # can't have the same name, even under concurrency.
     #
-    # `slug` is UNIQUE for the same reason `users.email` is: "two
-    # organisations cannot have the same name" has to be true under
-    # concurrency rather than hopefully true.
-    #
-    # Membership is keyed on user_id, not email. An address is a label a
-    # person may change; an id is who they are. The composite primary key is
-    # what makes "already a member" a constraint instead of a race.
+    # Membership is keyed on user_id, not email, since an address can change. The
+    # composite primary key makes "already a member" a constraint instead of a
+    # race.
     (5, """
         CREATE TABLE IF NOT EXISTS orgs (
             id         TEXT PRIMARY KEY,
@@ -194,17 +173,15 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS org_members_user ON org_members (user_id);
         CREATE INDEX IF NOT EXISTS org_members_role ON org_members (org_id, role);
     """),
-    # Who did what to whom. core/obs.py is request logging that goes to stdout
-    # and is gone on recycle; core/events.py is a live feed for somebody
-    # watching now. Neither answers "who suspended this organisation, and
-    # when" three weeks later, which is the entire point of an audit log.
+    # Who did what to whom. core/obs.py logs go to stdout and vanish on recycle;
+    # core/events.py is a live feed. Neither answers "who suspended this
+    # organisation, and when" weeks later.
     #
-    # There is deliberately no UPDATE or DELETE path in core/audit.py - not a
-    # guarded one, none at all. A log an administrator can edit proves nothing.
+    # core/audit.py has no UPDATE or DELETE path at all; a log an administrator can
+    # edit proves nothing.
     #
-    # Indexed on ts DESC because every read of this table is "most recent
-    # first", and on target_id/actor because the two questions ever asked of it
-    # are "what happened to this thing" and "what did this person do".
+    # Indexed on ts DESC because every read is "most recent first", and on
+    # target_id/actor for "what happened to this" and "what did this person do".
     (6, """
         CREATE TABLE IF NOT EXISTS audit_log (
             id          TEXT PRIMARY KEY,
@@ -220,17 +197,12 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS audit_target ON audit_log (target_id, ts DESC);
         CREATE INDEX IF NOT EXISTS audit_actor ON audit_log (actor, ts DESC);
     """),
-    # Subscription history. Churn and trial-to-paid conversion are not
-    # properties of the CURRENT state of an account - they are properties of
-    # how it changed over time, and billing.set_plan() overwrote the plan in
-    # place and emitted an in-memory event that nothing persisted. So those two
-    # numbers were not "hard to compute", they were unmeasurable by
-    # construction, and any figure shown for them would have been invented.
+    # Subscription history. Churn and trial-to-paid conversion depend on how an
+    # account changed over time, not its current state, and set_plan() overwrites
+    # the plan in place - so without this those numbers can't be measured.
     #
-    # Append-only, like audit_log: a row records that a change happened, and
-    # nothing edits or deletes one afterwards. `from_plan` is NULL for the
-    # first row of an account's life, which is what makes a signup
-    # distinguishable from an upgrade.
+    # Append-only like audit_log. `from_plan` is NULL for an account's first row,
+    # which is what separates a signup from an upgrade.
     (7, """
         CREATE TABLE IF NOT EXISTS subscription_events (
             id         TEXT PRIMARY KEY,
@@ -246,15 +218,12 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS sub_events_email
             ON subscription_events (email, ts DESC);
     """),
-    # Feature flag overrides. Only the EXCEPTIONS live here - a flag's default
-    # and which plans include it are code, in core/flags.py, because those are
-    # product decisions that belong in review rather than in a table somebody
-    # can edit at 2am.
+    # Feature flag overrides. Only the exceptions live here; a flag's default and
+    # which plans include it are code in core/flags.py, since those are product
+    # decisions that belong in code review.
     #
-    # The composite primary key is what makes "set this flag for this user"
-    # idempotent under concurrency instead of racing two rows into existence.
-    # set_by and set_at are NOT decoration: a flag flipped by nobody, at no
-    # time, is an unexplainable production state.
+    # The composite primary key makes "set this flag for this user" idempotent
+    # under concurrency. set_by and set_at record who changed it and when.
     (8, """
         CREATE TABLE IF NOT EXISTS feature_flags (
             key      TEXT NOT NULL,
@@ -267,10 +236,9 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS feature_flags_key ON feature_flags (key);
     """),
-    # What a proposal did to the OTHER numbers its benchmark measures. A
-    # change judged on one metric could buy it with another — fewer silent
-    # answers, paid for in invented ones — and be approved, because nothing
-    # recorded the second number. JSON {metric: {"before", "after", "worse"}}.
+    # What a proposal did to the other numbers its benchmark measures, so a change
+    # that improves one metric by worsening another can't be approved unnoticed.
+    # JSON {metric: {"before", "after", "worse"}}.
     (9, """
         ALTER TABLE proposals ADD COLUMN guard_metrics TEXT;
     """),
@@ -343,11 +311,10 @@ def put(key: str, value: Any) -> None:
 
 
 def put_many(items: dict[str, Any]) -> None:
-    """Write several subsystems in ONE transaction.
+    """Write several subsystems in one transaction.
 
-    This is the property the JSON file could not offer: a save either lands
-    completely or not at all, so billing can never be written while the client
-    registry that references it is lost.
+    A save lands completely or not at all, so billing can never be written
+    while the client registry it references is lost.
     """
     conn = _require()
     now = time.time()
@@ -368,7 +335,7 @@ def get(key: str, default: Any = None) -> Any:
     try:
         return json.loads(row["value"])
     except Exception:
-        # A single corrupt row must not take the others down with it.
+        # One corrupt row mustn't take the others down with it.
         return default
 
 
@@ -386,7 +353,7 @@ def all_state() -> dict[str, Any]:
 
 
 def stats() -> dict:
-    """What is actually stored, for the founder screen and for debugging."""
+    """What's actually stored, for the founder screen and debugging."""
     conn = _require()
     with _lock:
         rows = conn.execute(

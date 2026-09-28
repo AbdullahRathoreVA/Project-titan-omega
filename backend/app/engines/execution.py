@@ -1,15 +1,10 @@
-"""Autonomous Execution Layer.
+"""Execution layer: turns an intent (usually an opportunity) into a tracked,
+logged and reversible action.
 
-The platform does not stop at analysis: where permitted, agents act. This layer
-turns an intent (often an opportunity) into a tracked, **logged, verified and
-reversible** action. Agents with ``SUGGEST`` autonomy produce actions that wait
-for human approval; ``EXECUTE``/``AUTONOMOUS`` agents run within guardrails.
-
-Every state transition appends to the action's audit log so the command center
-can show exactly what happened and so any action can be reverted.
-
-Completed and reverted actions feed their outcomes back to the Self-Evolution
-Engine so opportunity scoring weights are tuned by real-world results.
+Agents with SUGGEST autonomy create actions that wait for approval;
+EXECUTE/AUTONOMOUS agents run within guardrails. Every state change is
+appended to the action's log, and completed or reverted actions feed their
+outcome back into opportunity scoring (engines/evolution.py).
 """
 
 from __future__ import annotations
@@ -118,7 +113,7 @@ def fail(action_id: str, reason: str, store: Store = STORE) -> dict:
 
 
 def revert(action_id: str, store: Store = STORE) -> dict:
-    """Undo an action. Only reversible actions can be reverted — by design."""
+    """Undo an action. Only reversible actions can be reverted."""
     action = _require(action_id, store)
     if not action["reversible"]:
         raise ExecutionError(f"Action {action_id} is not reversible.")

@@ -1,16 +1,14 @@
 "use client";
 
 /**
- * ExecutiveCommand — the Part 4C / Part 6 view.
+ * ExecutiveCommand - the executive view.
  *
- * Surfaces four things that existed only as API responses: the BI period
- * report, the forecast, what reflection has learned, and how the model router
- * is actually performing.
+ * Shows the BI period report, the forecast, what reflection has learned, and
+ * how the model router is performing.
  *
- * The design rule here is the one the engines already follow: where there is
- * not enough data, say so in words. A dashboard that renders 0 for "not
- * measured" and 0 for "measured zero" teaches the founder to distrust every
- * number on it, which is worse than showing nothing.
+ * Where there isn't enough data, it says so in words. Rendering 0 for both
+ * "not measured" and "measured zero" would make every number on the screen
+ * hard to trust.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -74,8 +72,10 @@ type RoutingReport = {
   note: string;
 };
 
-/** Founder-only. Served from /api/founder/analytics, which is registered
- *  sensitive server-side — a demo visitor gets 403, not a sample. */
+/**
+ * Founder-only. Served from /api/founder/analytics, which is registered as
+ * sensitive server-side - a demo visitor gets 403, not a sample.
+ */
 type FunnelStep = {
   step: string;
   count: number;
@@ -170,7 +170,7 @@ type SeoOverview = {
   note: string;
 };
 
-/** Score colour. Null is grey — "not audited" must never look like "bad". */
+/** Score colour. Null is grey, so "not audited" never looks like "bad". */
 function scoreTone(score: number | null): string {
   if (score === null || score === undefined) return "text-slate-600";
   if (score >= 80) return "text-hud-emerald";
@@ -195,8 +195,10 @@ async function api<T>(path: string): Promise<T | null> {
   }
 }
 
-/** Sparkline from the daily series. Drawn only when there is something to draw
- *  — an empty chart axis implies data that does not exist. */
+/**
+ * Sparkline from the daily series. Only drawn when there's something to
+ * draw - an empty chart axis implies data that doesn't exist.
+ */
 function Spark({ series }: { series: Record<string, number> }) {
   const points = Object.entries(series);
   if (points.length < 2) return null;
@@ -770,7 +772,7 @@ export default function ExecutiveCommand() {
           {!bi ? (
             <div className="py-6 text-center text-[11px] text-slate-500">Loading…</div>
           ) : bi.forecast.available === false ? (
-            /* The honest path. Showing 0 here would be a lie with a chart. */
+            /* Not enough data: say so instead of showing 0. */
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-3">
               <div className="text-[12px] text-amber-300">
                 Not enough data to project.

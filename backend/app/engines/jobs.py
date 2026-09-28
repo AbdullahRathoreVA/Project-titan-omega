@@ -1,14 +1,13 @@
-"""Job Radar — finds real remote jobs/gigs, scores fit, drafts proposals.
+"""Job Radar: finds remote jobs and gigs, scores the fit, drafts proposals.
 
-Compliant by design: it NEVER auto-applies (platform bots get accounts banned).
-It hunts listings on the live web (Tavily), scores each for Abdullah's real
-skills, and drafts a tailored proposal — he clicks apply himself. Applied
-status is tracked so the dashboard shows the pipeline.
+It never applies automatically (bots get accounts banned on job platforms).
+It searches live listings (Tavily), scores each against a profile and drafts
+a proposal; applying is done by hand. Applied status is tracked so the
+dashboard shows the pipeline.
 
-From a subscriber's cockpit it works from THEIR profile - what they offer,
-which they write themselves and which is kept with their workspace - and
-hunts for work they could win: projects, contracts, orders. Abdullah's CV
-below is never used for them.
+For the founder the profile is PROFILE below. From a subscriber's cockpit it
+uses the profile they write, kept in their workspace, and looks for work
+their business could win - projects, contracts, orders.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from ..core import llm, model_router, quota
 from ..store import STORE, Store, now
 from . import owner, research
 
-# Abdullah's REAL, verifiable profile — used for scoring + proposals. No lies.
+# The founder's profile, used for scoring and proposals. Keep it accurate.
 PROFILE = (
     "Muhammad Abdullah Rathore — AI Integration & Automation Developer "
     "(Pakistan, remote). Shipped products: Career Mind AI (live student "
@@ -114,7 +113,7 @@ def scan(query: str = "", store: Store = STORE) -> dict:
             max_tokens=700,
         )
         items = _parse_scored(raw or "")
-        if not items:  # LLM down or unparseable — keep the raw finds, unscored
+        if not items:  # LLM down or unparseable: keep the raw finds, unscored
             items = [{"score": None, "title": r["title"][:120], "url": r["url"],
                       "why": r["content"][:200]} for r in results[:8]]
 

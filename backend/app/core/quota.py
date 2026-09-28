@@ -1,32 +1,18 @@
-"""Who is this request billed to, and may they spend?
+"""Who a request is billed to, and whether they may spend.
 
-Every plan has declared `ai_calls_per_month` since billing was written — Free
-50, Individual 500, Business 3000, Enterprise unlimited — and
-`billing.check_quota` has always known how to check it. Across **36 call sites**
-that reach a language model, **not one metered the account**.
-`billing.consume` was called exactly once in the whole application, for audits.
+Every plan declares `ai_calls_per_month` (Free 50, Individual 500, Business
+3000, Enterprise unlimited). Metering happens in one place, `llm.complete()`,
+so no model call can skip it. This module connects "who is calling" to "what
+they may spend", so core/llm.py doesn't need to know about billing.
 
-So a free signup could burn an unbounded amount of Groq, Gemini and OpenRouter
-quota, and the plan table said otherwise on the pricing page. That is the
-fourteenth instance of this repository's dominant defect shape, and the first
-that costs money rather than truth.
+Not metered, because there's no subscriber to bill:
 
-The metering lives in ONE place — `llm.complete()` — for the same reason: a
-limit applied at thirty-six call sites is a limit missing from the
-thirty-seventh. This module is the seam between "who is calling" and "what may
-they spend", so `core/llm.py` never has to know what billing is.
-
-WHO IS NOT METERED, AND WHY
-
-An unbound request is not charged to anybody and is never refused:
-
-  * the founder's own console — Abdullah is not a subscriber of his own product
-  * the heartbeat engines — self-audit, demo workspace, fix cycle, news watch
+  * the founder's own console
+  * the heartbeat engines (self-audit, demo workspace, fix cycle, news watch)
   * the public demo
 
-Guessing an account for those would either invent usage on somebody's bill or
-refuse Titan's own background work when a stranger's plan ran out. Both are
-worse than not metering them, and neither is a number anybody measured.
+Guessing an account for those would either put usage on someone's bill or
+refuse Titan's own background work when a stranger's plan ran out.
 """
 
 from __future__ import annotations
@@ -34,9 +20,8 @@ from __future__ import annotations
 import contextvars
 from typing import Optional
 
-# The billing account this request belongs to, if any. Bound once, by the
-# middleware in main.py, rather than at every route that resolves a token —
-# same reasoning as metering in llm.complete() rather than at 36 call sites.
+# The billing account this request belongs to, if any. Bound once by the
+# middleware in main.py rather than in every route that resolves a token.
 _account: contextvars.ContextVar[str] = contextvars.ContextVar(
     "titan_billing_account", default="")
 
@@ -44,7 +29,7 @@ AI_CALLS = "ai_calls"
 
 
 def bind(email: str = "") -> None:
-    """Say who the current request is billed to. Empty means nobody."""
+    """Set who the current request is billed to. Empty means nobody."""
     _account.set((email or "").strip().lower())
 
 
@@ -66,10 +51,8 @@ def spend(kind: str = AI_CALLS, cost: int = 1) -> dict:
       {"metered": True, "allowed": True} charged
       {"metered": True, "allowed": False, "reason": ...} over the plan limit
 
-    `metered` is reported separately from `allowed` on purpose. "We did not
-    charge anyone" and "they were within their limit" are different facts, and
-    a caller that cannot tell them apart will eventually report unmetered work
-    as free work.
+    `metered` is separate from `allowed` because "we didn't charge anyone" and
+    "they were within their limit" are different facts.
     """
     email = current()
     if not email:
@@ -79,9 +62,8 @@ def spend(kind: str = AI_CALLS, cost: int = 1) -> dict:
         from . import billing
         verdict = billing.consume(email, kind, cost)
     except Exception as exc:                                   # noqa: BLE001
-        # A billing failure must not silently become a free call. It also must
-        # not take down the founder's dashboard, so it is reported as unknown
-        # and allowed — and it says which, so nobody reads this as "free".
+        # A billing failure shouldn't take down the founder's dashboard, so it's
+        # allowed but reported as unmetered, with the reason.
         return {"metered": False, "allowed": True,
                 "reason": f"quota check failed: {type(exc).__name__}"}
     return {"metered": True, "allowed": bool(verdict.get("allowed")),
@@ -91,9 +73,9 @@ def spend(kind: str = AI_CALLS, cost: int = 1) -> dict:
 def no_answer_note(founder_text: str) -> str:
     """What to say when llm.complete() came back empty.
 
-    The founder's screens tell him which key to set. A subscriber cannot set
-    keys, so they get the real reason instead: their plan's AI calls are used
-    up (and what to do about it), or the AI could not be reached.
+    The founder's screens say which key to set. A subscriber can't set keys,
+    so they get the actual reason: their plan's AI calls are used up (and what
+    to do about it), or the AI couldn't be reached.
     """
     email = current()
     if not email:

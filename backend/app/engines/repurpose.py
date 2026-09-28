@@ -1,8 +1,8 @@
-"""Content Repurposing Factory — one idea in, a week of content out.
+"""Content factory: one idea in, six pieces of content out.
 
-Single LLM call with hard delimiters, parsed robustly; the pack is also saved
-to Deliverables so nothing generated is ever lost. Honest degradation: with no
-LLM available the caller gets an explanatory note, never a crash.
+One LLM call with hard section delimiters, parsed defensively. The pack is
+also saved to Deliverables. Without an LLM the caller gets an explanatory
+note instead of content.
 """
 
 from __future__ import annotations
@@ -36,8 +36,7 @@ _PROMPT = (
 
 
 def _team() -> str:
-    """Whose content team this is: the founder's, or - from a subscriber's
-    cockpit - the subscriber's own businesses."""
+    """The content team's brief: the founder's businesses, or the subscriber's own."""
     businesses = owner.subscriber_businesses()
     if businesses is None:
         return _FOUNDER_TEAM
@@ -64,7 +63,7 @@ def repurpose(idea: str, lang: str = "en", store: Store = STORE) -> Dict[str, st
     out: Dict[str, str] = {}
     for i in range(1, len(parts) - 1, 2):
         out[parts[i].lower()] = parts[i + 1].strip()
-    for s in SECTIONS:  # anything the model skipped gets an honest placeholder
+    for s in SECTIONS:  # anything the model skipped gets a placeholder
         out.setdefault(s.lower(), "(not generated — hit Repurpose again)")
 
     # If the delimiters were ignored entirely, keep the full text in the blog slot.

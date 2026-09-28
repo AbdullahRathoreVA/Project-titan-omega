@@ -1,9 +1,9 @@
 "use client";
 
-// Titan's unique 3D signature: a living "neural string" web — glowing curved
-// strings run from a central app-core out to orbiting agent nodes, the whole
-// lattice rotating and pulsing with live activity intensity. Loaded via
-// next/dynamic (ssr:false) so the static export never renders WebGL at build.
+// The "neural string" scene: glowing curved strings run from a central core
+// out to orbiting agent nodes, the lattice rotating and pulsing with live
+// activity. Loaded via next/dynamic (ssr:false) so the static export never
+// renders WebGL at build time.
 
 import { useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";

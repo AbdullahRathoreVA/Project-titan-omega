@@ -1,25 +1,19 @@
-"""Rate limiting for unauthenticated endpoints.
+"""Rate limiting for unauthenticated and expensive endpoints.
 
-Before this there was none, anywhere. Two endpoints made that expensive rather
-than merely untidy:
+The two that matter most:
 
 * ``POST /api/signup`` is unauthenticated and creates a permanent account
-  record in shared state. A loop fills the database and the founder analytics
-  screen with garbage, and there is no way to tell the real first customer from
-  the noise.
-* ``POST /api/account/onboard`` triggers an outbound crawl of a URL the caller
-  supplies. Unmetered, that turns Titan into a request amplifier pointed at
-  somebody else's server, from Titan's IP and against Titan's reputation.
+  record. Without a limit, a loop fills the database and the founder's
+  analytics with junk.
+* ``POST /api/account/onboard`` crawls a URL the caller supplies. Unmetered,
+  it turns Titan into a request amplifier aimed at someone else's server.
 
-Deliberately in-process and dependency-free. A single container has one memory
-space, so a dict is the correct store — Redis would add an operational
-dependency to solve a problem that does not exist yet. **This does not survive
-being scaled to two containers**, and that is written down rather than
-discovered later: the day a second worker exists, this needs shared state.
+In-process and dependency-free: a single container has one memory space, so a
+dict is enough and Redis would be an extra moving part. This does NOT survive
+scaling to two containers - a second worker would need shared state.
 
-Behaviour on refusal follows the same rule as the quota system: say which limit
-was hit, and when it clears. A bare 429 teaches a caller nothing and looks like
-a fault.
+A refusal says which limit was hit and when it clears, like the quota system.
+A bare 429 looks like a fault.
 """
 
 from __future__ import annotations
@@ -29,20 +23,20 @@ import threading
 import time
 from typing import Optional
 
-# (requests, per_seconds) per bucket. Signup is deliberately tighter than
-# onboarding because an account is permanent and a crawl is not.
+# (requests, per_seconds) per bucket. Signup is tighter than onboarding because
+# an account is permanent and a crawl isn't.
 LIMITS: dict[str, tuple[int, int]] = {
     "signup": (5, 3600),        # 5 accounts per hour per address
     "onboard": (10, 3600),      # 10 crawls per hour per account
-    "login": (12, 900),         # 12 attempts per 15 min — slows credential stuffing
+    "login": (12, 900),         # 12 attempts per 15 min - slows credential stuffing
     "demo": (30, 3600),         # demo sessions are cheap but not free
     "discover": (20, 3600),     # lead discovery burns Tavily quota
     "org": (10, 3600),          # an organisation is a permanent record
     "warroom": (10, 3600),      # a subscriber's scan/debate: web search + AI calls
 }
 
-# Off in tests by default: a suite that creates dozens of accounts would trip
-# limits and fail for the wrong reason. Production leaves it on.
+# Can be switched off for tests: a suite that creates dozens of accounts would
+# otherwise trip the limits. Production leaves it on.
 ENABLED = os.getenv("TITAN_RATE_LIMIT", "1") != "0"
 
 MAX_TRACKED = 20_000
@@ -65,9 +59,9 @@ def _prune(now: float) -> None:
 def check(bucket: str, identity: str) -> dict:
     """Is this call allowed? Never raises, never blocks.
 
-    `identity` is whatever distinguishes the caller — a hashed address for
-    anonymous endpoints, an account email for authenticated ones. It is used as
-    a key only and is never stored beyond the window.
+    `identity` distinguishes the caller - a hashed address for anonymous
+    endpoints, an account email for authenticated ones. It's only used as a
+    key and isn't kept beyond the window.
     """
     if not ENABLED or bucket not in LIMITS:
         return {"allowed": True}
@@ -100,9 +94,8 @@ def identity_for(request) -> str:
     """A stable, non-identifying key for an anonymous caller.
 
     Behind the Cloudflare Worker the socket peer is Cloudflare, so the real
-    address is in CF-Connecting-IP. The value is used as a dict key for at most
-    an hour and is never persisted — consistent with the analytics rule that
-    Titan does not store visitor addresses.
+    address comes from CF-Connecting-IP. It's used as a dict key for at most
+    an hour and never persisted; Titan doesn't store visitor addresses.
     """
     try:
         return (request.headers.get("cf-connecting-ip")

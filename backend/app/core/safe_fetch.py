@@ -1,31 +1,18 @@
-"""Guard for outbound fetches of user-supplied URLs (SSRF defence).
+"""SSRF protection for fetching user-supplied URLs.
 
-Titan crawls whatever address a signup types in. Without a guard that is an
-SSRF primitive: a stranger can point Titan at `http://169.254.169.254/`
-(cloud metadata), at `http://127.0.0.1:7860/api/...` (its own private API,
-from inside the trust boundary), or at a company's internal network — and get
-the response back, rendered as an "audit".
+Titan crawls whatever address a user types in. Without a guard, someone
+could point it at cloud metadata (http://169.254.169.254/), at Titan's own
+internal API (http://127.0.0.1:7860/...), or at a private network, and get
+the response back as an "audit".
 
-It is also an abuse vector in the other direction. Titan fetching an arbitrary
-host on demand, unmetered, means someone else's server gets hammered from
-Titan's IP and Titan's reputation.
+1. Only http and https. file://, gopher:// and ftp:// are refused.
+2. Resolve the host and check the address, not the name - evil.com can
+   resolve to 127.0.0.1. Every resolved address must be public.
+3. Follow redirects manually and re-check each hop, since a public URL can
+   redirect to a private one.
 
-Three rules, in order:
-
-1. **Scheme allowlist.** Only http and https. `file://`, `gopher://` and
-   `ftp://` are all reachable through urllib otherwise, and `file:///etc/passwd`
-   is a file read dressed as a crawl.
-2. **Resolve, then check the ADDRESS — not the hostname.** Checking the string
-   is the classic mistake: `evil.com` can resolve to `127.0.0.1`. Every
-   resolved address must be public, and a hostname resolving to several
-   addresses is rejected unless all of them are.
-3. **Re-check on redirect.** A public URL that 302s to `169.254.169.254`
-   defeats a check that only ran once, so redirects are followed manually with
-   the same test applied at every hop.
-
-This does not stop a determined attacker with DNS-rebinding timing, which needs
-socket-level pinning. It stops the entire class of trivial abuse, and it says
-so rather than implying more.
+This doesn't stop DNS rebinding with precise timing (that needs pinning at
+the socket level), but it covers the common cases.
 """
 
 from __future__ import annotations
@@ -41,17 +28,16 @@ ALLOWED_SCHEMES = ("http", "https")
 MAX_REDIRECTS = 4
 MAX_BYTES = 1_500_000
 
-# Hostnames that are never legitimate crawl targets, checked before DNS so a
-# resolver that returns something public for them cannot help.
+# Hostnames that are never valid crawl targets, checked before DNS.
 BLOCKED_HOSTNAMES = frozenset({
     "localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback",
-    # AWS/GCP/Azure instance metadata. The single most valuable SSRF target.
+    # Cloud instance metadata (AWS/GCP/Azure).
     "metadata", "metadata.google.internal", "instance-data",
 })
 
 
 class BlockedURL(ValueError):
-    """The URL is not a legitimate public crawl target."""
+    """The URL isn't a valid public crawl target."""
 
 
 def _is_public(addr: str) -> bool:
@@ -59,12 +45,12 @@ def _is_public(addr: str) -> bool:
         ip = ipaddress.ip_address(addr)
     except ValueError:
         return False
-    # is_global is False for private, loopback, link-local, multicast,
-    # reserved and unspecified ranges — including 169.254.169.254 and ::1.
+    # is_global is False for private, loopback, link-local, multicast, reserved
+    # and unspecified ranges, including 169.254.169.254 and ::1.
     if not ip.is_global:
         return False
-    # IPv4-mapped IPv6 (::ffff:127.0.0.1) reports as global on some versions;
-    # unwrap and re-test rather than trust it.
+    # IPv4-mapped IPv6 (::ffff:127.0.0.1) reports as global on some Python
+    # versions, so unwrap it and test again.
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
         return ip.ipv4_mapped.is_global
     return True
@@ -97,8 +83,8 @@ def check(url: str) -> str:
     addrs = {i[4][0] for i in infos}
     if not addrs:
         raise BlockedURL(f"{host} does not resolve to any address.")
-    # ALL resolved addresses must be public. A host that returns one public and
-    # one private address is a rebinding attempt, not a website.
+    # Every resolved address must be public. A host returning one public and one
+    # private address is treated as a rebinding attempt.
     bad = [a for a in addrs if not _is_public(a)]
     if bad:
         raise BlockedURL(
@@ -111,8 +97,7 @@ def fetch(url: str, *, user_agent: str, timeout: float,
           max_bytes: int = MAX_BYTES) -> tuple[Optional[str], Optional[str], int]:
     """Fetch a user-supplied URL safely. Returns (html, error, status).
 
-    Redirects are followed manually so every hop is re-validated — the whole
-    point of the guard is lost if a public URL can bounce to a private one.
+    Redirects are followed manually so each hop is validated.
     """
     seen = 0
     current = url
@@ -127,7 +112,7 @@ def fetch(url: str, *, user_agent: str, timeout: float,
             "Accept": "text/html,application/xhtml+xml",
         })
         try:
-            # Redirects are NOT followed automatically — see class docstring.
+            # Redirects aren't followed automatically; see fetch().
             opener = urllib.request.build_opener(_NoRedirect)
             with opener.open(req, timeout=timeout) as r:
                 raw = r.read(max_bytes)

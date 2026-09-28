@@ -1,25 +1,16 @@
-"""One screen that answers "what is actually connected, and what does it cost".
+"""What is connected, and what it costs - one screen for all integrations.
 
-Titan grew a ``configured()`` or ``status()`` function per subsystem — payments,
-telephony, the renderer, the embedding model, the credential vault, the
-deployment secret. Each is correct and each lives somewhere different, so the
-only way to answer "is this deployment ready" was to know all of them.
+Each subsystem (payments, telephony, renderer, embeddings, credential vault,
+deployment secret) already has its own configured()/status() check. This
+calls each owning module rather than re-implementing the checks.
 
-This aggregates them. It does not reimplement any of them: every entry calls
-the module that already owns the question. Two rules follow from that:
+- Nothing is reported as connected without calling the real check.
+- A check that raises is reported as "unknown", not "disconnected": one
+  means "go and connect it", the other means something is broken on our
+  side.
 
-* **Nothing is reported connected without calling the real check.** No entry is
-  hardcoded true, and no entry infers connectedness from the presence of an
-  environment variable when the owning module has an opinion.
-* **A check that raises is `unknown`, never `disconnected`.** They lead to
-  different actions — one is "go and connect it", the other is "something is
-  broken on our side" — and a red cross for both sends people to fix the wrong
-  thing.
-
-Every entry also says what it **costs**, because the brief asks the customer to
-always know whether something is free, included, paid, or needs an account
-somewhere else. Getting that wrong is how somebody enables a feature and
-receives a bill.
+Each entry also says what it costs (free, included, paid, or needs an
+external account), so enabling something never comes with a surprise bill.
 """
 
 from __future__ import annotations
@@ -51,7 +42,7 @@ def _entry(key, name, category, status, detail, unlocks, cost, configure="",
 
 
 def _safe(fn, *args, **kwargs):
-    """Call a status function, or report why it could not be called."""
+    """Call a status function, or report why it couldn't be called."""
     try:
         return fn(*args, **kwargs), None
     except Exception as exc:                                   # noqa: BLE001
@@ -149,10 +140,10 @@ def _renderer() -> dict:
 
 
 def _env_backed(key, name, category, variables, unlocks, cost, note="") -> dict:
-    """For integrations whose only real check IS the presence of a variable.
+    """For integrations whose only check is whether a variable is set.
 
-    Kept honest by saying so in the detail: a set variable proves the operator
-    intended a connection, not that the far end answers.
+    The detail says so: a set variable shows intent, not that the other end
+    answers.
     """
     present = [v for v in variables if os.getenv(v, "").strip()]
     if len(present) == len(variables):
@@ -185,7 +176,7 @@ def _telegram() -> dict:
 
 
 def _sites() -> dict:
-    """WordPress credentials, counted from the vault rather than assumed."""
+    """WordPress credentials, counted from the vault."""
     from . import analytics, site_access
     snap, err = _safe(analytics.accounts_snapshot)
     if err is not None:
@@ -216,7 +207,7 @@ def _sites() -> dict:
 
 
 def all_integrations() -> list:
-    """Every integration, each answered by the module that owns it."""
+    """Every integration, each checked by the module that owns it."""
     checks = (
         _payments,
         _deployment_secret,
@@ -252,8 +243,8 @@ def summary() -> dict:
         "counts": counts,
         "connected": counts.get(CONNECTED, 0),
         "total": len(rows),
-        # Named so nobody reads "3 of 7 connected" as a health score. Some of
-        # these cost money and are deliberately off.
+        # Spelled out so "3 of 7 connected" isn't read as a health score - some of
+        # these are paid and deliberately off.
         "note": ("Not a score. Several of these are optional or paid, and "
                  "being unconfigured is a decision rather than a fault."),
         "generated_at": time.time(),

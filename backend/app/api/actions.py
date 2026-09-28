@@ -1,10 +1,10 @@
-"""Action-taking endpoints — the agents actually DO things, not just talk.
+"""Endpoints where the agents take actions rather than just talk.
 
-Mounted alongside the main router so the core contract stays untouched:
-  * POST /api/agent/act     — perform a real in-app action.
-  * POST /api/intel/news    — live headlines + market analysis.
-  * POST /api/leads/find    — live web search → concrete leads (Tavily).
-  * GET  /api/content/daily — fresh caption + free AI image URL for auto-posting.
+Mounted alongside the main router:
+  * POST /api/agent/act     - perform a real in-app action.
+  * POST /api/intel/news    - live headlines + market analysis.
+  * POST /api/leads/find    - live web search -> concrete leads (Tavily).
+  * GET  /api/content/daily - fresh caption + free AI image URL for auto-posting.
 """
 
 from __future__ import annotations
@@ -25,8 +25,7 @@ from ..store import STORE, Store, now
 
 router = APIRouter(prefix="/api")
 
-# Abdullah sells his services on UPWORK (not Fiverr). Override with the
-# UPWORK_PROFILE_URL env var; this default is his real public profile.
+# The founder's Upwork profile. Override with the UPWORK_PROFILE_URL env var.
 UPWORK_PROFILE_URL = "https://www.upwork.com/freelancers/~01afb00378bd38d964?mp_source=share"
 
 
@@ -39,8 +38,9 @@ class NewsRequest(BaseModel):
 
 @router.post("/intel/news", tags=["system"])
 def intel_news(req: NewsRequest) -> dict:
-    """Live headlines + AI market analysis tuned to Abdullah's businesses -
-    or, from a subscriber's cockpit, to theirs."""
+    """Live headlines + AI market analysis for the founder's businesses, or for
+    the subscriber's when called from their cockpit.
+    """
     businesses = owner.subscriber_businesses()
     if businesses is not None:
         main = businesses[0] if businesses else {}
@@ -103,8 +103,9 @@ def find_leads(req: LeadRequest) -> dict:
     """Search the live web for real leads, then format them into an action list.
 
     From a subscriber's cockpit the leads are customers for their own business,
-    and each search counts against the War Room's hourly limit - it runs on
-    the platform's search key."""
+    and each search counts against the War Room's hourly limit, since it uses
+    the platform's search key.
+    """
     businesses = owner.subscriber_businesses()
     if businesses is not None:
         from .growth import limit_subscriber
@@ -180,8 +181,8 @@ def find_leads(req: LeadRequest) -> dict:
 
 # --- daily auto-content (caption + free AI image) for posting --------------
 
-# Research-backed (2026): authentic UGC-style photos out-convert polished studio
-# ads — "ads that don't look like ads". Mostly candid/real-feel, one editorial.
+# Authentic, UGC-style photos tend to outperform polished studio ads ("ads
+# that don't look like ads"), so these are mostly candid with one editorial.
 _IMG_STYLES = [
     "authentic candid photo, shot on iPhone, natural window light, real environment, genuine unposed moment, true-to-life colors, sharp 4k detail, looks like a friend's photo not an ad",
     "candid documentary-style photograph, golden hour natural light, real person mid-action, authentic emotion, shallow depth of field, shot on 35mm lens, 4k, warm lifelike tones",
@@ -191,7 +192,7 @@ _IMG_STYLES = [
 
 
 def _pollinations(prompt: str) -> str:
-    # Random seed each call so every generated image is fresh (changes per post).
+    # Random seed per call so every image is new.
     seed = random.randint(1, 9_999_999)
     return (
         "https://image.pollinations.ai/prompt/"
@@ -206,7 +207,7 @@ def _build_next_post(
     target: str = "auto",
     store: Store = STORE,
 ) -> dict:
-    """Generate one ready-to-post draft: caption + a FREE high-quality AI image.
+    """Generate one ready-to-post draft: caption + a free AI image.
 
     Shared by the daily auto-content endpoint and the HUD "Next Post" card.
     """
@@ -215,12 +216,9 @@ def _build_next_post(
         return _subscriber_next_post(businesses, topic, lang, store)
     cm = os.getenv("CAREERMIND_URL", "https://careermind2026-career-mind.hf.space")
     upwork = os.getenv("UPWORK_PROFILE_URL", UPWORK_PROFILE_URL).strip()
-    # Set TITAN_PRODUCT_URL (landing/waitlist/demo link) and Titan starts
-    # marketing ITSELF in the daily rotation — build-in-public style.
-    # Titan is the product being sold, and it is live — so it is the default
-    # and needs no configuration. This used to default to Career Mind with
-    # Titan appearing only if TITAN_PRODUCT_URL happened to be set, which it
-    # was not: every generated post pitched a product Abdullah no longer sells.
+    # Titan is the product being marketed, so it's the default and needs no
+    # configuration; TITAN_PRODUCT_URL overrides the link (landing, waitlist or
+    # demo).
     titan_url = (os.getenv("TITAN_PRODUCT_URL", "").strip()
                  or "https://titanomega-ai.com/join")
     lang_name = "Urdu (اردو)" if lang == "ur" else "English"
@@ -230,8 +228,8 @@ def _build_next_post(
         pool = ["titan"]
         if upwork:
             pool.append("upwork")
-        # Career Mind only when it is explicitly configured — it is an older
-        # product and must not be the thing Titan markets by default.
+        # Career Mind only when explicitly configured - it's an older product and
+        # shouldn't be marketed by default.
         if os.getenv("CAREERMIND_URL", "").strip():
             pool.append("career_mind")
         t = pool[len(store.feed) % len(pool)]
@@ -306,9 +304,10 @@ def _build_next_post(
 
 def _subscriber_next_post(businesses: list, topic: str, lang: str, store: Store) -> dict:
     """The next-post draft for a subscriber: about their own business, linked
-    to their own site. Without a business there is nothing to promote, and
-    without an AI answer there is no caption - it says so rather than falling
-    back to a canned caption about somebody else's product."""
+    to their own site. With no business there's nothing to promote, and with
+    no AI answer there's no caption; it says so rather than falling back to a
+    canned caption about someone else's product.
+    """
     draft = {"id": store.new_id("draft"), "image_prompt": "", "image_url": "",
              "channels": [], "created_at": now().isoformat()}
     if not businesses:
@@ -350,7 +349,7 @@ def content_daily(
     lang: str = Query(default="en"),
     target: str = Query(default="auto", description="career_mind | fiverr | auto"),
 ) -> dict:
-    """Fresh caption + a FREE high-quality AI image for the daily post."""
+    """Fresh caption + a free AI image for the daily post."""
     post = _build_next_post(topic, lang, target, STORE)
     STORE.emit(
         "content-studio", "activity",
@@ -365,13 +364,11 @@ def content_daily(
 def publish_readiness() -> dict:
     """Can a post actually reach a platform right now?
 
-    The card used to print "Posts to: linkedin, instagram, facebook" whether or
-    not any of them were reachable. Nothing was connected, so approving a post
-    did exactly nothing and the interface said otherwise — which is the one
-    thing this codebase is not allowed to do.
+    The card shows real reachability, so approving a post with no connected
+    channel doesn't look like it worked.
 
-    A subscriber is never routed through the founder's webhook: that would
-    post to HIS accounts.
+    A subscriber is never routed through the founder's webhook, which would
+    post to the founder's accounts.
     """
     from ..core import cockpit_scope
     if cockpit_scope.is_customer():
@@ -398,13 +395,14 @@ def next_post(lang: str = Query(default="en")) -> dict:
     """The current next post the founder can approve. Generated lazily, cached.
 
     A subscriber's "add your business first" placeholder is rebuilt once they
-    have one. A draft that failed for want of an AI answer is not rebuilt on
-    every poll - that would spend their AI calls every five seconds; they
-    press Regenerate."""
+    have a business. A draft that failed for lack of an AI answer isn't
+    rebuilt on every poll - that would spend their AI calls every five
+    seconds; they press Regenerate instead.
+    """
     from ..core import billing, cockpit_scope
     if billing.is_demo(cockpit_scope.customer_email()):
-        # Every visitor shares the demo account; drafting a post for each of
-        # them would spend AI calls on nobody's behalf.
+        # Every visitor shares the demo account; drafting a post for each would spend
+        # AI calls on nobody's behalf.
         return {"id": "demo-draft", "target": "your business", "link": "",
                 "caption": ("In your own workspace, Titan drafts your next post here "
                             "- about your business, with an image. Sign up free to "
@@ -442,8 +440,8 @@ def next_post_approve() -> dict:
     """Schedule the current next post to its channels, then queue up a fresh one."""
     post = STORE.next_post or _build_next_post("", "en", "auto", STORE)
     if post.get("unavailable"):
-        # A placeholder is not a post. Scheduling it would put "add your
-        # business first" in their queue as if it were content.
+        # A placeholder isn't a post; scheduling it would put "add your business
+        # first" in their queue as content.
         raise HTTPException(status_code=409, detail=post["caption"])
     scheduled = publisher.schedule(
         post["caption"], post.get("channels", ["linkedin"]), post.get("image_url"), None, store=STORE
@@ -461,8 +459,8 @@ def next_post_approve() -> dict:
     return {
         "scheduled_id": scheduled["id"],
         "channels": scheduled["channels"],
-        # The caller must be able to tell "sent" from "saved". Returning the
-        # same shape for both is how a button appears to work and does not.
+        # The caller must be able to tell "sent" from "saved", or a button can look
+        # like it worked when it didn't.
         "sent": ready["ready"],
         "publish": ready,
         "next_post": STORE.next_post,
@@ -484,7 +482,8 @@ _CHANNELS = [
 @router.get("/channels", tags=["system"])
 def channels() -> dict:
     """One tile per channel. A real number appears once Make.com pushes it via
-    /api/metrics/update (key e.g. ``instagram_followers``); until then: pending."""
+    /api/metrics/update (key e.g. ``instagram_followers``); until then: pending.
+    """
     out = []
     for c in _CHANNELS:
         connected = c["metric"] in STORE.metrics
@@ -534,9 +533,9 @@ def _stream_frame(store: Store, last_id: int, guest: bool = False):
     if events:
         last_id = max(_feed_id_num(e["id"]) for e in events)
     if guest:
-        # A public demo visitor must never receive real order lines, and the
-        # money must match the sampled numbers the rest of the demo shows —
-        # otherwise the ledger says $693 while this stream overwrites it with $0.
+        # A demo visitor must never receive real order lines, and the money has to
+        # match the sampled numbers elsewhere in the demo - otherwise the ledger says
+        # $693 and this stream overwrites it with $0.
         events = [e for e in events if not demo_data.is_revenue_event(e)]
     status = executive.empire_status(store)
     if guest:
@@ -564,8 +563,9 @@ def _stream_frame(store: Store, last_id: int, guest: bool = False):
 @router.get("/stream", tags=["system"])
 async def stream(request: Request) -> StreamingResponse:
     """Push a compact live frame (~every 1.5s): status, new feed events, and an
-    activity ``intensity`` that drives the 3D core. The dashboard feels alive the
-    moment it opens — no manual refresh."""
+    activity ``intensity`` that drives the 3D core, so the dashboard is live
+    without manual refreshes.
+    """
 
     tok = (request.headers.get("authorization", "").removeprefix("Bearer ").strip()
            or request.query_params.get("token", "").strip())
@@ -595,15 +595,16 @@ async def stream(request: Request) -> StreamingResponse:
 
 @router.get("/doctor", tags=["system"])
 def doctor() -> dict:
-    """Which integrations the RUNNING container can actually see (booleans only,
-    values never exposed). If you saved a secret on HF and it shows false here,
-    the Space simply hasn't restarted since — restart and check again."""
+    """Which integrations the running container can see (booleans only, values
+    never exposed). If a secret saved on HF shows false here, the Space hasn't
+    restarted since - restart and check again.
+    """
     def has(name: str) -> bool:
         return bool(os.getenv(name, "").strip())
 
-    # Live Telegram check: calls getMe server-side and reports the bot's
-    # username (never the token) or the exact error — so "bot not answering"
-    # is diagnosable from this one URL.
+    # Live Telegram check: calls getMe server-side and reports the bot's username
+    # (never the token) or the exact error, so "bot not answering" can be
+    # diagnosed from this one URL.
     telegram_api = None
     tok = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if tok:
@@ -619,16 +620,13 @@ def doctor() -> dict:
         except Exception as exc:
             telegram_api = f"error: {type(exc).__name__}: {str(exc)[:80]}"
 
-    # Durable storage, the one row worth checking from outside the Space.
-    # Every other surface reporting it needs the founder token, so the only
-    # way to learn that HF_TOKEN had not taken effect was to lose the accounts
-    # and notice afterwards.
+    # Durable storage - the one row worth checking from outside the Space, since
+    # every other surface that reports it needs the founder token.
     #
-    # `state_backup_configured` is INTENT — a token is set. `state_backup_proven`
-    # is PROOF — a verified snapshot actually reached the Hub in this process.
-    # They are reported separately because they answer different questions, and
-    # collapsing them is how "somebody meant to" becomes "the data is safe".
-    # Booleans and a repo id only; no token, no path, no manifest.
+    # `state_backup_configured` is intent (a token is set); `state_backup_proven`
+    # is proof (a verified snapshot reached the Hub in this process). They're
+    # separate because they answer different questions. Booleans and a repo id
+    # only; no token, path or manifest.
     durable = {"state_backup_configured": False, "state_backup_proven": False,
                "state_repo": None, "state_is_ephemeral": None}
     try:
@@ -638,13 +636,13 @@ def doctor() -> dict:
         durable["state_backup_proven"] = bool((st.get("last_push") or {}).get("ok"))
         durable["state_repo"] = st.get("repo")
         durable["state_is_ephemeral"] = st.get("local_is_ephemeral")
-        # The half that actually matters. A snapshot on the Hub proves a backup
+        # The part that really matters: a snapshot on the Hub proves a backup
         # happened; only this proves one came back.
         restore = st.get("last_restore") or {}
         durable["state_restored_at_boot"] = restore.get("outcome") or "unknown"
     except Exception as exc:
-        # A check that cannot run is unknown, never "not configured". "Go set
-        # the token" and "we are broken" are different actions.
+        # A check that can't run is unknown, not "not configured": "go set the token"
+        # and "something's broken" call for different actions.
         durable["state_backup_error"] = f"{type(exc).__name__}: {str(exc)[:80]}"
 
     return {
@@ -662,8 +660,8 @@ def doctor() -> dict:
         "upwork_url": has("UPWORK_PROFILE_URL"),
         "titan_product_url": has("TITAN_PRODUCT_URL"),
         "auth_enabled": os.getenv("TITAN_REQUIRE_AUTH") == "1",
-        # Failure detail from the most recent LLM call (does NOT run a new one) —
-        # lets us see which provider failed and why after any real request.
+        # Failure detail from the most recent LLM call (doesn't run a new one), to see
+        # which provider failed and why after any real request.
         "llm_last_error": llm.last_error(),
         "hint": "false for something you saved on HF? The Space hasn't restarted since you saved it.",
     }
@@ -673,11 +671,12 @@ def doctor() -> dict:
 
 @router.get("/llm/health", tags=["system"])
 def llm_health() -> dict:
-    """Run a tiny real completion and report what actually happened — so a model
-    deprecation or bad key is visible instead of silently falling back."""
+    """Run a tiny real completion and report what happened, so a model
+    deprecation or bad key shows up instead of silently falling back.
+    """
     # 128, not 10: reasoning models (gpt-oss, many :free OpenRouter ids) spend
-    # completion tokens on hidden reasoning first — a 10-token budget always
-    # returns empty content and made healthy providers look dead.
+    # completion tokens on hidden reasoning first, so a 10-token budget always
+    # returns empty content and makes healthy providers look dead.
     sample = llm.complete(system="Reply with exactly: OK", prompt="Say OK", max_tokens=128)
     return {
         "provider": llm.provider(),
@@ -715,7 +714,8 @@ _OUTREACH_WORDS = ["email", "outreach", "school", "university", "college", "busi
 def _subscriber_act(text: str, businesses: list) -> dict:
     """The command bar in a subscriber's cockpit: the same four actions, done
     for their own business in their own workspace. Nothing is sent or posted
-    for them - drafts wait where they can copy them."""
+    for them; drafts wait where they can copy them.
+    """
     low = text.lower()
     desc = owner.describe(businesses) or "a small business"
 

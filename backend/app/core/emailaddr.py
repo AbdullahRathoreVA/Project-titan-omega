@@ -1,32 +1,23 @@
-"""Is this address one a person could actually receive mail at?
+"""Is this an address a person could actually receive mail at?
 
-`billing.signup` checked `"@" not in email or len(email) < 5`. So `xx@xx`
-became a customer, and so did `@@@@@`. The consequences are not cosmetic:
+Junk addresses (`xx@xx`, `@@@@@`) inflate the signup funnel, can never be
+emailed, and can't be told apart from a typo in a real address.
 
-  * the signup funnel counts junk as customers, and that funnel is the only
-    instrument that can answer "is anybody actually using this?"
-  * nothing can ever be sent to them, so a trial-ending or receipt email is
-    undeliverable before it is written
-  * a typo and a real address are indistinguishable, so nobody follows up
+Two separate checks:
 
-TWO DIFFERENT CHECKS, KEPT APART ON PURPOSE
+`valid_syntax()` is a shape check: free, deterministic, always on. It answers
+"could this be an address at all".
 
-`valid_syntax()` is a shape check. It is free, deterministic, always on, and
-answers "could this be an address at all".
+`deliverable()` asks DNS whether the domain has a mail exchanger. That's the
+only way to tell a real address from a well-formed invented one without
+sending anything, and it needs no provider or cost. It's off by default and
+fails open: a DNS timeout, resolver outage or any error returns "unknown",
+never "invalid". Turning away a paying customer because a nameserver blinked
+is worse than accepting one bad address.
 
-`deliverable()` asks DNS whether the domain has a mail exchanger. That is the
-only way to tell a real address from a well-formed invented one WITHOUT sending
-anything, and it needs no provider, no credential and no cost. It is OFF by
-default and **fails open**: a DNS timeout, a resolver outage or any error at all
-returns "unknown", never "invalid". Turning away a paying customer because a
-nameserver blinked is worse than accepting one bad address.
-
-WHAT THIS IS NOT
-
-It is not proof the mailbox exists, and it does not claim to be. Only a message
-that is delivered proves that, and sending needs a provider Titan does not have
-(see the transactional-email gap). `verified` is therefore never set to true by
-anything in here.
+Neither proves the mailbox exists. Only a delivered message does, and sending
+needs an email provider Titan doesn't have yet, so `verified` is never set to
+true here.
 """
 
 from __future__ import annotations
@@ -35,10 +26,10 @@ import os
 import re
 from typing import Optional
 
-# Deliberately not an RFC 5322 regex. That grammar admits addresses no mail
-# system accepts and no signup form should encourage, and a pattern claiming
-# full compliance invites the belief that anything it passes is deliverable.
-# This is the practical shape: a local part, one @, a dotted domain.
+# Not a full RFC 5322 regex: that grammar allows addresses no mail system
+# accepts, and a pattern claiming full compliance suggests anything it passes
+# is deliverable. This is the practical shape: a local part, one @, a dotted
+# domain.
 _LOCAL = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*"
 _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 _PATTERN = re.compile(rf"^{_LOCAL}@(?:{_LABEL}\.)+[A-Za-z]{{2,63}}$")
@@ -46,12 +37,10 @@ _PATTERN = re.compile(rf"^{_LOCAL}@(?:{_LABEL}\.)+[A-Za-z]{{2,63}}$")
 MAX_LENGTH = 254          # RFC 5321 limit on the whole address
 MAX_LOCAL = 64            # RFC 5321 limit on the part before the @
 
-# Reserved by RFC 2606 and RFC 6761. These can never receive mail from the
-# internet — not "unlikely to", cannot. They stay ACCEPTED here anyway, because
-# the test suite and the documentation use example.com and rejecting them would
-# make the validator's behaviour differ between tests and production, which is
-# the one thing a validator must never do. `reserved()` reports them instead, so
-# a caller that wants to exclude them can, knowingly.
+# Reserved by RFC 2606 and RFC 6761; these can never receive mail. They're
+# still accepted, because tests and docs use example.com and the validator must
+# behave the same in tests and production. `reserved()` reports them so a
+# caller can exclude them deliberately.
 RESERVED_TLDS = frozenset({
     "test", "example", "invalid", "localhost", "local", "onion",
 })
@@ -61,9 +50,10 @@ RESERVED_DOMAINS = frozenset({
 
 
 def normalise(email: str) -> str:
-    """Trim and lower-case. The local part is technically case-sensitive; no
-    mail provider anybody signs up with treats it that way, and storing two
-    accounts that differ only in case is a support ticket, not a feature."""
+    """Trim and lower-case. The local part is technically case-sensitive, but no
+    mainstream provider treats it that way, and two accounts differing only
+    in case would just cause confusion.
+    """
     return (email or "").strip().lower()
 
 
@@ -97,22 +87,21 @@ def reserved(email: str) -> bool:
 
 
 def mx_checking_enabled() -> bool:
-    """Off by default. A network call on the signup path is a decision, not a
-    default, and this one is only worth making where DNS is reliable."""
+    """Off by default. A network call on the signup path should be opted into,
+    and only where DNS is reliable.
+    """
     return os.getenv("TITAN_VERIFY_EMAIL_MX", "0") == "1"
 
 
 def deliverable(email: str, timeout: float = 3.0) -> dict:
-    """Can this domain receive mail? Never raises. FAILS OPEN.
+    """Can this domain receive mail? Never raises. Fails open.
 
-    Returns {"checked", "deliverable", "reason"}. `deliverable` is None when the
-    answer is unknown, and unknown is the answer for every failure mode there
-    is: the check disabled, no resolver available, a timeout, a malformed
-    response. Only a definitive "this domain has no mail exchanger and no
-    address record" comes back False.
+    Returns {"checked", "deliverable", "reason"}. `deliverable` is None when
+    the answer is unknown, which covers every failure mode: check disabled, no
+    resolver, a timeout, a malformed response. Only a definitive "no mail
+    exchanger and no address record" returns False.
 
-    Unknown is never rendered as invalid by any caller, because a nameserver
-    blinking must not cost a customer.
+    Callers never treat unknown as invalid.
     """
     domain = domain_of(email)
     if not domain:
@@ -122,8 +111,8 @@ def deliverable(email: str, timeout: float = 3.0) -> dict:
         return {"checked": False, "deliverable": None,
                 "reason": "MX checking is off (set TITAN_VERIFY_EMAIL_MX=1)"}
     try:
-        # Imported inside the function: a resolver is optional, and a missing
-        # one must degrade to "unknown" rather than break the import of billing.
+        # Imported inside the function: a resolver is optional, and a missing one
+        # should give "unknown" rather than break importing billing.
         import dns.resolver  # type: ignore
     except Exception:
         return {"checked": False, "deliverable": None,
@@ -138,8 +127,8 @@ def deliverable(email: str, timeout: float = 3.0) -> dict:
                     "reason": f"{len(answers)} mail exchanger(s)"}
     except Exception as exc:                                   # noqa: BLE001
         name = type(exc).__name__
-        # NXDOMAIN and NoAnswer are real answers. Everything else — timeouts,
-        # resolver errors, no nameservers — is us failing, not them.
+        # NXDOMAIN and NoAnswer are real answers. Everything else (timeouts, resolver
+        # errors, no nameservers) is a failure on our side, not theirs.
         if name in ("NXDOMAIN", "NoAnswer"):
             try:
                 resolver.resolve(domain, "A")
@@ -158,9 +147,8 @@ def deliverable(email: str, timeout: float = 3.0) -> dict:
 def check(email: str) -> dict:
     """Everything known about an address, without sending anything.
 
-    `verified` is always False. Only a delivered message proves a mailbox
-    exists, and sending needs a provider Titan does not have. Reporting an
-    unsent address as verified would be the same lie as an unmeasured number.
+    `verified` is always False: only a delivered message proves a mailbox
+    exists, and sending needs a provider Titan doesn't have yet.
     """
     addr = normalise(email)
     ok = valid_syntax(addr)

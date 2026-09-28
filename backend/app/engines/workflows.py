@@ -1,11 +1,10 @@
-"""Living-agent workflows.
+"""Agent workflows.
 
-Each division cycles through an ordered pipeline of realistic stages, so every
-agent visibly *works* through a task chain instead of sitting on one static line.
-Some stages hand off to another division — that's what makes the network feel
-like a cooperating company rather than 102 independent bots.
+Each division works through an ordered list of stages, and some stages hand
+off to another division, so agents show a task chain instead of one static
+line.
 
-Pure data + helpers: no store/LLM imports, so it stays dependency-free.
+Plain data and helpers - no store or LLM imports.
 """
 
 from __future__ import annotations

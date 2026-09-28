@@ -1,39 +1,31 @@
-"""Durable work queue — crawls stop running on the request path.
+"""Durable work queue, so crawls don't run on the request path.
 
-Blueprint item 007. Until now every crawl ran inside the thing that asked for
-it: a signup blocked on a full site audit, and the heartbeat ran client
-monitoring inline on a worker thread. Both have the same defect, and it is not
-latency — it is that **the work has no existence outside the process doing
-it.** A container recycled mid-audit (which a free Hugging Face Space does
-routinely) loses that work with no record it was ever attempted, and nothing
-retries it.
+Running a crawl inside the request or heartbeat that asked for it means the
+work only exists in that process. A container recycled mid-audit (which a free
+Hugging Face Space does often) loses it with no record and no retry. So this
+is a real table with a real index rather than another JSON blob in `state`:
 
-A queue fixes that only if it is genuinely durable, so this is a real table
-with a real index rather than another JSON blob in `state`:
-
-* **The claim is atomic.** A job moves `queued → running` under the same lock
-  and transaction that reads it, so two workers cannot take the same row.
-* **A lease, not a lock.** A claimed job is leased for a bounded time. If the
-  container dies, the lease expires and the job returns to `queued` instead of
-  being stuck in `running` forever — the failure mode this exists to survive.
-* **Attempts are counted and capped.** A job that keeps failing becomes `dead`
-  with its last error kept, rather than retrying forever against someone
-  else's server.
-* **Backoff is exponential.** Retrying a crawl of a site that just returned 500
-  four times in a second is abuse, not resilience.
-* **Dedupe on open work only.** A partial unique index covers `queued` and
-  `running` rows, so the same audit cannot be queued twice at once but can be
+* Atomic claims. A job moves `queued -> running` under the same lock and
+  transaction that reads it, so two workers can't take the same row.
+* A lease, not a lock. A claimed job is leased for a bounded time; if the
+  container dies the lease expires and the job goes back to `queued` instead
+  of sitting in `running` forever.
+* Attempts are counted and capped. A job that keeps failing becomes `dead`
+  with its last error, instead of retrying forever against someone else's
+  server.
+* Exponential backoff, so a site that just returned 500 isn't hit four times
+  in a second.
+* Dedupe on open work only. A partial unique index covers `queued` and
+  `running` rows, so the same audit can't be queued twice at once but can be
   queued again tomorrow.
 
-On measurement, the same rule as everywhere else: `duration_ms` is wall time
-actually recorded between claim and finish, and it is `None` for a job that
-has not finished. `stats()` counts rows with `SELECT`, so a zero means zero
-rows, not "we did not look".
+`duration_ms` is wall time recorded between claim and finish, and None for a
+job that hasn't finished. `stats()` counts rows with SELECT, so zero means
+zero rows.
 
-**This is a single-process queue.** It is durable against restarts, not
-distributed. Two containers pointing at the same SQLite file over a network
-filesystem would be a different and much harder problem, and Titan runs one
-container. Said here so nobody assumes otherwise.
+This is a single-process queue: durable across restarts, not distributed. Two
+containers sharing one SQLite file over a network filesystem would be a much
+harder problem, and Titan runs one container.
 """
 
 from __future__ import annotations
@@ -52,19 +44,18 @@ DEAD = "dead"
 
 STATUSES = (QUEUED, RUNNING, DONE, FAILED, DEAD)
 
-# How long a claimed job may run before its lease expires and it is offered
-# again. Longer than the slowest handler (a full site audit with sitemap and
-# robots fetches) by a wide margin.
+# How long a claimed job may run before its lease expires and it's offered
+# again. Well above the slowest handler (a full site audit with sitemap and
+# robots fetches).
 LEASE_SECONDS = 300.0
 
-# Retry backoff: 30s, 60s, 120s, ... capped. A failing crawl must not become a
-# hot loop against a client's server.
+# Retry backoff: 30s, 60s, 120s, ... capped, so a failing crawl never becomes
+# a hot loop against a client's server.
 BACKOFF_BASE = 30.0
 BACKOFF_CAP = 3600.0
 
 # Finished rows are kept for a while so the founder screen can show what
-# happened, then trimmed — this container has 512MB and the queue must not
-# grow without bound.
+# happened, then trimmed - the container has 512MB.
 KEEP_FINISHED_SECONDS = 7 * 86400
 MAX_FINISHED_ROWS = 2000
 
@@ -73,11 +64,11 @@ _handlers: dict[str, Callable[[dict], Any]] = {}
 
 
 def _conn():
-    """The shared connection, opening it if the app has not already.
+    """The shared connection, opening it if the app hasn't already.
 
     `db.connect` returns the existing connection when the path matches, so
-    this is cheap to call on every operation and keeps the queue working in a
-    test that has pointed STATE_FILE at a temp directory.
+    this is cheap per operation and keeps the queue working in tests that
+    point STATE_FILE at a temp directory.
     """
     from .. import persistence
     from . import db
@@ -88,9 +79,9 @@ def _conn():
 def register(kind: str, handler: Callable[[dict], Any]) -> None:
     """Bind a job kind to the function that performs it.
 
-    Registration is separate from enqueueing on purpose: a job whose handler
-    has not been registered yet stays `queued` rather than failing, so a
-    deploy that adds the handler later picks up work already waiting.
+    Separate from enqueueing on purpose: a job whose handler isn't registered
+    yet stays `queued` rather than failing, so a later deploy that adds the
+    handler picks up work already waiting.
     """
     with _lock:
         _handlers[kind] = handler
@@ -131,11 +122,10 @@ def enqueue(kind: str, payload: Optional[dict] = None, *,
 
 # ----------------------------------------------------------------- claiming --
 def reclaim_expired(now: Optional[float] = None) -> int:
-    """Return jobs whose lease expired to the queue. The restart-survival path.
+    """Return jobs whose lease expired to the queue.
 
-    A container killed mid-job leaves a `running` row nobody will ever finish.
-    Without this the queue is durable in name only: the row survives and the
-    work never happens.
+    A container killed mid-job leaves a `running` row nobody will finish;
+    without this the row survives but the work never happens.
     """
     now = time.time() if now is None else now
     conn = _conn()
@@ -151,8 +141,8 @@ def reclaim_expired(now: Optional[float] = None) -> int:
 def claim(worker: str = "heartbeat", now: Optional[float] = None) -> Optional[dict]:
     """Atomically take the next due job, or None.
 
-    The SELECT and the UPDATE are in one transaction under one lock, and the
-    UPDATE re-checks the status, so a row cannot be claimed twice.
+    The SELECT and UPDATE share one transaction and lock, and the UPDATE
+    re-checks the status, so a row can't be claimed twice.
     """
     now = time.time() if now is None else now
     conn = _conn()
@@ -229,9 +219,8 @@ def run_one(worker: str = "heartbeat") -> Optional[dict]:
         return None
     handler = _handlers.get(job["kind"])
     if handler is None:
-        # Not a failure — the handler may arrive in the next deploy. Put it
-        # back with a delay rather than burning an attempt on a missing
-        # function.
+        # Not a failure - the handler may arrive in the next deploy. Requeue it with a
+        # delay rather than burn an attempt.
         _requeue_unhandled(job["id"])
         return {**job, "status": QUEUED, "note": "no handler registered yet"}
     try:
@@ -254,8 +243,8 @@ def _requeue_unhandled(job_id: str) -> None:
 def drain(limit: int = 5, worker: str = "heartbeat") -> dict:
     """Run up to `limit` jobs. The heartbeat's entry point.
 
-    Bounded on purpose: the heartbeat ticks every few seconds and must not be
-    monopolised by a deep backlog.
+    Bounded so a deep backlog can't monopolise the heartbeat, which ticks
+    every few seconds.
     """
     reclaimed = reclaim_expired()
     ran, done, failed = 0, 0, 0
@@ -316,15 +305,15 @@ def recent(limit: int = 50, kind: str = "", status: str = "") -> list[dict]:
 
 
 def stats() -> dict:
-    """Real counts from real rows. A zero here means zero rows."""
+    """Counts from actual rows. Zero means zero rows."""
     from . import db
     conn = _conn()
     counts = {s: 0 for s in STATUSES}
     for r in conn.execute("SELECT status, COUNT(*) AS n FROM jobs "
                           "GROUP BY status").fetchall():
         counts[r["status"]] = int(r["n"])
-    # Only over jobs that actually finished — an unfinished job has no
-    # duration, and averaging it in as zero would understate every number.
+    # Only over jobs that finished - an unfinished job has no duration, and
+    # counting it as zero would drag every average down.
     row = conn.execute(
         "SELECT COUNT(*) AS n, AVG(duration_ms) AS avg_ms, MAX(duration_ms) AS max_ms "
         "FROM jobs WHERE duration_ms IS NOT NULL").fetchone()
@@ -340,7 +329,7 @@ def stats() -> dict:
         "pending": counts[QUEUED] + counts[RUNNING],
         "handlers": registered(),
         "measured_runs": measured,
-        # None, not 0.0 — "no job has finished yet" is not "jobs take no time".
+        # None, not 0.0: "no job has finished yet" isn't "jobs take no time".
         "avg_duration_ms": round(row["avg_ms"], 1) if measured else None,
         "max_duration_ms": round(row["max_ms"], 1) if measured else None,
         "oldest_pending_age_s": (round(time.time() - oldest["t"], 1)
@@ -356,7 +345,7 @@ def stats() -> dict:
 
 # ------------------------------------------------------------ housekeeping --
 def trim(now: Optional[float] = None) -> int:
-    """Drop old finished rows. This container has 512MB."""
+    """Drop old finished rows. The container has 512MB."""
     now = time.time() if now is None else now
     conn = _conn()
     with _lock, conn:

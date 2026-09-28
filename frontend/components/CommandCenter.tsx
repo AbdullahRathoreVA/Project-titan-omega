@@ -71,14 +71,14 @@ import { Universe } from "./Universe";
 import { chime, speak, speakPremium, tap, unlockAudio } from "@/lib/sound";
 import { isGuest } from "@/lib/guest";
 
-// Global 3D backdrop — behind the whole app, never blocks clicks.
+// Global 3D backdrop behind the whole app; never blocks clicks.
 const Background3D = dynamic(() => import("./Background3D"), { ssr: false });
 
 const POLL_MS = 5000;
 
 // Tabs a subscriber's cockpit shows: those whose routes are open to customers
-// on the backend (core/cockpit_scope.ALLOWED). Each later phase adds its tab
-// here together with its routes there.
+// on the backend (core/cockpit_scope.ALLOWED). A new tab is added here
+// together with its routes there.
 const CUSTOMER_TABS = new Set<string>([
   "universe", "dashboard", "mission", "clients", "seo", "crm", "voice",
   "finance", "customers", "executive", "graph", "city", "warroom", "apis",
@@ -109,7 +109,7 @@ export function CommandCenter() {
   // the card asks them to add it instead. Read once, and again after a refresh.
   const [hasBusiness, setHasBusiness] = useState(false);
   const hasBusinessRef = useRef(false);
-  // Increments whenever real feed activity arrives → fires comets in the Universe.
+  // Increments whenever new feed activity arrives; fires comets in the Universe.
   const [pulse, setPulse] = useState(0);
 
   // The demo refuses every write. Most screens treat a refused write as
@@ -129,9 +129,9 @@ export function CommandCenter() {
     };
   }, []);
 
-  // Cinematic boot: plays on EVERY open/reload (founder's preference) — the
-  // dashboard loads underneath it, and SKIP is always available. When the boot
-  // lifts, Titan speaks a live status briefing (real numbers, not a script).
+  // Boot sequence: plays on every open/reload while the dashboard loads
+  // underneath it, and SKIP is always available. When it finishes, Titan speaks
+  // a live status briefing with real numbers.
   const [boot, setBoot] = useState<"boot" | "done">("boot");
   const statusRef = useRef<EmpireStatus | null>(null);
   const finishBoot = useCallback(() => {
@@ -161,8 +161,8 @@ export function CommandCenter() {
     else void speakPremium(line, () => speak(line));
   }, []);
 
-  // Belt-and-suspenders: unlock audio on the first interaction anywhere, so the
-  // voice assistant works even if the boot was skipped without a tap.
+  // Also unlock audio on the first interaction anywhere, so the voice assistant
+  // works even if the boot was skipped without a tap.
   useEffect(() => {
     const unlock = () => unlockAudio();
     window.addEventListener("pointerdown", unlock, { once: true });
@@ -173,8 +173,8 @@ export function CommandCenter() {
     };
   }, []);
 
-  // Live SSE stream — makes the dashboard move the instant it opens. It
-  // streams the founder's Store, so a subscriber's cockpit polls instead.
+  // Live SSE stream, so the dashboard updates as soon as it opens. It streams
+  // the founder's Store, so a subscriber's cockpit polls instead.
   const { frame, live } = useTitanStream(!customer);
 
   const refresh = useCallback(async () => {
@@ -187,10 +187,10 @@ export function CommandCenter() {
     }
     setOnline(isOnline);
 
-    // Three feeds are the founder's alone: his connected assets, his AI
-    // provider and his social profile links. A subscriber's cockpit does not
-    // ask for them at all. Their next post is asked for only once they have a
-    // business to promote - drafting one spends their AI calls.
+    // Three feeds are the founder's alone: connected assets, the AI provider and
+    // social profile links, so a subscriber's cockpit doesn't request them. Their
+    // next post is only requested once they have a business to promote, since
+    // drafting one spends their AI calls.
     if (customer) {
       try {
         const r = await adminFetch("/admin/clients");
@@ -478,18 +478,13 @@ export function CommandCenter() {
               ["clients", "Clients", false],
               ["seo", "SEO", false],
               ["executive", "Executive", true],
-              // Founder-only, and it must stay that way: every row is a real
-              // customer's email address and there is no demo-safe substitute
-              // for a customer list. The backend refuses a guest regardless
-              // (/api/founder is registered sensitive) — this only stops the
-              // tab appearing and producing a 403 nobody can explain.
+              // Founder-only: every row is a real customer's email address and there's
+              // no demo-safe version of a customer list. The backend refuses a guest
+              // anyway (/api/founder is registered sensitive); this just keeps the tab
+              // from showing up and producing a confusing 403.
               ["customers", "Customers", true],
-              // Was founder-only because /api/voice is guest-blocked and had
-              // no demo substitute, so the tab could only have produced a wall
-              // of 403s. It has one now (demo_data serves sample sessions
-              // through the real summariser), so the demo can show the feature
-              // prospects are actually being sold. Transcripts stay founder-
-              // only — the substitute covers /live and /sessions, nothing else.
+              // Shown in the demo too: demo_data serves sample sessions for /live and
+              // /sessions through the real summariser. Transcripts stay founder-only.
               ["voice", "Voice", false],
               ["graph", "Graph", false],
               ["city", "AI City", false],
@@ -509,10 +504,9 @@ export function CommandCenter() {
                   tap();
                   setView(v);
                 }}
-                // shrink-0 or flex squeezes 14 tabs into unreadable slivers
-                // instead of letting them scroll. min-h-11 is the 44px touch
-                // target; the old py-1.5/text-xs measured 17px tall, which is
-                // a thumb-miss every time. Desktop keeps the compact size.
+                // shrink-0 so the tabs scroll instead of being squeezed into unreadable
+                // slivers. min-h-11 is the 44px touch target. Desktop keeps the compact
+                // size.
                 className={`min-h-11 shrink-0 snap-start whitespace-nowrap rounded-lg border px-4 text-sm transition-colors sm:min-h-0 sm:px-3 sm:py-1.5 sm:text-xs ${
                   view === v
                     ? "border-hud-cyan/50 bg-hud-cyan/10 text-hud-cyan"

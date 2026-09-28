@@ -1,16 +1,15 @@
-"""Voice agent OS API — sessions, transcripts, tool timeline, approvals, replay.
+"""Voice agent API: sessions, transcripts, tool timeline, approvals, replay.
 
-Every endpoint here writes or reads the store in `core/voice_sessions.py`, which
-is the only source the 3D Voice Agents screen is allowed to render. That is
-deliberate: the dashboard brief forbids decorative state, so there is exactly
-one path from "something happened" to "something is drawn".
+Every endpoint reads or writes the store in `core/voice_sessions.py`, which is
+the only source the 3D Voice Agents screen renders from, so nothing on it is
+decorative.
 
-The whole prefix is registered in `demo_data._SENSITIVE_PREFIXES`. Transcripts
-are the most personal data Titan holds and there is no demo-safe version.
+The whole prefix is in `demo_data._SENSITIVE_PREFIXES`: transcripts are the
+most personal data Titan holds and there's no demo-safe version.
 
-A subscriber reaches the session routes through /api/me/voice/*, and every
-route passes `_owner()` down, so they only ever see and touch their own
-sessions. The founder's /api/voice sees only the founder's.
+Subscribers reach the session routes through /api/me/voice/*. Every route
+passes `_owner()` down, so they only see and act on their own sessions; the
+founder's /api/voice only sees the founder's.
 """
 
 from __future__ import annotations
@@ -72,7 +71,7 @@ class EscalateIn(BaseModel):
 
 @router.get("/live")
 def live() -> dict:
-    """What is happening right now. The 3D screen polls this."""
+    """What's happening right now. The 3D screen polls this."""
     return vs.live(account=_owner())
 
 
@@ -109,8 +108,8 @@ def change_state(sid: str, req: StateIn) -> dict:
     except KeyError:
         raise HTTPException(status_code=404, detail="No such session")
     except vs.TransitionError as e:
-        # 409, not 400: the request is well-formed, the session is simply not
-        # in a state from which this move is legal.
+        # 409, not 400: the request is well-formed, but the session isn't in a state
+        # where this move is allowed.
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -140,8 +139,8 @@ def record_tool(sid: str, req: ToolIn) -> dict:
 
 @router.post("/sessions/{sid}/tool/{call_id}/approve")
 def approve(sid: str, call_id: str, req: ApproveIn) -> dict:
-    # A subscriber approves as themselves. The name in the body is only
-    # trusted from the founder, who is the one person already signed in here.
+    # A subscriber approves as themselves. The name in the body is only trusted
+    # from the founder.
     owner = _owner()
     approver = owner or req.approver
     try:
@@ -162,7 +161,7 @@ def finish(sid: str, call_id: str, req: FinishIn) -> dict:
     except KeyError:
         raise HTTPException(status_code=404, detail="No such session or call")
     except ValueError as e:
-        # An unapproved sensitive call cannot be reported as executed.
+        # An unapproved sensitive call can't be reported as executed.
         raise HTTPException(status_code=403, detail=str(e))
 
 
@@ -200,11 +199,9 @@ class KnowledgeAsk(BaseModel):
 def knowledge_ask(req: KnowledgeAsk) -> dict:
     """Answer a caller's question from that business's own website.
 
-    This is what turns the voice layer into a receptionist rather than a
-    chatbot: every answer is retrieved from pages Titan actually crawled, and
-    every answer carries the URL it came from. When the site does not cover
-    the question, it says so — inventing an opening time creates a customer
-    who turns up to a closed door and blames the business.
+    Every answer comes from pages Titan actually crawled and carries the URL it
+    came from. When the site doesn't cover the question it says so - an
+    invented opening time sends a customer to a closed door.
     """
     from ..core import knowledge
     return knowledge.answer(req.client_id, req.question, req.lang)
@@ -212,7 +209,7 @@ def knowledge_ask(req: KnowledgeAsk) -> dict:
 
 @router.get("/knowledge/{client_id}")
 def knowledge_stats(client_id: str) -> dict:
-    """What Titan actually knows about this business, and from which pages."""
+    """What Titan knows about this business, and from which pages."""
     from ..core import knowledge
     return knowledge.stats(client_id)
 
@@ -221,8 +218,8 @@ def knowledge_stats(client_id: str) -> dict:
 def knowledge_backfill(client_id: str = "") -> dict:
     """Embed passages indexed before the model finished downloading.
 
-    The first pages are almost always indexed while the ~130 MB model is still
-    arriving, so without this a client would stay keyword-only until its next
+    The first pages are usually indexed while the ~130 MB model is still
+    downloading; without this a client would stay keyword-only until its next
     audit.
     """
     from ..core import knowledge
@@ -231,11 +228,11 @@ def knowledge_backfill(client_id: str = "") -> dict:
 
 @router.get("/retrieval")
 def retrieval_status() -> dict:
-    """Which ranking is actually running right now, and why.
+    """Which ranking is running right now, and why.
 
-    Semantic search is an upgrade, not a dependency — this reports honestly
-    when it is still downloading or could not start, instead of letting the
-    dashboard imply a capability the container does not have.
+    Semantic search is an upgrade, not a dependency. This reports when it's
+    still downloading or couldn't start, so the dashboard doesn't claim a
+    capability the container doesn't have.
     """
     from ..core import embeddings
     return embeddings.status()
@@ -243,17 +240,16 @@ def retrieval_status() -> dict:
 
 @router.get("/capabilities")
 def capabilities() -> dict:
-    """What the voice layer can actually do on this deployment, right now.
+    """What the voice layer can do on this deployment right now.
 
-    Deliberately reports configuration rather than intent: a screen that lists
-    "phone" as a channel while no telephony credential exists is the kind of
-    claim that gets discovered in front of a customer.
+    Reports configuration, not intent: listing "phone" as a channel with no
+    telephony credentials would be a false claim.
     """
     import os
     from ..core import tools as tool_layer
 
-    # A subscriber's cockpit never runs on the founder's keys, so for them
-    # every keyed provider is reported as not ready - which is the truth.
+    # A subscriber's cockpit never uses the founder's keys, so for them every
+    # keyed provider is reported as not ready.
     customer = cockpit_scope.is_customer()
 
     def has(*names: str) -> bool:

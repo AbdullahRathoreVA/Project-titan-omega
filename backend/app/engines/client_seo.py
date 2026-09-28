@@ -1,22 +1,20 @@
-"""SEO audit for a CLIENT's website — the thing they actually pay for.
+"""SEO audit for a client's website - the core of what clients pay for.
 
-Aether's seo.py audits pages we generated ourselves, so it can assume the
-structure. This audits a site we did not build and cannot control, over the
-public internet, with nothing but an HTTP GET.
+This audits a site we didn't build and don't control, over the public
+internet, with nothing but HTTP GETs.
 
-Built from measured July 2026 ranking evidence:
+Based on July 2026 ranking evidence:
   - only ~17% of the top 10M sites implement schema, and schema is now core
-    AI-citation infrastructure (AI Overviews, ChatGPT Search, Perplexity)
-  - 40-60% of pages on a typical site have zero inbound internal links
+    to AI citations (AI Overviews, ChatGPT Search, Perplexity)
+  - 40-60% of pages on a typical site have no inbound internal links
   - the strongest single AI-search factor is answering the question in the
     first 1-2 sentences
   - for a local business, proximity (~55%), Google Business Profile (~32%) and
-    reviews (16-20%) dominate — which is why a restaurant audit weights
+    reviews (16-20%) dominate, which is why a restaurant audit weights
     LocalBusiness schema, NAP and hours far above generic on-page tweaks
 
-Every finding carries a fix the client (or Abdullah) can actually action. No
-score is invented: if something cannot be checked over HTTP, it is reported as
-"needs manual check" rather than guessed.
+Every finding comes with a fix someone can act on. Nothing is guessed: what
+can't be checked over HTTP is reported as "needs manual check".
 """
 
 from __future__ import annotations
@@ -32,11 +30,10 @@ from . import compliance, local_seo, verticals
 
 TIMEOUT = 15
 
-# A normal browser UA. This audit only ever runs against a site the client has
-# hired us to audit — their own — and a bot-labelled UA gets 403'd by ordinary
-# WAF rules (measured: mcdonalds.com.pk returns 403, pizzahut.com.pk drops the
-# connection). Every commercial SEO crawler does the same for the same reason.
-# We still send one request per page and honour robots.txt below.
+# A normal browser UA. This only runs against a site the client asked us to
+# audit, and a bot-labelled UA gets blocked by ordinary WAF rules (e.g.
+# mcdonalds.com.pk returns 403). Commercial SEO crawlers do the same. We still
+# send one request per page and honour robots.txt below.
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
@@ -51,11 +48,11 @@ WEIGHTS = {
 def _fetch(url: str) -> tuple[Optional[str], Optional[str], int]:
     """Return (html, error, status).
 
-    Every URL here came from a stranger typing it into the signup form, so it
-    goes through the SSRF guard rather than straight to urllib. Without that,
+    Every URL here was typed into the signup form by a stranger, so it goes
+    through the SSRF guard rather than straight to urllib. Otherwise
     `http://169.254.169.254/` or `http://127.0.0.1:7860/api/admin/clients`
-    would be fetched from inside Titan's own trust boundary and returned as an
-    "audit". See core/safe_fetch.py.
+    could be fetched from inside Titan and returned as an "audit". See
+    core/safe_fetch.py.
     """
     from ..core import safe_fetch
     return safe_fetch.fetch(url, user_agent=UA, timeout=TIMEOUT)
@@ -67,32 +64,21 @@ def _text(pattern: str, html: str, group: int = 1) -> str:
 
 
 # --------------------------------------------------------------------- NAP --
-# These two checks used to run against the raw HTML, and both produced passes
-# that had never been observed. Measured on Titan's own /compliance/de:
-#
-#   phone   matched "1781791509496" inside the Cloudflare analytics beacon URL
-#           that Cloudflare injects at the edge. Every site behind Cloudflare
-#           therefore "had a phone number".
-#   address matched the word "block" in ordinary prose.
-#
-# So the page scored 100/A with neither a phone number nor an address on it.
-# That is the exact failure this codebase exists to avoid — a reported pass
-# nobody measured — and it was being served to paying clients, telling them
-# their contact details were fine when the page had none.
-#
-# The root cause of both is reading markup instead of what a human sees. The
-# checks now run on visible text, with script, style, comments and every tag
-# attribute removed first.
+# These checks run on visible text, with scripts, styles, comments and tag
+# attributes removed first. Against raw HTML they gave false passes: the phone
+# check matched a number inside Cloudflare's injected analytics beacon URL (so
+# every site behind Cloudflare "had a phone number"), and the address check
+# matched the word "block" in ordinary prose.
 
 _ADDRESS_WORDS = (r"address|street|str\.|straße|strasse|road|avenue|lane|"
                   r"block|sector|plaza|suite|floor|building|p\.?o\.? box")
 
 
 def _visible_text(html: str) -> str:
-    """What a reader actually sees: no script, style, comments or attributes.
+    """What a reader actually sees: no scripts, styles, comments or attributes.
 
-    A URL in a src attribute is not page content, and treating it as such is
-    how a CDN's cache-busting hash became a phone number.
+    A URL in a src attribute isn't page content; treating it as such can turn
+    a CDN cache-busting hash into a "phone number".
     """
     out = re.sub(r"<(script|style|template)\b.*?</\1>", " ", html,
                  flags=re.I | re.S)
@@ -104,8 +90,8 @@ def _visible_text(html: str) -> str:
 def _has_phone(html: str) -> bool:
     """A tel: link, or something in the visible text shaped like a phone number.
 
-    Length is bounded at both ends: a real number carries 7 to 15 digits (E.164
-    caps at 15), which excludes both a 4-digit year and a 13-digit cache hash.
+    Length is bounded at both ends: a real number has 7 to 15 digits (E.164
+    caps at 15), which rules out a 4-digit year and a 13-digit cache hash.
     """
     if re.search(r'href=["\']tel:\s*[+\d]', html, re.I):
         return True
@@ -116,12 +102,11 @@ def _has_phone(html: str) -> bool:
 
 
 def _has_address(html: str) -> bool:
-    """An <address> element, or an address word standing next to a number.
+    """An <address> element, or an address word next to a number.
 
-    The bare word test is what let "block" pass. A real street address pairs
-    the word with a number — "Block 5", "12 Main Street", "Sector G-9" — and
-    requiring that pairing removes the prose match without losing the South
-    Asian and German forms the wording was chosen to catch.
+    A bare word would match prose ("block"). A real street address pairs the
+    word with a number - "Block 5", "12 Main Street", "Sector G-9" - which
+    keeps the South Asian and German forms without the false matches.
     """
     if re.search(r"<address\b", html, re.I):
         return True
@@ -129,10 +114,9 @@ def _has_address(html: str) -> bool:
     # "Block 5", "Sector G-9" — the word, then a house/plot number, optionally
     # letter-prefixed as Islamabad sectors are.
     word_then_number = rf"(?:{_ADDRESS_WORDS})[\s,.\-]*[A-Za-z]?[\s\-]?\d"
-    # "12 Main Street", "3 Musterweg" — the number, then at most two words,
-    # then the address word. The number must be followed by whitespace, so
-    # "Founded 2019. We will address that" does not match: the full stop breaks
-    # it before the window opens.
+    # "12 Main Street", "3 Musterweg" - the number, then at most two words, then
+    # the address word. The number must be followed by whitespace, so "Founded
+    # 2019. We will address that" doesn't match: the full stop breaks it.
     number_then_word = (rf"\b\d{{1,5}}\s+(?:[A-Za-zÄÖÜäöüß'.-]+\s+){{0,2}}"
                         rf"(?:{_ADDRESS_WORDS})")
     if re.search(word_then_number, text, re.I) or \
@@ -151,9 +135,9 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    # Uses a real browser when the plain GET looks like a shell AND a renderer
-    # is configured; otherwise it reports that it could not. See core/render.py
-    # — the point is that `rendering` always says which happened.
+    # Uses a real browser when the plain GET looks like a shell and a renderer is
+    # configured; otherwise it reports that it couldn't. See core/render.py -
+    # `rendering` always says which happened.
     from ..core import render as _render
     html, err, status, rendering = _render.fetch_best(
         url, user_agent=UA, timeout=TIMEOUT, fetcher=_fetch)
@@ -172,11 +156,10 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     parsed = urllib.parse.urlparse(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
 
-    # A page that builds itself in the browser was, until now, audited as if
-    # the shell were the site: "no H1", "no schema", "thin content", all
-    # reported with total confidence and all describing a <div id="root">.
-    # A confident wrong finding is indistinguishable from a right one, so this
-    # goes at the TOP of the list and the result carries reliable=False.
+    # A page that builds itself in the browser can't be audited from the shell
+    # ("no H1", "no schema", "thin content" would all describe a
+    # <div id="root">). So this goes at the top of the list and the result
+    # carries reliable=False.
     unreliable = rendering.get("reliable") is False
     if unreliable:
         findings.append({
@@ -203,19 +186,17 @@ def audit(url: str, *, business_name: str = "", city: str = "",
                     "invisible to them even when Google can read it."),
         })
 
-    # Every client-facing string below is a function of the trade. Telling a
-    # law firm that "the food photography is the product" is not a credible
-    # deliverable, and this audit is what the client actually pays for.
+    # Every client-facing string below depends on the trade; a law firm shouldn't
+    # be told "the food photography is the product".
     vert = verticals.profile(verticals.detect(html, industry))
 
     def add(fid, severity, title, detail, fix, key=None, ok=False, na=False):
         """Record a check.
 
-        `na` marks a check that does not apply to this page at all — not a
-        pass and not a failure. It is excluded from BOTH sides of the score,
-        because counting it either way is a lie: a pass would claim the site
-        did something well that it never did, and a failure would invent a
-        defect. See the images_alt check for why this exists.
+        `na` marks a check that doesn't apply to this page at all - neither a pass
+        nor a failure. It's left out of both sides of the score: a pass would
+        credit the site for something it never did, and a failure would invent a
+        defect. See the images_alt check.
         """
         if key:
             earned[key] = "na" if na else ok
@@ -279,9 +260,8 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     local_types = {"LocalBusiness", "Restaurant", "FoodEstablishment",
                    "CafeOrCoffeeShop", "BarOrPub", "Store", "Organization"}
     has_local = bool(local_types & set(types))
-    # A software product is not served from a place. Demanding a street
-    # address, geo coordinates and opening hours from a SaaS is wrong advice —
-    # Titan gave itself exactly that when it first audited its own site.
+    # A software product isn't served from a place; asking a SaaS for a street
+    # address, geo coordinates and opening hours would be wrong advice.
     if vert.local_business:
         add("local_business", "critical",
             f"No LocalBusiness / {vert.schema_type} schema",
@@ -308,9 +288,9 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     # ------------------------------------------------------------- NAP ----
     has_phone = _has_phone(html)
     has_addr = _has_address(html)
-    # Contact details matter for every business, but WHY differs. Telling a
-    # wholesaler to match its Google Business Profile is advice for a shop, and
-    # a B2B buyer is not standing outside the building.
+    # Contact details matter for every business, but for different reasons.
+    # "Match your Google Business Profile" is advice for a shop; a B2B buyer
+    # isn't standing outside the building.
     if vert.local_business:
         add("nap", "high", "Name / address / phone not clearly on the page",
             f"phone detected: {has_phone}, address wording detected: "
@@ -332,11 +312,8 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     imgs = re.findall(r"<img\b[^>]*>", html, re.I)
     no_alt = [i for i in imgs
               if not re.search(r'\balt\s*=\s*["\'][^"\']+["\']', i, re.I)]
-    # A page with no images cannot have images missing alt text. The old rule
-    # was `ok=bool(imgs) and ...`, which failed every image-free page and
-    # reported "0 of 0 images have no alt text" — a defect that does not
-    # exist, on a site Titan then charges to fix. Found on Titan's own
-    # homepage, which is CSS and SVG throughout and was losing 6 points for it.
+    # A page with no images can't have images missing alt text, so it's marked
+    # not applicable rather than failed ("0 of 0 images have no alt text").
     add("images_alt", "medium", "Images missing alt text",
         f"{len(no_alt)} of {len(imgs)} images have no alt text. For a "
         f"{vert.label.lower()} {vert.asset_noun} is the product — unlabelled "
@@ -374,11 +351,8 @@ def audit(url: str, *, business_name: str = "", city: str = "",
         key="og", ok=og >= 3)
 
     # ------------------------------------------------- site-level checks ----
-    # A sitemap INDEX (<sitemapindex>) is just as valid as a flat <urlset> and
-    # is what larger sites actually serve. Accepting only <urlset> reported
-    # "No sitemap.xml" for vapiano.de while quoting its own HTTP 200 in the same
-    # sentence — a false positive in a client-facing report, which is worse than
-    # missing the finding entirely.
+    # A sitemap index (<sitemapindex>) is as valid as a flat <urlset> and is what
+    # larger sites serve, so both are accepted.
     sm, _, sm_status = _fetch(f"{origin}/sitemap.xml")
     sm_valid = bool(sm) and ("<urlset" in sm or "<sitemapindex" in sm)
     add("sitemap", "medium", "No valid sitemap.xml",
@@ -397,15 +371,13 @@ def audit(url: str, *, business_name: str = "", city: str = "",
         key="robots", ok=bool(rb))
 
     # ------------------------------------------------------- compliance ----
-    # Legal exposure is reported ALONGSIDE SEO, not folded into the SEO score.
-    # A missing Impressum is not "8 points off" - it is a fine and an open
-    # invitation for a competitor Abmahnung, and it must not be averaged away.
-    # Weighted local scoring on published 2026 ranking factors. Kept separate
-    # from the technical score: a restaurant can have perfect meta tags and
-    # still be invisible locally, and averaging the two would hide that.
-    # Local ranking factors are meaningless for a business without a location.
-    # Scoring a SaaS on Google Business Profile and NAP consistency produces a
-    # low number that means nothing and buries the findings that do matter.
+    # Legal exposure is reported alongside SEO, not folded into the SEO score: a
+    # missing Impressum means a fine and a possible competitor Abmahnung, and must
+    # not be averaged away. Local scoring (published 2026 ranking factors) is kept
+    # separate from the technical score too, since perfect meta tags don't make a
+    # restaurant visible locally. Businesses without a location skip local scoring
+    # entirely - scoring a SaaS on Google Business Profile and NAP gives a
+    # meaningless low number.
     local = (local_seo.analyse(html, business=business_name, city=city,
                                industry=industry, url=url)
              if vert.local_business else
@@ -427,10 +399,9 @@ def audit(url: str, *, business_name: str = "", city: str = "",
     findings.extend(legal["findings"])
 
     # ----------------------------------------------------------- score ----
-    # Checks marked not-applicable leave the denominator as well as the
-    # numerator, so a site is scored only on what could actually be judged.
-    # A check that never ran still counts against the score — silence is not
-    # the same as "does not apply".
+    # Not-applicable checks leave the denominator as well as the numerator, so a
+    # site is only scored on what could be judged. A check that never ran still
+    # counts against the score - silence isn't "doesn't apply".
     na_keys = {k for k, v in earned.items() if v == "na"}
     total = sum(w for k, w in WEIGHTS.items() if k not in na_keys)
     got = sum(w for k, w in WEIGHTS.items() if earned.get(k) is True)
@@ -438,9 +409,9 @@ def audit(url: str, *, business_name: str = "", city: str = "",
 
     order = {"legal-critical": 0, "critical": 1, "high": 2,
              "medium": 3, "low": 4}
-    # "I cannot see this page properly" outranks everything, including a legal
-    # finding — because if it is true, every other finding in the list may be
-    # about a shell rather than about the site.
+    # "I can't see this page properly" outranks everything, including legal
+    # findings: if it's true, every other finding may be about a shell rather
+    # than the site.
     findings.sort(key=lambda f: (0 if f["id"] == "client_rendered" else 1,
                                  order.get(f["severity"], 9)))
 
@@ -451,18 +422,17 @@ def audit(url: str, *, business_name: str = "", city: str = "",
         "score": score,
         "grade": ("A" if score >= 90 else "B" if score >= 75 else
                   "C" if score >= 60 else "D" if score >= 40 else "F"),
-        # How the HTML was obtained, always. A caller can never be left
-        # guessing whether JavaScript ran.
+        # How the HTML was obtained, always, so the caller knows whether JavaScript
+        # ran.
         "rendering": rendering,
-        # False when the page renders in the browser and Titan could not.
-        # The score is still a real measurement OF WHAT WAS SERVED, but it is
-        # not a measurement of the page a visitor sees, and presenting it as
-        # one would be the exact failure this codebase exists to avoid.
+        # False when the page renders in the browser and Titan couldn't render it.
+        # The score is still a real measurement of what was served, but not of the
+        # page a visitor sees.
         "reliable": not unreliable,
         "passed": [k for k, v in earned.items() if v is True],
         "failed": [k for k, v in earned.items() if v is False],
-        # Reported separately so a reader can see what was skipped and why the
-        # denominator is smaller, rather than wondering where a check went.
+        # Listed separately so a reader can see what was skipped and why the
+        # denominator is smaller.
         "not_applicable": sorted(na_keys),
         "schema_types": sorted(set(types)),
         "findings": findings,
@@ -490,12 +460,10 @@ def audit(url: str, *, business_name: str = "", city: str = "",
 def suggested_schema(business_name: str, city: str, website: str,
                      industry: str = "", phone: str = "",
                      country_code: str = "DE") -> str:
-    """A ready-to-paste JSON-LD block — the highest-value single fix.
+    """A ready-to-paste JSON-LD block - the most valuable single fix.
 
-    Emits the correct Schema.org SUBTYPE for the trade. This previously always
-    emitted Restaurant with servesCuisine and acceptsReservations, so pasting it
-    onto a law firm's site declared the firm a restaurant — worse than having no
-    schema at all, because search engines believe it.
+    Emits the correct Schema.org subtype for the trade (a law firm must never
+    be declared a Restaurant; search engines believe what schema says).
     """
     vert = verticals.profile(verticals.detect("", industry))
     node = {
@@ -518,7 +486,7 @@ def suggested_schema(business_name: str, city: str, website: str,
             "opens": "09:00", "closes": "18:00",
         }],
     }
-    # Subtype-specific properties, only where they are actually meaningful.
+    # Subtype-specific properties, only where they're meaningful.
     if vert.key in ("restaurant", "cafe", "bar", "bakery"):
         node["servesCuisine"] = "<cuisine>"
         node["openingHoursSpecification"][0].update(opens="12:00", closes="23:00")

@@ -1,23 +1,16 @@
-"""Actual posts for a client — the thing they are paying for.
+"""Social posts for a client.
 
-brand_playbook says WHAT to post and why. This writes the posts.
+brand_playbook decides what to post and why; this writes the captions, under
+rules taken from how premium brands actually post:
 
-Every caption is generated against constraints taken from measured behaviour of
-the brands themselves, not from marketing advice:
+- Under ~15 words.
+- No emoji stacks, "LINK IN BIO!!" or discount language, which undermine
+  premium positioning.
+- Scarcity rather than urgency ("six weeks only", not "HURRY 50% OFF").
+- In the client's market language (a Berlin restaurant posts in German).
 
-  - Under ~15 words. The luxury accounts do not write essays under a photo.
-  - No emoji stacks, no "LINK IN BIO!!", no discount language. Discount-led
-    posting is the fastest way to destroy premium positioning, and none of the
-    seven brands measured does any of it.
-  - Scarcity, never urgency: "six weeks only" reads as desirable, "HURRY 50%
-    OFF" reads as desperate.
-  - Written in the client's own market language (a Berlin restaurant posts in
-    German), because their customers are local.
-
-Nothing is auto-published. Posts land in a queue the client or Abdullah
-approves, for the same reason Aether never auto-posts: automated posting through
-unofficial endpoints is how accounts get banned, and a banned account ends the
-service the client is paying for.
+Nothing is published automatically. Posts go to a queue for approval, since
+automated posting through unofficial routes gets accounts banned.
 """
 
 from __future__ import annotations
@@ -44,8 +37,8 @@ SYSTEM = (
     "ONLY in that language."
 )
 
-# Deterministic fallbacks, used when no model is reachable. Deliberately plain:
-# a weak caption that obeys the rules beats a florid one that breaks them.
+# Deterministic fallbacks for when no model is reachable. Plain on purpose:
+# a simple caption that follows the rules beats a fancy one that breaks them.
 FALLBACK = {
     "craft": {
         "en": "{dish}. Made this morning.",
@@ -86,18 +79,18 @@ BANNED = [
 
 
 def market_language(country: str) -> str:
-    """The language the client's own CUSTOMERS actually search and read in."""
+    """The language the client's customers search and read in."""
     return {"Germany": "de", "Austria": "de", "Switzerland": "de",
             "France": "fr", "Italy": "it", "Spain": "es",
             "Netherlands": "nl"}.get(country or "", "en")
 
 
-# Kept for callers that used the old name.
+# Old name, kept for existing callers.
 language_for = market_language
 
 
 def _violates(caption: str) -> Optional[str]:
-    """Return the rule broken, or None. Guards against a chatty model."""
+    """Return the rule a caption breaks, or None. Guards against a chatty model."""
     low = caption.lower()
     for b in BANNED:
         if b in low:
@@ -109,9 +102,8 @@ def _violates(caption: str) -> Optional[str]:
     return None
 
 
-# Placeholder defaults must be localised too. Interpolating an English default
-# into a German template produced "our head chef kocht dieses Gericht seit elf
-# Jahren" — a mixed-language caption that would embarrass the client publicly.
+# Placeholder defaults need localising too, or a German template ends up with
+# an English phrase in the middle.
 DEFAULTS = {
     "de": {"dish": "Der Teller des Tages", "item": "Jetzt in der Saison",
            "who": "unser Küchenchef"},
@@ -131,7 +123,7 @@ DEFAULTS = {
 def _fallback(pillar: str, lang: str, ctx: dict) -> str:
     tpl = FALLBACK.get(pillar, FALLBACK["craft"])
     text = tpl.get(lang) or tpl["en"]
-    # Fall back to the SAME language the template is in, not to English.
+    # Fall back to the template's own language, not to English.
     used_lang = lang if lang in tpl else "en"
     d = DEFAULTS.get(used_lang, DEFAULTS["en"])
     return text.format(
@@ -162,7 +154,7 @@ def write_caption(pillar: str, *, business: str, cuisine: str, city: str,
     source = "model"
     problem = _violates(text) if text else "empty"
     if problem:
-        # A caption that breaks positioning rules is worse than a plain one.
+        # A caption that breaks the positioning rules is worse than a plain one.
         text = _fallback(pillar, lang, ctx)
         source = f"fallback ({problem})"
 
@@ -182,14 +174,10 @@ def week_of_posts(client: dict, *, dishes: Optional[list[str]] = None,
                   lang: str = "en", with_market_language: bool = True) -> dict:
     """A full week of ready-to-post captions.
 
-    Defaults to ENGLISH so Abdullah can read, judge and edit every caption
-    before it goes out under a client's name — reviewing copy you cannot read
-    is not review.
-
-    When the client's customers speak something else, each post also carries a
-    `local` caption in that market language. A Berlin restaurant's diners search
-    and read in German, so posting only English would cost the client reach.
-    English is the working copy; local is what actually gets published.
+    Captions are in English so they can be reviewed before going out under a
+    client's name. When the client's customers speak another language, each post
+    also has a `local` caption in that language; English is the working copy and
+    `local` is what gets published.
     """
     business = client.get("business_name", "the restaurant")
     cuisine = client.get("industry") or "restaurant"

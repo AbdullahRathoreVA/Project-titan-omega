@@ -1,61 +1,46 @@
-"""Organisations. Several people, one account, different privileges.
+"""Organisations: several people sharing one account with different privileges.
 
-What this adds, and what it deliberately does not touch
-------------------------------------------------------
-Titan already had two of the three levels a SaaS needs:
+Existing levels:
 
-* ``core/billing.py`` — a **subscriber**: one email, one plan, one password.
-* ``core/clients.py`` — the **businesses** that subscriber manages.
-* ``core/tenancy.py`` — the rule that one may not read the other's.
+* ``core/billing.py`` - a subscriber: one email, one plan, one password.
+* ``core/clients.py`` - the businesses that subscriber manages.
+* ``core/tenancy.py`` - the rule that one subscriber can't read another's.
 
-The missing level is people. A subscriber account *is* a person, so there was
-no way for two humans to share one account, no way to give a colleague
-read-only access, and nothing for "Administrator" or "Manager" to attach to.
-This module is that level, built on ``core/identity.py``.
+This adds people, built on ``core/identity.py``, so two people can share an
+account, a colleague can get read-only access, and roles have something to
+attach to.
 
-**Billing is not migrated here, on purpose.** The subscriber path is the one
-that takes money, and moving it in the same change that introduces the table
-underneath it is how a paying customer loses access. Organisations are wired
-into their own endpoints and proved in isolation first — the same staged
-approach that made the login cutover safe.
+Billing isn't migrated onto organisations yet. That path takes money, so
+organisations are wired into their own endpoints and proven first.
 
 Roles
 -----
-The brief asks for Executive / Administrator / Manager / Team Member /
-Customer. Two of those words already mean something specific in Titan, so the
-mapping is written down rather than guessed at:
-
 ===================  ===========================================================
-Brief                Here
+Role name            Here
 ===================  ===========================================================
-Executive            ``core/identity.FOUNDER`` — administers the whole *SaaS*,
-                     not an organisation. It is a different axis and stays one.
-Administrator        ``ADMIN``   — everything except deleting the organisation
-Manager              ``MANAGER`` — may manage work, may not change who has access
-Team Member          ``MEMBER``  — may do the work
-Customer / User      ``VIEWER``  — read-only
-(no equivalent)      ``OWNER``   — the Executive *of one organisation*
+Executive            ``core/identity.FOUNDER`` - administers the whole SaaS,
+                     not an organisation. A separate axis.
+Administrator        ``ADMIN``   - everything except deleting the organisation
+Manager              ``MANAGER`` - may manage work, not who has access
+Team Member          ``MEMBER``  - may do the work
+Customer / User      ``VIEWER``  - read-only
+(no equivalent)      ``OWNER``   - the executive of one organisation
 ===================  ===========================================================
 
-Decisions worth defending
--------------------------
-* **Roles are ranked, and compared in one place.** ``require_member`` is the
-  only thing that decides whether a caller may act, exactly as
-  ``tenancy.require_owner`` is for businesses. An authorisation rule that lives
-  in the endpoints is only as good as the next person's memory.
-* **An unknown role is refused, never stored.** A typo must not become a new
-  privilege level. Same rule as ``identity._require_role``.
-* **An organisation can never lose its last owner.** Removing or demoting the
-  final owner leaves an organisation that nobody can administer and that
-  nothing can repair — so both paths refuse. This is the invariant most likely
-  to be "simplified" away later, so it is mutation-guarded.
-* **Membership is keyed on the user id, not the email.** An address is a label
-  a person may change; an id is who they are.
-* **Not being a member and not existing raise the same refusal.** Two different
-  answers tell a prober which organisation ids are real.
+* Roles are ranked and compared in one place. ``require_member`` is the only
+  thing that decides whether a caller may act, like
+  ``tenancy.require_owner`` for businesses.
+* An unknown role is refused, never stored, so a typo can't become a new
+  privilege level (same as ``identity._require_role``).
+* An organisation can never lose its last owner. Removing or demoting the
+  final owner would leave it impossible to administer, so both refuse. This
+  invariant is mutation-guarded.
+* Membership is keyed on user id, not email; an address can change.
+* "Not a member" and "no such organisation" raise the same refusal, so a
+  prober can't tell which ids exist.
 
-Nothing here grants access on its own. It answers "may this person act on this
-organisation, at this level" and leaves the endpoint to turn a refusal into a
+Nothing here grants access by itself. It answers "may this person act on
+this organisation at this level", and the endpoint turns a refusal into a
 404.
 """
 
@@ -73,9 +58,8 @@ MANAGER = "manager"
 MEMBER = "member"
 VIEWER = "viewer"
 
-# Ordered on purpose. Authorisation asks "at least this much", never "exactly
-# this", so a new role slots in by giving it a rank rather than by editing
-# every call site.
+# Ordered on purpose. Checks ask "at least this much", never "exactly this",
+# so a new role only needs a rank.
 RANK: dict[str, int] = {
     VIEWER: 0,
     MEMBER: 1,
@@ -101,8 +85,8 @@ class OrgError(ValueError):
 class NotAMember(Exception):
     """Not a member, not senior enough, or no such organisation.
 
-    Deliberately carries no detail: the endpoint turns every one of those into
-    the same 404, because distinguishing them tells a prober which ids exist.
+    Carries no detail on purpose: the endpoint turns all of these into the
+    same 404, so a prober can't tell which ids exist.
     """
 
 
@@ -113,8 +97,7 @@ def _conn():
 
 
 def _require_role(role: str) -> str:
-    """The one place a role is validated — see identity._require_role for why
-    there is exactly one copy of this check rather than one per call site."""
+    """The one place a role is validated (see identity._require_role)."""
     if role not in ROLES:
         raise OrgError(f"Unknown role: {role}. One of {sorted(ROLES)}.")
     return role
@@ -129,9 +112,9 @@ def slugify(name: str) -> str:
 def create(name: str, owner_user_id: str, created_by: str = "") -> dict:
     """Register an organisation and seat its first owner, atomically.
 
-    Both rows or neither. An organisation with no owner is exactly the
-    unadministerable state the last-owner rule exists to prevent, so it must
-    not be reachable by a failure halfway through either.
+    Both rows or neither: an organisation with no owner is the state the
+    last-owner rule exists to prevent, so a half-finished create mustn't
+    reach it either.
     """
     name = (name or "").strip()
     if not name:
@@ -245,10 +228,10 @@ def add_member(org_id: str, user_id: str, role: str = MEMBER) -> dict:
 
 
 def set_member_role(org_id: str, user_id: str, role: str) -> bool:
-    """Change what somebody may do. Refuses to demote the last owner.
+    """Change what someone may do. Refuses to demote the last owner.
 
-    An organisation whose only owner becomes a viewer cannot be administered by
-    anybody, including the person who did it, and there is no path back.
+    An organisation whose only owner becomes a viewer can't be administered
+    by anyone, including the person who did it.
     """
     _require_role(role)
     conn = _conn()
@@ -268,8 +251,9 @@ def set_member_role(org_id: str, user_id: str, role: str) -> bool:
 
 
 def remove_member(org_id: str, user_id: str) -> bool:
-    """Take somebody out. Refuses to remove the last owner, for the same
-    reason ``set_member_role`` refuses to demote them."""
+    """Remove someone. Refuses to remove the last owner, for the same reason
+    ``set_member_role`` refuses to demote them.
+    """
     conn = _conn()
     with _lock, conn:
         current = role_of(org_id, user_id)
@@ -285,9 +269,10 @@ def remove_member(org_id: str, user_id: str) -> bool:
 
 
 def members(org_id: str) -> list[dict]:
-    """Who is in this organisation. Joins identity so a screen can show a
-    person rather than an id — and never returns a password hash, because
-    ``identity`` has no function that exposes one."""
+    """Who's in this organisation. Joins identity so a screen can show a person
+    rather than an id; never returns a password hash, since ``identity`` has
+    no function that exposes one.
+    """
     from . import identity
     rows = _conn().execute(
         "SELECT * FROM org_members WHERE org_id=? ORDER BY added_at",
@@ -306,8 +291,9 @@ def members(org_id: str) -> list[dict]:
 
 
 def orgs_for(user_id: str) -> list[dict]:
-    """Every organisation this person belongs to, and their role in each.
-    This is the ONLY list an ordinary member should ever be shown."""
+    """Every organisation this person belongs to, with their role in each.
+    This is the only list an ordinary member should see.
+    """
     rows = _conn().execute(
         "SELECT o.*, m.role AS member_role FROM orgs o"
         " JOIN org_members m ON m.org_id = o.id"
@@ -325,9 +311,9 @@ def orgs_for(user_id: str) -> list[dict]:
 def require_member(org_id: str, user_id: str, minimum: str = VIEWER) -> str:
     """The single gate. Returns the caller's role, or raises NotAMember.
 
-    Ranked, not equality-matched: an owner passes every check an admin passes.
-    A suspended organisation refuses everybody, so suspending one actually
-    suspends it rather than merely hiding it from a list.
+    Ranked, not equality-matched: an owner passes every check an admin
+    passes. A suspended organisation refuses everyone, so suspending actually
+    suspends rather than just hiding it from a list.
     """
     _require_role(minimum)
     org = get(org_id)
@@ -337,14 +323,14 @@ def require_member(org_id: str, user_id: str, minimum: str = VIEWER) -> str:
     if role is None or RANK[role] < RANK[minimum]:
         raise NotAMember()
     from . import obs
-    # Same reason tenancy.require_owner binds: a cross-tenant incident is only
-    # reconstructable if the log lines say which tenant the request acted for.
+    # Like tenancy.require_owner: log lines need the tenant so a cross-tenant
+    # incident can be reconstructed.
     obs.bind(tenant=org_id)
     return role
 
 
 def stats() -> dict:
-    """Counts derived from the tables, so every number here was measured."""
+    """Counts taken from the tables."""
     orgs_n = int(_conn().execute("SELECT COUNT(*) AS n FROM orgs")
                  .fetchone()["n"])
     rows = _conn().execute(

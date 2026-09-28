@@ -1,27 +1,14 @@
-"""24/7 autonomous client monitoring — the part that runs without anyone asking.
+"""Scheduled monitoring of client sites.
 
-An important distinction, because it decides what is buildable:
+On a rota it re-audits each client site (technical, legal, local), compares
+the result with the previous audit and reports what changed: the site went
+down, the Impressum disappeared, schema vanished in a redeploy. Alerts are
+escalated by severity - a site going offline is worth interrupting someone
+for, a missing alt tag is not. Per-client history is kept so a trial shows a
+trend rather than a single snapshot.
 
-The claude-seo plugin's 30+ skills and 20 agents are INSTRUCTIONS. They need an
-LLM agent to read and execute them, on demand, in a session. There is no daemon
-to install and they cannot run themselves at 3am. What CAN run unattended is
-ordinary code — so the plugin's methodology is implemented here as scheduled
-Python, and the skills stay available for the deep, one-off audits where a
-reasoning model genuinely adds something.
-
-What this does on its own, forever:
-
-  - re-audits every client site on a rota (technical + legal + local)
-  - DIFFS against the previous audit and raises what CHANGED, which is the part
-    a client actually notices: their developer removed the Impressum, the site
-    went down, schema disappeared in a redeploy
-  - escalates by severity: a site going offline or losing its imprint is worth
-    interrupting someone for; a missing alt tag is not
-  - keeps per-client history so the trial period shows a trend, not a snapshot
-
-The diff is the whole point. A monthly report saying "score 67" is noise. A
-message saying "your Impressum disappeared yesterday, that is a fine risk" is
-why a client keeps paying.
+The diff is what matters: "your Impressum disappeared yesterday" is far more
+useful to a client than a monthly score.
 """
 
 from __future__ import annotations
@@ -32,12 +19,11 @@ from typing import Optional
 from ..core import clients
 from . import client_seo
 
-# How often a single client is re-checked. Deliberately slow: these are real
-# sites and we are a guest on them.
+# How often each client is re-checked. Slow on purpose: these are real sites.
 DEFAULT_INTERVAL = 6 * 3600          # 6 hours
 MAX_HISTORY = 40                     # per client, bounded so state stays small
 
-# What is worth waking someone up for.
+# What's worth interrupting someone for.
 ESCALATE = {
     "unreachable": "critical",
     "https": "critical",
@@ -71,7 +57,7 @@ def diff(previous: Optional[dict], current: dict) -> list[dict]:
 
     out: list[dict] = []
 
-    # Availability first — nothing else matters if the site is down.
+    # Availability first - nothing else matters if the site is down.
     was, now = previous.get("reachable"), current.get("reachable")
     if was and not now:
         out.append({
@@ -94,7 +80,7 @@ def diff(previous: Optional[dict], current: dict) -> list[dict]:
     if not (was and now):
         return out
 
-    # Legal exposure appearing is the single most expensive regression.
+    # New legal exposure is the most expensive regression.
     if current["legal_critical"] > previous.get("legal_critical", 0):
         out.append({
             "severity": "critical", "kind": "legal",
@@ -107,7 +93,7 @@ def diff(previous: Optional[dict], current: dict) -> list[dict]:
                       "formal warning over this and bill their legal costs.",
         })
 
-    # New failures, ranked by whether they are worth interrupting for.
+    # New failures, ranked by whether they're worth interrupting for.
     new_fail = set(current["failed"]) - set(previous.get("failed", []))
     for f in sorted(new_fail):
         out.append({
@@ -205,7 +191,7 @@ def due(interval: int = DEFAULT_INTERVAL) -> list[str]:
 
 
 def cycle(limit: int = 3, interval: int = DEFAULT_INTERVAL) -> dict:
-    """One scheduler tick. Kept small so a heartbeat never stalls on network."""
+    """One scheduler tick. Kept small so the heartbeat never stalls on the network."""
     checked, alerts = [], []
     for cid in due(interval)[:limit]:
         r = check_client(cid)
@@ -218,8 +204,9 @@ def cycle(limit: int = 3, interval: int = DEFAULT_INTERVAL) -> dict:
 
 
 def summary(only=None) -> dict:
-    """Everything the dashboard needs about ongoing monitoring. `only` limits
-    it to those client ids (a subscriber's own businesses)."""
+    """Monitoring summary for the dashboard. `only` limits it to those client
+    ids (a subscriber's own businesses).
+    """
     rows = [c for c in clients.all_clients() if only is None or c["id"] in only]
     watched = [c for c in rows if c.get("website")]
     alerts = []

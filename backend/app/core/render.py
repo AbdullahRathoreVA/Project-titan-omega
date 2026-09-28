@@ -1,33 +1,24 @@
-"""Is this page actually the page, or an empty shell a browser fills in later?
+"""Is this page the real page, or an empty shell a browser fills in later?
 
-Blueprint item 011. Titan's crawler is a single HTTP GET, so for any
-client-rendered site — React, Vue, Angular, Next in SPA mode, most Wix and
-Squarespace templates — what it audits is the shell: a `<div id="root">` and a
-script tag. It then reports "no H1", "no schema", "thin content" with total
-confidence, and every one of those findings is about the shell rather than
-about the site.
+Titan's crawler is a single HTTP GET, so for a client-rendered site (React,
+Vue, Angular, Next in SPA mode, many Wix and Squarespace templates) it only
+sees the shell: a `<div id="root">` and a script tag. Auditing that would
+report "no H1", "no schema", "thin content" about the shell, not the site -
+worse than no audit, because a confident wrong finding looks like a right one.
 
-That is worse than having no crawler for those sites, because a wrong finding
-delivered confidently is indistinguishable from a right one. It is the single
-largest correctness gap in the product and it affects a large share of the
-small-business market.
+Two parts:
 
-There are two halves to fixing it, and **only one of them needs a server**:
+1. Detect the shell and say so. Free, no dependency. A page that's mostly
+   script tags with almost no visible text and an empty root container can't
+   be audited over HTTP, so the audit is marked unreliable with the reason
+   instead of getting a confident F.
+2. Render it. Needs Chromium, which can't go in the Space image (downloading
+   the browser at build time breaks the free build), so it runs as a separate
+   service (`services/renderer/`) and this is the client. With
+   `TITAN_RENDER_URL` unset there's no renderer, and this says so.
 
-1. **Detect the shell and say so.** Free, no dependency, works today. A page
-   that is mostly script tags with almost no visible text and an empty root
-   container is not a page Titan can audit over HTTP, and the honest response
-   is to mark the audit unreliable and name the reason — not to publish a
-   confident F.
-2. **Render it.** Needs Chromium, which cannot go in the Space image: the
-   browser download at Docker build time breaks the free build. So it lives in
-   a separate service (`services/renderer/`) and this module is the client for
-   it. With `TITAN_RENDER_URL` unset there is no renderer, and this module says
-   so plainly rather than pretending.
-
-`rendered_with` is always reported: `"http"` or `"browser"`. A caller can
-never be left guessing whether JavaScript ran, and Titan never claims a
-rendered audit it did not perform.
+`rendered_with` is always reported ("http" or "browser"), so a caller always
+knows whether JavaScript ran.
 """
 
 from __future__ import annotations
@@ -36,28 +27,26 @@ import os
 import re
 from typing import Optional
 
-# The separate Playwright service. Unset on the free tier, and everything
-# below degrades to detection-only when it is.
+# The separate Playwright service. Unset on the free tier, in which case
+# everything below falls back to detection only.
 RENDER_URL = os.getenv("TITAN_RENDER_URL", "").strip().rstrip("/")
 RENDER_TOKEN = os.getenv("TITAN_RENDER_TOKEN", "").strip()
 RENDER_TIMEOUT = float(os.getenv("TITAN_RENDER_TIMEOUT", "45"))
 
-# Below this much visible text, a page is not carrying content a reader or a
-# crawler could use. Chosen against real shells: a Next.js SPA shell lands
-# around 0-80 characters, a thin but genuine brochure page around 400+.
+# Below this much visible text, a page carries no usable content. A Next.js
+# SPA shell is around 0-80 characters; a thin but real brochure page 400+.
 SHELL_TEXT_CHARS = 250
 
-# Containers a framework mounts into. An EMPTY one is the strongest single
-# signal — the markup literally says "content goes here later".
+# Containers a framework mounts into. An empty one is the strongest single
+# signal - the markup literally says "content goes here later".
 _EMPTY_MOUNT = re.compile(
     r'<div[^>]+id=["\'](?:root|app|__next|__nuxt|main-app)["\'][^>]*>\s*</div>',
     re.I)
 
 _FRAMEWORK_MARKERS = (
     ("__NEXT_DATA__", "Next.js"),
-    # The App Router does not emit __NEXT_DATA__ — it streams into
-    # self.__next_f instead, so a Next 13+ site was invisible to the check
-    # that only looked for the old marker.
+    # The App Router doesn't emit __NEXT_DATA__; it streams into self.__next_f,
+    # so Next 13+ sites need this marker too.
     ("__next_f", "Next.js"),
     ("data-reactroot", "React"),
     ("__NUXT__", "Nuxt"),
@@ -78,10 +67,10 @@ def _visible_text(html: str) -> str:
 
 
 def inspect(html: str) -> dict:
-    """Evidence about whether this HTML is a shell. Never a bare boolean.
+    """Evidence about whether this HTML is a shell, not a bare boolean.
 
-    Every field is something counted in the document, so a reader can check
-    the verdict rather than trust it.
+    Every field is counted from the document, so a reader can check the
+    verdict.
     """
     html = html or ""
     text = _visible_text(html)
@@ -94,17 +83,15 @@ def inspect(html: str) -> dict:
         html, re.I | re.S))
 
     # An empty mount point or a noscript warning is close to proof on its own.
-    # Otherwise it takes both a lack of text AND a framework doing the
-    # rendering — a genuinely short page that ships no JavaScript is thin
-    # content, which is a different finding with a different fix.
+    # Otherwise it takes both little text and a framework doing the rendering: a
+    # short page with no JavaScript is thin content, a different finding with a
+    # different fix.
     thin = len(text) < SHELL_TEXT_CHARS
     client_rendered = bool(
         empty_mount or noscript or (thin and (frameworks or scripts >= 3)))
 
-    # Reasons must support the VERDICT, not just list signals. Emitting
-    # "15 script tags with almost no text" for a page carrying 312 characters
-    # is a self-contradicting explanation, and an explanation nobody can trust
-    # is worse than none — measured on Titan's own homepage.
+    # Reasons must support the verdict, not just list signals - "15 script tags
+    # with almost no text" next to a page with 312 characters contradicts itself.
     reasons = []
     if client_rendered:
         if empty_mount:
@@ -133,12 +120,12 @@ def inspect(html: str) -> dict:
 
 
 def available() -> bool:
-    """Whether a browser renderer is actually configured. No guessing."""
+    """Whether a browser renderer is configured."""
     return bool(RENDER_URL)
 
 
 def status() -> dict:
-    """What Titan can and cannot do about JavaScript, stated plainly."""
+    """What Titan can and can't do about JavaScript on this deployment."""
     if available():
         return {
             "available": True, "url": RENDER_URL,
@@ -162,7 +149,7 @@ def status() -> dict:
 def render(url: str, *, timeout: Optional[float] = None) -> tuple[Optional[str], str]:
     """Fetch `url` through the browser service. Returns (html, error).
 
-    Returns (None, reason) when no renderer is configured — never a silent
+    Returns (None, reason) when no renderer is configured, never a silent
     fallback that leaves the caller thinking JavaScript ran.
     """
     if not RENDER_URL:
@@ -194,15 +181,14 @@ def fetch_best(url: str, *, user_agent: str, timeout: float,
                fetcher=None) -> tuple[Optional[str], Optional[str], int, dict]:
     """Fetch a page, using the browser only when the plain GET looks like a shell.
 
-    Returns (html, error, status, rendering) where `rendering` always records
-    which path produced the HTML and what the evidence was. The browser is not
-    used for every page on purpose — it is slower and costs a request against
-    someone else's server, and most sites do not need it.
+    Returns (html, error, status, rendering); `rendering` records which path
+    produced the HTML and the evidence. The browser isn't used for every page:
+    it's slower, costs a request to someone else's server, and most sites
+    don't need it.
 
     `fetcher` lets the caller supply its own plain-HTTP step. `client_seo`
-    passes its `_fetch`, which is the seam its tests already substitute; going
-    straight to safe_fetch here would have silently bypassed that and left
-    eight tests hitting the real network.
+    passes its `_fetch`, which its tests substitute; calling safe_fetch
+    directly here would bypass that and send those tests to the real network.
     """
     if fetcher is not None:
         html, err, status_code = fetcher(url)
@@ -238,7 +224,7 @@ def fetch_best(url: str, *, user_agent: str, timeout: float,
         })
         return rendered, None, status_code, rendering
 
-    # The important branch. Titan cannot see this page properly and says so.
+    # The key branch: Titan can't see this page properly, and says so.
     rendering.update({
         "rendered_with": "http",
         "reliable": False,

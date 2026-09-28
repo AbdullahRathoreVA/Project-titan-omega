@@ -1,33 +1,23 @@
-"""A customer's own leads. Tenant-scoped, and structurally so.
+"""A customer's own leads, scoped to their account.
 
-Titan has had a working leads pipeline since early on — create, status, stages,
-discovery, research, outreach drafting. Every route reaching it is FOUNDER
-ONLY, and `STORE.leads` is one flat dict with no owner field at all. So the
-product could find leads for Abdullah and for nobody who paid.
+The leads pipeline (create, status, stages, discovery, research, outreach
+drafting) was founder-only, with `STORE.leads` a flat dict and no owner
+field. A leads table shared by every customer is one missing filter away
+from showing a business its competitor's pipeline, so ownership is handled
+in one place here.
 
-That is the gap this closes. It is also the most dangerous kind of change in
-this codebase, because a leads table shared by every customer is one missing
-filter away from showing one business its competitor's pipeline.
+Every lead carries `account`, the billing email of the subscriber who owns
+it:
 
-THE OWNERSHIP RULE, AND WHY IT IS SHAPED LIKE THIS
+  * `account: ""` is the founder's own prospecting pipeline. Older leads
+    have no field at all, and `owner_of()` reads a missing field as the
+    founder's, so existing leads stay where they are without a migration.
+  * Any other value is a subscriber, who only sees their own.
 
-Every lead carries `account`: the billing email of the subscriber who owns it.
-
-  * `account: ""` means the FOUNDER's own prospecting pipeline.
-
-Existing leads have no field at all, and `owner_of()` reads a missing field as
-the founder's. That is deliberate and it is the whole migration: Abdullah's
-pipeline was created before customers existed, it is his, and nothing in here
-moves it. A migration that reassigned his leads to the first customer who
-signed up would be silent and unrecoverable.
-
-  * Any other value is a subscriber, and a subscriber sees only their own.
-
-`visible_to()` is the ONE function that decides what a caller may see, for the
-same reason `tenancy.require_owner` is the one gate for businesses: a filter
-written at each call site is a filter missing from one of them. Every read in
-this module goes through it, including the counts, because a count computed
-over the unfiltered set leaks how many leads somebody else has.
+`visible_to()` is the one function that decides what a caller may see, like
+`tenancy.require_owner` for businesses. Every read here goes through it,
+including counts, since a count over the unfiltered set leaks how many leads
+someone else has.
 """
 
 from __future__ import annotations
@@ -37,24 +27,24 @@ from typing import Optional
 
 _lock = threading.RLock()
 
-# The founder's own pipeline. An empty owner is not "unowned" — it is his, and
-# it is written down here so nobody later reads the empty string as "public".
+# The founder's own pipeline. An empty owner means the founder, not
+# "unowned" or "public".
 FOUNDER = ""
 
-# Mirrors the founder pipeline's vocabulary so one lead cannot mean two things
-# depending on which screen created it.
+# Same vocabulary as the founder pipeline, so a status means the same thing
+# whichever screen created the lead.
 STATUSES = ("new", "contacted", "replied", "qualified", "won", "lost")
 
 
 class NotYours(PermissionError):
-    """Somebody asked for a lead that is not theirs. Never answered with the
-    lead, and never with a different message depending on whether it exists —
-    "not yours" and "no such lead" must be indistinguishable or the difference
-    enumerates other people's records."""
+    """Someone asked for a lead that isn't theirs. "Not yours" and "no such
+    lead" get the same answer, otherwise the difference reveals other
+    people's records.
+    """
 
 
 def owner_of(lead: dict) -> str:
-    """Who owns this lead. A missing field is the founder's, not nobody's."""
+    """Who owns this lead. A missing field means the founder."""
     return str((lead or {}).get("account") or FOUNDER)
 
 
@@ -74,7 +64,7 @@ def visible_to(leads: dict, account: str) -> list:
 
 
 def require_owned(leads: dict, lead_id: str, account: str) -> dict:
-    """The lead, or NotYours. Refuses identically whether it exists or not."""
+    """The lead, or NotYours. Same refusal whether it exists or not."""
     lead = leads.get(lead_id)
     if not lead or not owns(lead, account):
         raise NotYours("No such lead")
@@ -86,10 +76,9 @@ def new_lead(*, lead_id: str, account: str, name: str, source: str = "manual",
              created_at: str = "", updated_at: str = "") -> dict:
     """One shape for a lead, wherever it was created.
 
-    Built here rather than inline at each route so a lead made by a customer
-    and a lead made by discovery cannot drift into two shapes — and, more
-    importantly, so `account` cannot be forgotten at one of them. A lead
-    created without an owner would silently become the founder's.
+    Built here rather than at each route so leads from customers and from
+    discovery can't drift apart, and so `account` can't be forgotten; a lead
+    created without an owner would become the founder's.
     """
     return {
         "id": lead_id,
@@ -113,13 +102,11 @@ def counts(items: list) -> dict:
 
 
 def attention(items: list, *, now_iso: str = "") -> list:
-    """What needs a person, and WHY — never a bare list.
+    """What needs a person, and why.
 
-    Modelled on the CRM's follow-up engine: an item that does not say why it is
-    here teaches somebody to clear the list rather than read it. Each entry
-    names the lead, the reason and what to do, and nothing is invented — a lead
-    with no contact detail is a fact about the record, not a guess about the
-    business.
+    Each entry names the lead, the reason and what to do; a bare list just
+    teaches people to clear it without reading. Nothing is guessed: a lead
+    with no contact detail is a fact about the record.
     """
     out = []
     for lead in items:
@@ -143,11 +130,10 @@ def attention(items: list, *, now_iso: str = "") -> list:
 
 
 def stats(items: list) -> dict:
-    """Pipeline figures, each of them a real count.
+    """Pipeline figures, each a real count.
 
-    No conversion rate is published when there is nothing to divide by. A rate
-    over zero leads is not 0% — it is a number nobody measured, and this
-    codebase says so rather than showing a reassuring zero.
+    No conversion rate when there's nothing to divide by: a rate over zero
+    leads isn't 0%, it's unmeasured.
     """
     total = len(items)
     by_status = counts(items)

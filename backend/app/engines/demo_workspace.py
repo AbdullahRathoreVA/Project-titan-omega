@@ -1,29 +1,19 @@
-"""A demo workspace so the 24/7 engines have real work — without faking users.
+"""Demo workspace, so the background engines have real work to do.
 
-Titan already runs continuously: the heartbeat drives the self-audit, the
-client watch, the news watch and the growth cycle every few seconds. With no
-clients on the books, all of that spins against an empty list. The dashboard
-looks idle because it *is* idle, not because it is broken.
+The heartbeat drives the self-audit, client watch, news watch and growth
+cycle continuously. With no clients they run against an empty list, and the
+dashboard looks idle. This seeds a small workspace so those engines do real
+work, with one rule: a demo account is never counted as a real one.
 
-This seeds a small workspace so those engines do genuine work, and it is built
-around one rule:
+Every record carries ``is_demo`` and the funnel filters it out, so demo
+clients show up on the operational screens but never in the customer
+numbers.
 
-**A demo account must never be counted as a real one.**
-
-The founder analytics screen exists to answer "is anybody actually using
-this?". Seeding fake signups to make it look busy would destroy the only
-instrument that can answer that question — and it is the exact failure this
-codebase keeps guarding against. So every record here carries ``is_demo`` and
-the funnel filters them out. A demo client is visible on the operational
-screens, where it is useful, and invisible in the numbers, where it would lie.
-
-**The sites audited are Titan's own.** Re-crawling a stranger's server every
-few hours to keep a demo looking lively is rude, and doing it to a business
-that never asked would be worse coming from a company selling compliance.
-Titan's own landing pages are real, substantive, publicly served pages that
-exercise the whole pipeline — crawl, audit, knowledge index — and belong to
-Abdullah. ``example.com`` is included deliberately as the low-scoring
-contrast: it is IANA-reserved for exactly this use.
+The audited sites are Titan's own landing pages - real, publicly served
+pages that exercise the whole pipeline (crawl, audit, knowledge index) -
+rather than a stranger's server crawled every few hours without asking.
+``example.com`` is included as the low-scoring contrast; IANA reserves it for
+this kind of use.
 """
 
 from __future__ import annotations
@@ -37,7 +27,7 @@ from . import client_seo
 
 SITE = os.getenv("TITAN_SITE_URL", "https://titanomega-ai.com").rstrip("/")
 
-# Kept deliberately small. Each entry is a real crawl on every cycle.
+# Kept small: each entry is a real crawl every cycle.
 DEMO_CLIENTS = (
     ("[DEMO] Titan Omega — compliance guide", f"{SITE}/compliance/de",
      "software", "Berlin", "Germany"),
@@ -47,8 +37,8 @@ DEMO_CLIENTS = (
      "wholesale", "", "United States"),
 )
 
-# Six hours, matching the self-audit. Fast enough that the screens are never
-# stale, slow enough that nothing is being hammered.
+# Six hours, matching the self-audit: the screens are never stale and nothing
+# gets hammered.
 INTERVAL = float(os.getenv("TITAN_DEMO_INTERVAL", str(6 * 3600)))
 
 _lock = threading.RLock()
@@ -57,8 +47,9 @@ _last: dict = {}
 
 
 def enabled() -> bool:
-    """On by default. TITAN_DEMO_WORKSPACE=0 turns it off entirely — the right
-    move once real clients arrive and the screens have their own content."""
+    """On by default. TITAN_DEMO_WORKSPACE=0 turns it off entirely, e.g. once
+    real clients give the screens their own content.
+    """
     return os.getenv("TITAN_DEMO_WORKSPACE", "1") != "0"
 
 
@@ -67,7 +58,7 @@ def is_demo_client(rec: dict) -> bool:
 
 
 def ensure() -> dict:
-    """Create the demo clients if absent. Idempotent — safe on every boot."""
+    """Create the demo clients if absent. Idempotent, so safe on every boot."""
     if not enabled():
         return {"enabled": False, "created": 0, "existing": 0}
     created, existing = 0, 0
@@ -96,8 +87,8 @@ def ensure() -> dict:
 def cycle(force: bool = False) -> dict | None:
     """Audit each demo site and refresh its knowledge index.
 
-    Returns None when it is not yet due, so the heartbeat can call it every
-    few seconds without doing anything.
+    Returns None when it isn't due yet, so the heartbeat can call it every few
+    seconds.
     """
     global _last_run
     if not enabled():
@@ -122,8 +113,8 @@ def cycle(force: bool = False) -> dict | None:
                 clients.bump(rec["id"], "issues_found",
                              len(result.get("findings", [])))
                 audited += 1
-                # The crawl is already paid for — keep the text so the voice
-                # agent has something to retrieve from.
+                # The page is already fetched - keep the text so the voice agent has
+                # something to retrieve from.
                 page, _err, _status = client_seo._fetch(rec["website"])
                 if page and knowledge.ingest(rec["id"], page,
                                              rec["website"]).get("ok"):
@@ -143,32 +134,29 @@ def cycle(force: bool = False) -> dict | None:
     return snapshot
 
 
-# The business the PUBLIC demo opens. Named here rather than chosen in the
-# route: whoever picks it is choosing what a stranger is shown, and that
-# decision belongs beside the data it is choosing from.
+# The business the public demo opens. Chosen here, next to the data, because
+# it decides what a stranger sees.
 #
-# The compliance guide is the one, because it is the only demo site that
-# exercises the legal half of the audit — the finding a prospect cannot get
-# anywhere else, and the reason Titan exists. example.com is deliberately NOT
-# used: it scores badly on purpose, as the low contrast for the operator
-# screens, and opening a demo on an F would misrepresent the product in the
-# other direction.
+# The compliance guide is used because it's the only demo site that
+# exercises the legal half of the audit, the finding prospects can't get
+# elsewhere. example.com is deliberately not used: it scores badly on purpose
+# as the contrast for the operator screens.
 SHOWCASE_WEBSITE = f"{SITE}/compliance/de"
 
 
 def _demo_rows() -> list[dict]:
     """Every business carrying the demo flag, and nothing else.
 
-    The single line deciding what an anonymous visitor may be shown. Kept as
-    its own function so the mutation guard on it has an anchor that matches in
-    exactly one place.
+    This line decides what an anonymous visitor may be shown. It's its own
+    function so its mutation guard anchor matches in exactly one place.
     """
     return [c for c in clients.all_clients() if is_demo_client(c)]
 
 
 def business_ids() -> list:
-    """Every demonstration business, for the public demo cockpit - seeded on
-    demand, like showcase(), and never a real client."""
+    """Every demo business, for the public demo cockpit. Seeded on demand like
+    showcase(), and never a real client.
+    """
     if not enabled():
         return []
     if not _demo_rows():
@@ -182,25 +170,22 @@ def business_ids() -> list:
 def showcase() -> dict | None:
     """The demo business a stranger may open, or None.
 
-    Returns None rather than falling back to a real client. There is no
-    "closest match" here: the whole safety property of the public demo is that
-    it can only ever reach a business Titan owns, so an empty demo workspace
-    must produce a refusal, never a substitution.
+    Returns None rather than falling back to a real client: the public demo
+    must only ever reach a business Titan owns, so an empty demo workspace
+    produces a refusal, never a substitution.
     """
     if not enabled():
         return None
     rows = _demo_rows()
     if not rows:
-        # Seed on demand. ensure() was reachable only from cycle(), which runs
-        # on the heartbeat, so on a fresh boot the public demo answered 503
-        # until the first tick — and this Space rebuilds often. ensure() is
-        # idempotent and creates three fixed records without crawling
-        # anything, so calling it here costs nothing when they already exist.
+        # Seed on demand. Otherwise, on a fresh boot, the public demo would return 503
+        # until the first heartbeat tick. ensure() is idempotent and doesn't crawl
+        # anything, so this is free when the records already exist.
         try:
             ensure()
         except Exception:
-            # Seeding failed. Fall through to the refusal below rather than
-            # letting the exception decide what a visitor sees.
+            # Seeding failed. Fall through to the refusal below rather than let the
+            # exception decide what a visitor sees.
             pass
         rows = _demo_rows()
     if not rows:
@@ -208,9 +193,9 @@ def showcase() -> dict | None:
     for rec in rows:
         if rec.get("website") == SHOWCASE_WEBSITE:
             return rec
-    # The named one is absent (someone deleted it, or SITE changed). Any demo
-    # business is still safe to show; a real one never is. Sorted so every
-    # visitor sees the same thing rather than whichever the dict yielded first.
+    # The named one is missing (deleted, or SITE changed). Any demo business is
+    # still safe to show; a real one never is. Sorted so every visitor sees the
+    # same one.
     return sorted(rows, key=lambda r: str(r.get("business_name", "")))[0]
 
 

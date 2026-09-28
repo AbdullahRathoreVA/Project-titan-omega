@@ -1,14 +1,12 @@
-"""Executive Intelligence Core — the AI CEO.
+"""Executive core: company status, plans, forecasts and command routing.
 
-This is the brain that sits above the Digital Employee Network. It understands the
-empire's state, allocates priorities, generates daily/weekly/monthly plans,
-forecasts revenue and traffic, and routes natural-language commands to the right
-division and agent.
+Summarises the state of the business, turns ranked opportunities into
+daily/weekly/monthly plans, forecasts revenue and traffic, and routes
+natural-language commands to the right division.
 
-The reasoning here is deterministic and rule-based so the foundation runs with no
-external model dependency. The architecture is built so a Claude/Gemini/OpenAI
-planner can be dropped in behind :func:`generate_plan` and :func:`route_command`
-without changing callers (see README → "Wiring real models").
+The reasoning is rule-based so it runs without a model; an LLM-backed planner
+could sit behind generate_plan() and route_command() without changing
+callers.
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ from ..store import STORE, Store, now
 from . import llm, model_router
 
 
-# --- Empire snapshot ------------------------------------------------------
+# --- Company snapshot ------------------------------------------------------
 
 def empire_status(store: Store = STORE) -> dict:
     agents = store.agents.values()
@@ -59,7 +57,7 @@ def empire_status(store: Store = STORE) -> dict:
 
 
 def _empire_health(store: Store) -> float:
-    """A single 0-100 health index blending agent success and impact."""
+    """A 0-100 health index combining agent success and impact."""
     agents = list(store.agents.values())
     if not agents:
         return 0.0
@@ -104,11 +102,11 @@ _HORIZON_HEADLINES = {
 
 
 def generate_plan(horizon: Horizon, store: Store = STORE) -> dict:
-    """Build a prioritized action plan for the given horizon.
+    """Build a prioritised action plan for the given horizon.
 
-    Strategy: take the top-ranked opportunities and translate each into a plan
-    item owned by the agent that surfaced it (or its division head), ordered by
-    priority. The number of items scales with the horizon.
+    Takes the top-ranked opportunities and turns each into a plan item owned by
+    the agent that found it (or its division head), in priority order. Longer
+    horizons get more items.
     """
 
     opps = opportunity.ranked(store)
@@ -179,7 +177,7 @@ def forecast(metric: str, horizon: Horizon, store: Store = STORE) -> dict:
     )
     periods = {Horizon.DAILY: 1 / 30, Horizon.WEEKLY: 0.25, Horizon.MONTHLY: 1.0}[horizon]
     projected = current * ((1 + rate) ** periods)
-    # Confidence decays with longer horizons.
+    # Confidence falls for longer horizons.
     horizon_conf = confidence * {Horizon.DAILY: 1.0, Horizon.WEEKLY: 0.95, Horizon.MONTHLY: 0.85}[horizon]
     return {
         "metric": metric,
@@ -193,8 +191,8 @@ def forecast(metric: str, horizon: Horizon, store: Store = STORE) -> dict:
 
 # --- Natural-language command routing -------------------------------------
 
-# Intent keyword → (division, canned action verbs). The command center sends
-# free text; the Core classifies intent and routes to a division head.
+# Intent keyword -> (division, action verbs). The command bar sends free text;
+# this classifies it and routes it to a division head.
 _INTENT_MAP = [
     (("revenue", "sales", "mrr", "money", "pipeline", "deal"), Division.REVENUE, "revenue"),
     (("seo", "traffic", "rank", "keyword", "growth", "funnel"), Division.GROWTH, "growth"),
@@ -222,7 +220,7 @@ def route_command(text: str, store: Store = STORE) -> dict:
             break
 
     if matched is None:
-        # Default to the Executive Core for strategy-level asks.
+        # Strategy-level requests go to the Executive Core.
         store.emit("executive-core", "command", f'Command received: "{text}"', "info")
         return {
             "understood": True,
@@ -249,10 +247,11 @@ def route_command(text: str, store: Store = STORE) -> dict:
 
 
 def _command_reply(text: str, division: str, head_name: str) -> str:
-    """Craft the operator-facing reply — with Claude when available, else canned.
+    """The reply the operator sees - from the LLM when available, else a template.
 
-    From a subscriber's cockpit the division reports to them, the owner of
-    their own workspace, not to the founder."""
+    In a subscriber's cockpit the division reports to the subscriber, not the
+    founder.
+    """
     from . import cockpit_scope
     boss = "the owner" if cockpit_scope.is_customer() else "the founder"
     smart = llm.complete(
@@ -277,13 +276,12 @@ def _command_reply(text: str, division: str, head_name: str) -> str:
 # --- Heartbeat ------------------------------------------------------------
 
 def heartbeat(store: Store = STORE) -> None:
-    """One tick of autonomous life: advance every working agent one stage through
-    its division's workflow, hand off between divisions, and emit a signal.
+    """One heartbeat tick: move each working agent one stage through its
+    division's workflow, hand off between divisions, and emit a little activity.
 
-    Called by the background loop so the live feed and agent activity keep moving
-    even with no operator input — the empire works 24/7. Agent task changes are
-    picked up by the dashboard's agents poll; feed emits are kept to a couple per
-    tick so the activity stream stays readable.
+    Runs in the background loop so the feed and agent activity keep moving
+    without operator input. Feed events are capped at a couple per tick so the
+    stream stays readable.
     """
     from ..engines import workflows
 
@@ -292,7 +290,7 @@ def heartbeat(store: Store = STORE) -> None:
     if not runtimes:
         return
 
-    # The empire ramps up: nudge a few idle agents into work each tick.
+    # Nudge a few idle agents into work each tick.
     for rt in runtimes:
         if rt.status is AgentStatus.IDLE and rng.random() < 0.2:
             rt.status = AgentStatus.WORKING
@@ -301,7 +299,7 @@ def heartbeat(store: Store = STORE) -> None:
     if not working:
         return
 
-    # Advance a rotating batch so movement is visible without thrashing.
+    # Advance a rotating batch so movement is visible without churning everything.
     batch = working if len(working) <= 20 else rng.sample(working, 20)
     handoffs: list[str] = []
     for rt in batch:
@@ -311,13 +309,13 @@ def heartbeat(store: Store = STORE) -> None:
         rt.current_task = text
         rt.progress = round((rt.step + 1) / len(stages), 3)
         rt.last_active = now()
-        if rt.step == 0:  # completed a full workflow pass → real progress
+        if rt.step == 0:  # completed a full workflow pass
             rt.tasks_completed += 1
             rt.impact_score = min(100.0, rt.impact_score + rng.uniform(0.1, 0.5))
         if handoff and rng.random() < 0.5:
             handoffs.append(f"{rt.spec.name} → {handoff.title()} division: {text.lower()}")
 
-    # Emit at most one headline activity + one hand-off per tick (keeps feed clean).
+    # At most one headline activity and one hand-off per tick, to keep the feed clean.
     star = rng.choice(batch)
     store.emit(star.spec.id, "activity", f"{star.spec.name}: {star.current_task}.", "info")
     if handoffs:

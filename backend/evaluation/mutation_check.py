@@ -1,16 +1,11 @@
-"""Mutation testing — prove a guard's test actually fails when the guard goes.
+"""Mutation testing: check that a guard's test fails when the guard is removed.
 
-A passing test proves nothing on its own. Twice in this codebase a test looked
-like it protected a behaviour and did not: one asserted on a *comment* rather
-than the code it described, and one never exercised the branch at all. Both
-were found by deleting the guard and watching the suite stay green.
+A passing test proves nothing on its own - it might assert on a comment
+instead of the code, or never reach the branch at all. This removes each
+guard in turn and checks that the suite goes red.
 
-So this is the tool, kept in the repo rather than as a scratch script, because
-a scratch script already did real damage: it left `if False:` inside
-`backup.py`'s verification gate after a run, silently disabling the check that
-a backup actually restores. **Every mutation here is restored and then
-VERIFIED restored**, and the run aborts loudly if a file does not come back
-byte-for-byte.
+Every mutation is restored and then verified byte-for-byte, and the run
+aborts loudly if a file doesn't come back exactly.
 
 Run:   python -m evaluation.mutation_check
        python -m evaluation.mutation_check --only backup
@@ -486,8 +481,8 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      'tag = "address" if a else "p"', 'tag = "address"',
      "phone_only_block_never_emits"),
     # --- self-improvement engine -------------------------------------------
-    # The approval gate is the whole product decision here. If any of these
-    # survive, Titan can change its own behaviour without Abdullah.
+    # The approval gate is the key decision here. If any of these survive, Titan
+    # could change its own behaviour without the founder's approval.
     ("improve: activate requires APPROVED", "app/core/improve.py",
      'if row["status"] != APPROVED:', "if False:",
      "cannot_activate_its_own"),
@@ -533,10 +528,8 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      '"oldest_seconds": max(ages) if ages else None,',
      '"oldest_seconds": max(ages) if ages else 0.0,',
      "empty_queue_reports_none"),
-    # Single line on purpose. The first version of this anchor spanned two
-    # lines and never matched — the continuation indent in the MUTANTS entry
-    # did not equal the indent in the source, so it reported "stale" rather
-    # than failing, and the guard silently went untested. Appending to a
+    # Single line on purpose: a multi-line anchor whose continuation indent
+    # doesn't match the source reports "stale" instead of failing. Appending to a
     # throwaway list keeps the syntax valid and leaves `errors` empty.
     ("approvals: a broken surface is reported", "app/core/approvals.py",
      'errors.append({"surface": name,', '[].append({"surface": name,',
@@ -569,9 +562,9 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      '"estimated_cost_usd": round(row["estimated_cost_usd"], 6),',
      "unpriced_calls"),
     # --- customers screen ---------------------------------------------------
-    # The grant flag is the whole difference between a pilot seat and revenue.
-    # Both halves are mutated: the reader (is the flag consulted at all) and the
-    # consequence (does consulting it actually change the count).
+    # The grant flag is the difference between a pilot seat and revenue. Both
+    # halves are mutated: whether the flag is read at all, and whether reading it
+    # changes the count.
     ("customers: a granted seat is not a paying customer",
      "app/core/analytics.py",
      "is_paying = on_paid_plan and not is_granted",
@@ -582,8 +575,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "return False",
      "granted_seat_is_never_counted or bought_seat_is_still"),
     # --- identity ------------------------------------------------------------
-    # Authorisation boundaries. Each one is the difference between "disabled"
-    # meaning disabled and meaning nothing.
+    # Authorisation boundaries: "disabled" has to actually mean disabled.
     ("identity: a disabled account cannot sign in", "app/core/identity.py",
      'if row["status"] != ACTIVE:', "if False:",
      "disabled_account_cannot_sign_in"),
@@ -597,16 +589,14 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("identity: roles are a closed set", "app/core/identity.py",
      "if role not in ROLES:", "if False:", "unknown_role_is_refused"),
     # --- the login cutover -------------------------------------------------
-    # The environment gate in core/auth.py retires itself the moment a real
-    # founder account exists. Each of these is the difference between that
-    # being true and it being a comment. Anchors are single-line and unique
-    # on purpose: this tool replaces the FIRST match it finds.
+    # The environment gate in core/auth.py retires itself once a real founder
+    # account exists. Anchors are single-line and unique because this tool
+    # replaces the first match it finds.
     #
-    # Deliberately NOT guarded: ensure_founder's weak-password refusal and its
-    # `if current:` overwrite check. Removing either changes only the wording
-    # of the refusal, because identity.create() independently enforces the
-    # password floor and the UNIQUE constraint on email. A guard that cannot
-    # fail is theatre, and this file exists because two of those were found.
+    # Not guarded: ensure_founder's weak-password refusal and its `if current:`
+    # overwrite check. Removing either only changes the wording of the refusal,
+    # because identity.create() independently enforces the password floor and the
+    # UNIQUE constraint on email. A guard that can't fail isn't worth listing.
     ("cutover: a founder account retires the environment gate",
      "app/core/auth.py",
      "    if identity_retired_the_gate():", "    if False:",
@@ -632,7 +622,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     # --- organisations -----------------------------------------------------
     # Ranked authorisation, and the invariant that keeps an organisation
     # administerable. The last-owner rule is the one most likely to be
-    # 'simplified' away by somebody who has not hit the broken state.
+    # "simplified" away.
     ("orgs: roles are ranked, not just present", "app/core/orgs.py",
      "if role is None or RANK[role] < RANK[minimum]:", "if role is None:",
      "member_cannot_change_who_has_access"),
@@ -650,17 +640,14 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "if role not in ROLES:", "if False:",
      "unknown_org_role_is_refused"),
     # --- audit log ---------------------------------------------------------
-    # Redaction happens on the way IN. A secret that reaches the table has
-    # already been persisted, and no read-time filter takes it back off the
-    # disk or out of last night's backup.
+    # Redaction happens on the way in: once a secret reaches the table it's on
+    # disk and in backups, and read-time filtering can't undo that.
     ("audit: a secret is never written to the table", "app/core/audit.py",
      "if any(hint in name for hint in _SECRET_HINTS):", "if False:",
      "never_stores_a_secret"),
     # --- executive metrics -------------------------------------------------
-    # The line between a measured zero and a null. $0 MRR reads as a business
-    # result; the truth today is that nobody COULD pay and nothing was
-    # measured, and a dashboard that cannot tell those apart is believed
-    # anyway.
+    # A measured zero vs null: $0 MRR looks like a business result, when really
+    # nobody could pay and nothing was measured.
     ("metrics: revenue is null, not zero, when billing is not connected",
      "app/core/metrics.py", "    if not connected:", "    if False:",
      "revenue_is_not_measured_when_billing"),
@@ -677,9 +664,9 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "await asyncio.to_thread(improve.check_active)", "pass",
      "auto_rollback_is_actually_driven"),
     # --- feature flags and onboarding --------------------------------------
-    # A typo quietly meaning "off" is how a feature vanishes for everybody,
-    # and an unreadable check counted as a failure blames the customer for
-    # our outage. Both are one deleted line away.
+    # A typo quietly meaning "off" makes a feature vanish for everyone, and an
+    # unreadable check counted as a failure blames the customer for our outage.
+    # Both are one deleted line away.
     ("flags: an unknown flag raises rather than reading as off",
      "app/core/flags.py", "    if flag is None:", "    if False:",
      "unknown_flag_raises"),
@@ -687,16 +674,15 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "app/core/onboarding.py", '        if state["done"] is None:',
      "        if False:", "unknown_check_is_not_counted"),
     # --- the Executive operations panel ------------------------------------
-    # Four APIs with no screen in front of them is the knowledge.backfill()
-    # shape again: built, tested, and reaching nobody.
+    # The operations APIs need a screen actually mounted in front of them.
     ("executive: the operations panel is actually mounted",
      "../frontend/components/ExecutiveCommand.tsx",
      "<ExecutiveOperations />", "<span />",
      "executive_view_mounts"),
     # --- durable state on a free Dataset repo ------------------------------
-    # Two ways this loses or exposes data, both one line each: restoring ON
-    # TOP of a live database, and creating the snapshot repo public when it
-    # holds every account.
+    # Two one-line ways to lose or expose data: restoring on top of a live
+    # database, and creating the snapshot repo public when it holds every
+    # account.
     ("remote_state: a pull never overwrites a live state file",
      "app/core/remote_state.py", "    if os.path.exists(dest):",
      "    if False:", "never_overwrites_a_state_file"),
@@ -706,8 +692,8 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      '        api.create_repo(repo_id=repo_id(), repo_type="dataset", private=False,',
      "push_is_recorded_as_proof"),
     # --- the two sign-in doors ---------------------------------------------
-    # The box advertised both and called one, so a customer created from the
-    # Executive screen was told a correct password was invalid.
+    # The sign-in box must try the subscriber door too, or a customer created from
+    # the Executive screen is told a correct password is invalid.
     ("login: the sign-in box tries the subscriber door too",
      "../frontend/lib/api.ts",
      'await fetch("/api/account/login", {', 'await fetch("/api/__removed__", {',
@@ -729,10 +715,10 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      '["customers", "Customers", true],',
      '["customers", "Customers", false],',
      "customers_screen_is_reachable"),
-    # --- the public demo opens the CUSTOMER product -----------------------
-    # This endpoint takes no credential and is reachable by anyone. The only
-    # thing between a stranger and a paying customer's audit findings is that
-    # the server picks the business and only ever picks a demo one.
+    # --- the public demo opens the customer product ------------------------
+    # This endpoint takes no credential. The only thing between a stranger and a
+    # paying customer's audit findings is that the server picks the business and
+    # only ever picks a demo one.
     ("demo: the showcase can only be a demo business",
      "app/engines/demo_workspace.py",
      "return [c for c in clients.all_clients() if is_demo_client(c)]",
@@ -754,7 +740,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "if False:",
      "product_demo_is_rate_limited"),
     # --- portal sessions expire -------------------------------------------
-    # --- the social playbook says what it was measured for ----------------
+    # --- the social playbook says what it was researched for --------------
     ("social: an uncovered industry gets no weekly plan", "app/api/router.py",
      'rec.get("city", ""), lang) if cover["covered"] else [],',
      'rec.get("city", ""), lang),',
@@ -772,13 +758,13 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      'durable["state_backup_proven"] = bool((st.get("last_push") or {}).get("ok"))',
      'durable["state_backup_proven"] = bool(st.get("configured"))',
      "separates_intending_to_back_up_from_having_backed_up"),
-    # --- setting the Paddle keys did not make a sale possible --------------
+    # --- Paddle keys alone don't make a sale possible ---------------------
     ("paddle: billable means a card can be charged", "app/core/billing.py",
      "    if paddle_configured():\n        return paddle_checkout_ready()",
      "    if paddle_configured():\n        return True",
      "trial_is_not_billable_until_a_card_can_be_charged"),
-    # processor_name() said "paddle" while checkout() told every customer to
-    # configure PayPal. The detector was wired; the checkout was not.
+    # processor_name() and checkout() must agree: when Paddle is configured,
+    # checkout has to use it rather than fall through to PayPal.
     ("paddle: checkout actually uses Paddle", "app/core/billing.py",
      "    if paddle_configured():\n        return _paddle_checkout(email, plan_key, plan)",
      "    if False:\n        return _paddle_checkout(email, plan_key, plan)",
@@ -818,7 +804,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      "items = sorted(crm.visible_to(_leads(), _owner()),",
      "items = sorted(list(_leads().values()),",
      "founders_pipeline_is_not_the_customers or crm_is_theirs_alone"),
-    # --- the plan limit that charged nobody --------------------------------
+    # --- the plan's AI-call limit ------------------------------------------
     ("quota: llm.complete honours the plan limit", "app/core/llm.py",
      'if not verdict["allowed"]:', "if False:",
      "llm_complete_refuses_when_the_account_is_out"),
@@ -844,7 +830,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      'return {"checked": False, "deliverable": None,\n                "reason": "MX checking is off (set TITAN_VERIFY_EMAIL_MX=1)"}',
      'return {"checked": True, "deliverable": False, "reason": "off"}',
      "deliverability_is_off_by_default_and_fails_open"),
-    # --- nobody could change a password -----------------------------------
+    # --- password changes --------------------------------------------------
     ("password: the portal setter is owner-gated", "app/api/router.py",
      '    email = _owned(cid, x_account_token)\n    if not clients.set_password(cid, req.password):',
      '    email = "nobody"\n    if not clients.set_password(cid, req.password):',
@@ -867,7 +853,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
      'return {"revoked": dict(_revoked), "cutoffs": dict(_cutoffs)}',
      'return {"revoked": dict(_revoked)}',
      "cutoff_survives_a_restart"),
-    # --- a kill switch that does not kill ---------------------------------
+    # --- a kill switch has to kill -----------------------------------------
     ("flags: switching off site_fix stops proposing", "app/core/site_fix.py",
      'if not flags.is_enabled("site_fix"):\n        return {"ok": False, "error": (\n            "Website fixes are switched off for this deployment "\n            "(feature flag: site_fix)."), "proposed": [], "skipped": []}',
      "pass",
@@ -910,13 +896,11 @@ def _digest(path: str) -> str:
     return hashlib.sha256(io.open(path, "rb").read()).hexdigest()
 
 
-# A run that COMPLETES restores byte-for-byte and proves it. A run that is
-# KILLED does not — SIGKILL does not run `finally`, so the mutant stays in the
-# source and the next run reports its anchor as merely "stale". That happened:
-# a wait loop killed a run, `pass  # (` sat in approvals.py, and the only
-# symptom was a SKIP line. This marker closes it. It names the file being
-# mutated for the whole window the mutation exists, so an interrupted run is
-# LOUD on the next start instead of silent.
+# A run that completes restores byte-for-byte and verifies it. A run that is
+# killed doesn't - SIGKILL skips `finally`, so the mutant stays in the source
+# and the next run would only report its anchor as "stale". This marker names
+# the file being mutated for as long as the mutation exists, so an
+# interrupted run is loud on the next start.
 _MARKER = os.path.join(os.path.dirname(__file__), ".mutation-in-progress")
 
 
@@ -954,21 +938,16 @@ def run(only: str = "") -> int:
         if only and only not in label:
             continue
         before_digest = _digest(path)
-        # Bytes, not text. Text mode reads CRLF as LF and writes LF back, so a
-        # CRLF file would come back content-identical and byte-DIFFERENT — the
-        # restore check would fire FATAL and the tool would have rewritten the
-        # line endings of a file it promised not to touch. Every backend file
-        # here is LF, but the frontend components are CRLF in the working tree
-        # (`* text=auto` + core.autocrlf), and there are guards worth mutating
-        # in them.
+        # Bytes, not text. Text mode reads CRLF as LF and writes LF back, so a CRLF
+        # file would come back with different bytes, the restore check would fire,
+        # and the tool would have rewritten line endings it promised not to touch.
+        # Frontend components can be CRLF in the working tree (`* text=auto` +
+        # core.autocrlf), and some guards live there.
         raw = io.open(path, "rb").read()
         original = raw.decode("utf-8")
-        # A multi-line anchor is written with "\n". The comment above says
-        # every backend file is LF, and that was true of THIS working tree and
-        # false in general: `core.autocrlf=true` means a fresh CLONE writes CRLF
-        # for every file. Seven anchors span lines, so on a clean checkout seven
-        # guards printed SKIP, the run still exited 0, and nobody was guarding
-        # anything. Match against the line endings the file actually has.
+        # A multi-line anchor is written with "\n", but with `core.autocrlf=true` a
+        # fresh clone writes CRLF for every file, and those anchors would silently
+        # never match. Match against the line endings the file actually has.
         needle, mutant = anchor, replacement
         if "\r\n" in original:
             needle = anchor.replace("\r\n", "\n").replace("\n", "\r\n")
@@ -987,16 +966,12 @@ def run(only: str = "") -> int:
                  "tests/test_cockpit.py", "-q",
                  "--no-header", "-p", "no:cacheprovider", "-k", selector],
                 capture_output=True, text=True)
-            # Exit 5 is "no tests collected": a selector that matches nothing
-            # used to count as CAUGHT, so a guard whose test had been renamed
-            # looked guarded while nothing ran.
+            # Exit 5 is "no tests collected". It must not count as caught, or a guard
+            # whose test was renamed would look guarded while nothing ran.
             caught = result.returncode not in (0, 5)
         finally:
-            # Restore, then PROVE the restore. A scratch version of this tool
-            # once left a mutation in backup.py that disabled the check a
-            # backup actually restores. Restoring the ORIGINAL BYTES rather
-            # than a re-encode of the decoded text makes the digest check mean
-            # what it says.
+            # Restore, then prove the restore. Writing back the original bytes rather
+            # than re-encoding decoded text makes the digest check mean what it says.
             io.open(path, "wb").write(raw)
             if _digest(path) != before_digest:
                 print(f"\nFATAL: {path} was not restored byte-for-byte. "

@@ -1,7 +1,7 @@
-"""Autonomous Growth Engine API — live research, marketing war room, SEO co-pilot.
+"""Growth API: live research, the marketing war room and the SEO co-pilot.
 
-Mounted alongside the main router. These are dashboard-facing (auth-gated like
-the rest); the 24/7 research itself runs server-side on the heartbeat.
+Dashboard-facing routes, behind the usual auth. The scheduled research runs
+on the heartbeat.
 """
 
 from __future__ import annotations
@@ -16,9 +16,11 @@ router = APIRouter(prefix="/api")
 
 
 def limit_subscriber() -> None:
-    """A subscriber's War Room click runs web searches on the platform's key
-    and several AI calls, so it is limited per hour like lead discovery. The
-    founder's own War Room is not limited."""
+    """Rate-limit a subscriber's War Room runs.
+
+    Each run uses the platform's search key and several AI calls, so it gets an
+    hourly limit like lead discovery. The founder's own runs aren't limited.
+    """
     from ..core import cockpit_scope, ratelimit
     email = cockpit_scope.customer_email()
     if email:
@@ -35,7 +37,7 @@ def growth_intel() -> dict:
 
 @router.post("/growth/scan", tags=["growth"])
 def growth_scan() -> dict:
-    """Run a full research cycle right now (also runs automatically 24/7)."""
+    """Run a research cycle now (it also runs on the heartbeat)."""
     limit_subscriber()
     return autonomous.growth_cycle(STORE)
 
@@ -46,7 +48,7 @@ class DebateRequest(BaseModel):
 
 @router.post("/warroom/debate", tags=["growth"])
 def warroom_debate(req: DebateRequest) -> dict:
-    """The marketing team argues, the head decides, and returns an action plan."""
+    """The marketing team pitches, the head decides and returns an action plan."""
     limit_subscriber()
     return autonomous.marketing_debate(req.topic, STORE)
 
@@ -57,7 +59,9 @@ class SeoRequest(BaseModel):
 
 @router.post("/seo/report", tags=["growth"])
 def seo_report(req: SeoRequest) -> dict:
-    """Live ranking landscape + a prioritised, zero-cost action list to climb."""
+    """Current ranking landscape for a keyword, plus a prioritised zero-cost
+    action list.
+    """
     limit_subscriber()
     return autonomous.seo_report(req.keyword, STORE)
 
@@ -69,19 +73,23 @@ class RepurposeRequest(BaseModel):
 
 @router.post("/content/repurpose", tags=["growth"])
 def content_repurpose(req: RepurposeRequest) -> dict:
-    """One idea → blog + LinkedIn + X thread + IG caption + email + Shorts
-    script. The pack is also saved to Deliverables."""
+    """One idea -> blog, LinkedIn post, X thread, IG caption, email and Shorts
+    script. The pack is also saved to Deliverables.
+    """
     from ..engines import repurpose
     limit_subscriber()
 
     return repurpose.repurpose(req.idea, req.lang, STORE)
 
 
-# --- gamification + performance (REAL events only, no fake progress) --------
+# --- gamification and performance (counted from real events) --------------
 
 def _my_leads() -> list:
-    """The caller's own leads from the shared, owner-tagged table. Counting
-    `s.leads` whole put every customer's leads into the founder's XP."""
+    """The caller's own leads from the shared, owner-tagged table.
+
+    Counting the whole table would put every subscriber's leads into the
+    founder's XP.
+    """
     from ..core import cockpit_scope, crm
     from ..store import founder_store
     return crm.visible_to(founder_store().leads,
@@ -116,7 +124,7 @@ def _counters(s) -> dict:
 
 @router.get("/progress", tags=["growth"])
 def progress() -> dict:
-    """XP and level computed ONLY from real events — revenue, wins, real work."""
+    """XP and level, computed only from real events: revenue, wins, work done."""
     s = STORE
     c = _counters(s)
     leads_contacted = sum(
@@ -146,9 +154,11 @@ def progress() -> dict:
 
 @router.get("/performance", tags=["growth"])
 def performance() -> dict:
-    """Automation output counters + an ESTIMATED time-saved figure (labelled
-    estimate — ~30min/deliverable, 15min/post, 20min/proposal-application,
-    2min/telegram command)."""
+    """Automation output counters plus an estimated time saved.
+
+    The estimate assumes ~30 min per deliverable, 15 per post, 20 per job
+    application and 2 per Telegram command, and is labelled as an estimate.
+    """
     c = _counters(STORE)
     minutes = (
         c["deliverables"] * 30
@@ -175,8 +185,9 @@ class PrRequest(BaseModel):
 
 @router.post("/devops/pr", tags=["growth"])
 def devops_pr(req: PrRequest) -> dict:
-    """Open a REAL pull request to a repo (default: Career Mind) with an AI-drafted
-    improvement to one file. You review and merge — nothing is auto-merged."""
+    """Open a pull request with an AI-drafted improvement to one file (Career
+    Mind by default). Nothing is merged automatically.
+    """
     from ..engines import devops
 
     return devops.open_improvement_pr(req.owner, req.repo, req.instruction, req.path, STORE)

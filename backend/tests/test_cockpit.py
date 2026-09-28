@@ -1,8 +1,7 @@
 """Customer cockpit: every subscriber reads their own workspace.
 
-See docs/superpowers/specs/2026-09-28-customer-cockpit-design.md. The tests
-that matter most here are the isolation ones: a customer must never see the
-founder's data, and must never write into it.
+The most important tests here are the isolation ones: a customer must never
+see the founder's data, and must never write into it.
 """
 
 from __future__ import annotations
@@ -77,10 +76,11 @@ def test_a_workspace_survives_a_restart(clean_workspaces):
 
 
 def test_a_subscribers_research_and_content_survive_a_restart(clean_workspaces):
-    """The founder's heartbeat re-runs his research; nothing re-runs a
-    subscriber's, and their content packs exist nowhere else. The saved state
-    goes through JSON (db.put_many uses default=str), so dates come back as
-    text and must still load."""
+    """The founder's heartbeat re-runs the founder's research; nothing re-runs a
+    subscriber's, and their content packs exist nowhere else. Saved state goes
+    through JSON (db.put_many uses default=str), so dates come back as text
+    and must still load.
+    """
     import json
     from app.domain.schemas import Deliverable
     workspaces = clean_workspaces
@@ -179,7 +179,8 @@ _FOUNDER_WORDS = ("Career Mind", "Upwork", "Kindle", "Abdullah", _CANARY, "99999
 
 def _plant_founder_canaries():
     """Fill the founder Store with data no customer may ever see: the real
-    founder seed (it names his businesses) plus explicit canaries."""
+    founder seed (it names the founder's businesses) plus explicit canaries.
+    """
     from app.store import seed
     from app.engines import opportunity
     f = st.founder_store()
@@ -209,9 +210,10 @@ def _plant_founder_canaries():
 
 
 def test_no_customer_route_ever_shows_founder_data(customer, monkeypatch):
-    """The one that matters. Fails OPEN: every route on the allowlist is
-    called, including ones added later, and any founder canary in any body
-    fails the suite."""
+    """The key test. Fails open: every route on the allowlist is called,
+    including ones added later, and any founder canary in any body fails the
+    suite.
+    """
     from app.core import api_adapters, clients, cockpit_scope, voice_sessions as vs
     client, token, _ = customer
     # The two live public-data routes would otherwise call out to the internet.
@@ -256,8 +258,9 @@ def test_no_customer_route_ever_shows_founder_data(customer, monkeypatch):
 
 
 def test_every_route_not_on_the_allowlist_is_closed_to_customers(customer):
-    """Walks the real route table, so a route added tomorrow is closed to
-    customers by default rather than by somebody remembering."""
+    """Walks the real route table, so a route added later is closed to
+    customers by default.
+    """
     from fastapi.routing import APIRoute
     from app.core import cockpit_scope
     from app.main import app
@@ -280,8 +283,9 @@ def test_every_route_not_on_the_allowlist_is_closed_to_customers(customer):
 
 
 def test_a_customers_crm_is_theirs_alone(customer):
-    """One owner-tagged leads table for everyone, as /api/account/leads has
-    always used. The owner comes from the session, never the request."""
+    """One owner-tagged leads table for everyone, as /api/account/leads uses.
+    The owner comes from the session, never the request.
+    """
     from app.core import crm
     client, token, _ = customer
     hdr = {"X-Account-Token": token}
@@ -382,9 +386,9 @@ def test_a_cockpit_re_audit_spends_the_plans_audits(customer):
 
 
 def test_the_pdf_report_downloads_from_join_and_from_the_cockpit(customer):
-    """Both doors share one PDF builder. A helper name clash once replaced it
-    with the portal's route of the same name; nothing covered /join's
-    download, so it would have broken silently."""
+    """Both doors share one PDF builder; make sure /join's download still works
+    through it.
+    """
     from app.core import clients
     client, token, _ = customer
     own = _make_client("Report Co", owner="cust@example.com")
@@ -495,8 +499,9 @@ def test_the_approvals_queue_points_at_the_route_that_approves(customer):
 
 
 def test_ask_titan_answers_a_subscriber_from_their_own_data(customer, monkeypatch):
-    """The founder's assistant is briefed with his empire figures and calls him
-    by name. A subscriber's is briefed with their own businesses only."""
+    """The founder's assistant is briefed with the founder's figures and uses
+    their name. A subscriber's is briefed with their own businesses only.
+    """
     from app.core import llm
     client, token, workspaces = customer
     hdr = {"X-Account-Token": token}
@@ -578,8 +583,9 @@ def test_a_subscribers_money_is_their_own(customer):
 
 
 def test_the_executive_report_names_only_the_callers_businesses(customer):
-    """engines/bi.py listed every client on the platform ("Never audited: ...")
-    and counted every account's leads. A subscriber's report is theirs."""
+    """engines/bi.py must limit a subscriber's report to their own clients and
+    leads, not every one on the platform.
+    """
     from app.core import clients, crm
     client, token, _ = customer
     hdr = {"X-Account-Token": token}
@@ -611,9 +617,9 @@ def test_the_executive_report_names_only_the_callers_businesses(customer):
 
 
 def test_the_war_room_works_for_the_subscribers_own_business(customer, monkeypatch):
-    """The War Room's prompts named the founder's businesses and every debate
-    went to his Telegram. A subscriber's researches, debates and writes for
-    their own business, and nothing of theirs reaches the founder."""
+    """A subscriber's War Room researches, debates and writes for their own
+    business, and nothing of theirs reaches the founder's Telegram.
+    """
     from app.core import clients, llm
     from app.engines import news, research, telegram_bot
     client, token, workspaces = customer
@@ -687,8 +693,9 @@ def test_a_subscribers_war_room_is_rate_limited(customer, monkeypatch):
 
 def test_a_subscriber_is_never_told_to_set_an_api_key(customer, monkeypatch):
     """With no AI answer the founder's screens say which key to set. A
-    subscriber cannot set keys, so they hear the real reason instead - and
-    what to do about it when it is their plan's limit."""
+    subscriber can't set keys, so they get the real reason instead - and
+    what to do about it when it's their plan's limit.
+    """
     from app.core import billing, llm
     from app.engines import news, research
     client, token, _ = customer
@@ -711,8 +718,9 @@ def test_a_subscriber_is_never_told_to_set_an_api_key(customer, monkeypatch):
 
 def test_the_dashboard_speaks_for_the_subscriber(customer, monkeypatch):
     """Agent chat, the command bar, the Urdu briefing, Growth Studio and the
-    next post were all written about the founder's businesses. From a
-    subscriber's cockpit every one of them is about theirs."""
+    next post are about the founder's businesses by default. From a
+    subscriber's cockpit every one of them is about theirs.
+    """
     from app.core import clients, llm
     from app.engines import news, research
     client, token, workspaces = customer
@@ -763,9 +771,10 @@ def test_the_dashboard_speaks_for_the_subscriber(customer, monkeypatch):
 
 
 def test_the_command_bar_acts_for_the_subscriber(customer, monkeypatch):
-    """The command bar posts to /api/agent/act, whose every prompt promoted
-    Career Mind and Upwork and whose every reply began "Abdullah". A
-    subscriber's drafts are about their business and land in their workspace."""
+    """The command bar posts to /api/agent/act. For a subscriber its drafts are
+    about their business, never the founder's products, and land in their
+    workspace.
+    """
     from app.core import clients, llm
     from app.engines import autonomous
     client, token, workspaces = customer
@@ -838,9 +847,10 @@ def test_a_subscribers_post_never_goes_through_the_founders_webhook(customer, mo
 
 
 def test_the_founders_figures_and_ai_are_no_longer_public(customer, monkeypatch):
-    """/api/voice-report and /api/assistant were open 'because the Space URL
-    is private'. It is not, and anyone could read his live figures and spend
-    his AI quota. With auth on, both need his token now."""
+    """/api/voice-report and /api/assistant need the founder token when auth is
+    on; otherwise anyone could read the founder's figures and spend the
+    founder's AI quota.
+    """
     import secrets
     client, token, _ = customer
     monkeypatch.setenv("TITAN_REQUIRE_AUTH", "1")
@@ -848,7 +858,7 @@ def test_the_founders_figures_and_ai_are_no_longer_public(customer, monkeypatch)
     assert client.get("/api/voice-report").status_code == 401
     assert client.post("/api/assistant", json={"question": "hi"}).status_code == 401
     # A subscriber still has their own, through their own door. (A new secret
-    # means a new sign-in: tokens are signed with it.)
+    # means a new sign-in, since tokens are signed with it.)
     from app.core import billing
     token = billing.authenticate("cust@example.com", "password123")
     assert client.get("/api/me/voice-report",
@@ -873,9 +883,10 @@ def _say(client, chat, text):
 
 
 def test_a_subscribers_telegram_is_linked_by_a_one_time_code(telegram):
-    """Titan cannot reach Telegram from its Space, so a subscriber uses Titan's
-    own bot through the same relay: a one-time code links their chat, and from
-    then on it is answered from their workspace only."""
+    """Titan can't reach Telegram from its Space, so a subscriber uses Titan's
+    own bot through the same relay: a one-time code links their chat, and
+    from then on it's answered from their workspace only.
+    """
     from app.core import telegram_links
     client, token, workspaces = telegram
     hdr = {"X-Account-Token": token}
@@ -895,7 +906,7 @@ def test_a_subscribers_telegram_is_linked_by_a_one_time_code(telegram):
     assert "Plan:" in reply and "$40.00" in reply
     for word in _FOUNDER_WORDS:
         assert word not in reply
-    assert len(st.founder_store().telegram_log) == founders_log   # never his log
+    assert len(st.founder_store().telegram_log) == founders_log   # never the founder's log
     assert len(client.get("/api/me/telegram/log", headers=hdr).json()) == 2
 
     # The founder's own chat is never linked to a subscriber.
@@ -982,8 +993,9 @@ def test_polling_never_answers_a_subscribers_chat_with_the_founders_data(
 
 
 def test_job_radar_works_from_the_subscribers_own_profile(customer, monkeypatch):
-    """Job Radar scored and wrote proposals from the founder's CV. A
-    subscriber's works from the profile they write, and never his."""
+    """A subscriber's Job Radar scores and writes proposals from the profile
+    they write, never from the founder's CV.
+    """
     from app.core import llm
     from app.engines import jobs, research
     client, token, workspaces = customer
@@ -1017,16 +1029,17 @@ def test_job_radar_works_from_the_subscribers_own_profile(customer, monkeypatch)
         assert jobs.PROFILE not in s
         for word in _FOUNDER_WORDS:
             assert word not in s, word
-    # The founder's own radar is untouched and still his.
+    # The founder's own radar is untouched.
     assert not (st.founder_store().jobs or {}).get("profile")
     assert workspaces.export_state()["cust@example.com"]["jobs"]["profile"] == profile
 
 
 def test_the_demo_is_the_subscriber_cockpit_and_changes_nothing(customer, monkeypatch):
-    """Abdullah: the demo must be the cockpit a customer gets - not the
-    operator console with sample figures, and not a portal. So it is that
-    cockpit, on a demo account that holds Titan's own demonstration businesses
-    and can read everything and change nothing, on either door."""
+    """The demo is the cockpit a customer gets - not the operator console with
+    sample figures, and not a portal - on a demo account that holds Titan's
+    own demonstration businesses and can read everything but change nothing,
+    on either door.
+    """
     from app.core import analytics, billing, cockpit_scope, llm
     from app.engines import demo_workspace
     client, _, _ = customer
@@ -1166,9 +1179,10 @@ def test_a_customer_is_never_shown_the_founder_sample_data():
 
 
 def test_the_voice_screens_use_the_subscribers_own_door():
-    """Voice Agents, the session recorder and Ask Titan all used hard-coded
-    /api paths, which in a subscriber's cockpit would record their calls under
-    the founder and brief their assistant with his figures."""
+    """Voice Agents, the session recorder and Ask Titan must use the subscriber's
+    door, or their calls would be recorded under the founder and their
+    assistant briefed with the founder's figures.
+    """
     comp = _FRONTEND / "components"
     assert "`${apiBase()}/voice${path}`" in (comp / "VoiceAgents.tsx").read_text(encoding="utf-8")
     assert "`${apiBase()}/voice${path}`" in (
@@ -1186,7 +1200,8 @@ def test_the_voice_screens_use_the_subscribers_own_door():
 
 def test_the_money_screens_show_a_subscriber_only_their_own():
     """Customers, Executive and the revenue ledger each have a founder version
-    built on his business. A subscriber's cockpit must render theirs."""
+    built on the founder's business. A subscriber's cockpit must render theirs.
+    """
     comp = _FRONTEND / "components"
     cc = (comp / "CommandCenter.tsx").read_text(encoding="utf-8")
     assert '(customer ? <MyCustomers onOpenCrm={() => setView("crm")} /> : <Customers />)' in cc
@@ -1210,8 +1225,9 @@ def test_the_war_room_screen_keeps_the_founders_repo_tools_to_himself():
 
 
 def test_the_dashboard_never_names_the_founder_to_a_subscriber():
-    """The Urdu button carried his name, the command bar suggested posting
-    about Career Mind and the CRM offered "School/Uni" as a lead source."""
+    """No founder-specific copy in a subscriber's cockpit: the Urdu button,
+    command bar suggestions and CRM lead sources.
+    """
     comp = _FRONTEND / "components"
     read = lambda name: (comp / name).read_text(encoding="utf-8")  # noqa: E731
     assert "(customer ? CUSTOMER_SUGGESTIONS : SUGGESTIONS)" in read("CommandBar.tsx")
@@ -1223,14 +1239,12 @@ def test_the_dashboard_never_names_the_founder_to_a_subscriber():
 
 # Client methods a subscriber's cockpit never calls: the founder's own feeds
 # and engines, and the sign-in / demo calls made before anyone is a customer.
-# Everything else in lib/api.ts must reach a route open at /api/me - otherwise
-# a button in their cockpit fails with a 404 nobody can explain. That is how
-# the command bar (it posts to /agent/act, not /command) was nearly shipped
-# broken.
+# Everything else in lib/api.ts must reach a route open at /api/me, otherwise
+# a button in their cockpit fails with a 404.
 _FOUNDER_ONLY_CLIENT = {
     "authStatus", "sessionKind", "enterDemo",        # before sign-in
-    "connectors", "channels", "intelligence",        # his feeds (never requested)
-    "refreshConnectors", "scanOpportunities",         # his engines (buttons hidden)
+    "connectors", "channels", "intelligence",        # founder's feeds (never requested)
+    "refreshConnectors", "scanOpportunities",         # founder's engines (buttons hidden)
     "weeklyReport", "executeOpportunity", "openPr",
 }
 
@@ -1260,8 +1274,9 @@ def test_every_client_call_a_subscriber_can_make_is_open_to_them():
 
 
 def test_the_demo_on_the_front_door_is_the_cockpit():
-    """The sign-in page offered "tour the operator console (our internal view,
-    sample figures)" and a client portal. The demo is now the cockpit itself."""
+    """The sign-in page's demo is the cockpit itself, not the operator console or
+    a client portal.
+    """
     login = (_FRONTEND / "components" / "Login.tsx").read_text(encoding="utf-8")
     assert "Try the cockpit — no signup" in login
     assert "operator console" not in login and "/api/demo/portal" not in login

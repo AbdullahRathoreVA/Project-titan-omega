@@ -1,8 +1,8 @@
 "use client";
 
-// AI City view: full-canvas 3D city of your real divisions. Click a district →
-// the camera flies there and its live agents panel slides in; click an agent
-// to inspect + talk (existing modal). ESC / Back flies the camera home.
+// AI City view: a full-canvas 3D city of the divisions. Click a district and the
+// camera flies there while its agents panel slides in; click an agent to inspect
+// and talk to it. ESC / Back flies the camera home.
 
 import { Component, useEffect, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";

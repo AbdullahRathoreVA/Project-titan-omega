@@ -11,13 +11,10 @@
 <!--
   The conversion path, as one screen with three steps.
 
-  Static HTML for the same reason /pricing is: this is where a stranger decides
-  whether to bother, and it must render instantly. It talks only to endpoints
-  that already exist — /api/plans, /api/signup, /api/account/login,
-  /api/account/onboard — and holds no business logic of its own. Plan limits
-  and prices are FETCHED, never hardcoded; a signup page that disagrees with
-  what the server enforces is how people end up billed for something they were
-  never shown.
+  Static HTML like /pricing, so it renders instantly. It only talks to the API
+  (/api/plans, /api/signup, /api/account/login, /api/account/onboard) and holds
+  no business logic of its own. Plan limits and prices are fetched, never
+  hardcoded, so this page always matches what the server enforces.
 
   The account token lives in sessionStorage, not localStorage: it dies with the
   tab. This page is often opened on a shared or borrowed machine.
@@ -36,8 +33,8 @@
   h1{font-size:clamp(25px,4.4vw,34px);margin:0 0 10px;font-weight:600;letter-spacing:-.02em;text-wrap:balance}
   .sub{color:var(--mut);font-size:14.5px;max-width:58ch;margin:0}
 
-  /* Progress: three steps, and the numbering is real — you cannot add a
-     business before you have an account. */
+  /* Progress: three steps, in order - you can't add a business before you
+     have an account. */
   .steps{display:flex;gap:8px;margin:26px 0 22px}
   .step{flex:1;border-top:2px solid var(--edge);padding-top:9px;
         font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mut)}
@@ -222,8 +219,8 @@
   function clear(el) { el.className = "msg"; el.textContent = ""; }
 
   // The API answers errors in three shapes: a sentence, a rate-limit verdict
-  // object, and FastAPI's list of validation errors. Passing the last two
-  // straight to `new Error()` printed "[object Object]" to customers.
+  // object, and FastAPI's list of validation errors. Turn all three into a
+  // readable sentence.
   function errText(body, status, fallback) {
     var d = body && body.detail;
     if (typeof d === "string" && d) return d;
@@ -315,11 +312,10 @@
   }
 
   // --- resume an existing session ----------------------------------------
-  // The dashboard sign-in box hands a subscriber here with their token already
-  // stored, and a customer who simply comes back should not retype a password
-  // they just typed. The token is VERIFIED against /api/account rather than
-  // trusted: a stale one must send them to sign in again, not into a
-  // half-loaded workspace.
+  // The dashboard sign-in box sends a subscriber here with their token already
+  // stored, so a returning customer doesn't retype their password. The token
+  // is checked against /api/account first: a stale one sends them to sign in
+  // again, not into a half-loaded workspace.
   (function resume() {
     var saved = "";
     try { saved = sessionStorage.getItem("titan_account") || ""; } catch (e) {}
@@ -350,9 +346,8 @@
       .catch(function () { /* offline: the normal sign-in path still works */ });
   })();
 
-  // Plan text is Titan's own, but it goes through innerHTML, and a page
-  // that escapes only the data it currently distrusts escapes the wrong thing
-  // the day the source changes.
+  // Plan text is Titan's own, but it goes through innerHTML, so escape it
+  // anyway in case the source ever changes.
   function esc(s) {
     return String(s === undefined || s === null ? "" : s).replace(
       /[&<>"]/g, function (c) {
@@ -371,10 +366,8 @@
       b.dataset.key = p.key;
       var lim = p.limits || {};
 
-      // Every number below comes from /api/plans. None is typed here — a page
-      // that disagrees with what the server enforces is a promise nobody made,
-      // and the AI limit in particular is now actually charged, so a customer
-      // who is not shown it will meet it as a surprise.
+      // Every number below comes from /api/plans; none is typed here. The AI
+      // limit is enforced, so customers need to see it before they choose.
       function amount(n, one, many) {
         if (n === -1) return "Unlimited " + many;
         return n + " " + (n === 1 ? one : many);
@@ -410,7 +403,7 @@
         plan = p.key;
         Array.prototype.forEach.call(box.children, function (c) { c.classList.remove("sel"); });
         b.classList.add("sel");
-        // Honesty: naming the blocker at the moment of choosing beats a dead
+        // Name the blocker at the moment of choosing, rather than show a dead
         // button three screens later.
         if (p.key !== "free" && d.processor === "none") {
           say($("m1"), "Heads up — no payment processor is connected yet, so a paid " +
@@ -454,9 +447,9 @@
     setMode(MODE === "signup" ? "login" : "signup");
   });
 
-  // ?mode=login opens this page ready to SIGN IN. A customer the founder
-  // created already has an account, so landing them on "Create account" tells
-  // them their own email is taken.
+  // ?mode=login opens this page ready to sign in. A customer the founder
+  // created already has an account, and "Create account" would tell them their
+  // own email is taken.
   try {
     if (window.location.search.indexOf("mode=login") >= 0) { setMode("login"); }
   } catch (e) {}
@@ -483,8 +476,8 @@
         if (!r.ok) {
           var e = await r.json().catch(function () { return {}; });
           var why = errText(e, r.status, "Could not create the account.");
-          // Somebody coming back through "Create account" is not an error:
-          // try their password, exactly as /pricing does.
+          // Someone coming back through "Create account" isn't an error: try
+          // their password, as /pricing does.
           if (!/already exists/i.test(why)) throw new Error(why);
           existing = true;
         }
@@ -509,9 +502,9 @@
       // machines and the token should die with the tab.
       try { sessionStorage.setItem("titan_account", TOKEN); } catch (e) {}
       step(2);
-      // A paid plan chosen here is only a wish until it is paid for: the
-      // account is Free until Paddle confirms. Open the checkout now rather
-      // than leaving them on Free without saying why.
+      // A paid plan chosen here only applies once it's paid for: the account
+      // stays Free until Paddle confirms. Open the checkout now so they aren't
+      // left on Free without knowing why.
       var current = ((data.account || {}).plan) || "free";
       if ((MODE === "signup" || existing) && plan !== "free" && current !== plan) {
         await startCheckout(plan);
@@ -632,8 +625,8 @@
     }
   }
 
-  // The customer's actual product. Without this the wizard was the whole
-  // experience: onboard, read one audit, and have nowhere to go afterwards.
+  // Opens the customer's dashboard, so the wizard leads somewhere after the
+  // first audit.
   $("r-portal").addEventListener("click", async function () {
     var btn = $("r-portal");
     if (!CID) { say($("m3"), "Add a business first."); return; }

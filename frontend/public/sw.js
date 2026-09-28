@@ -1,25 +1,20 @@
 /**
  * Titan Omega service worker.
  *
- * Exists so the dashboard installs to a phone home screen — Android, iOS via
- * "Add to Home Screen", and Windows via Edge — without paying any store fee.
- * Apple charges $99/year for App Store distribution, which is roughly twice
- * this project's entire annual budget; a PWA costs nothing and, for a
- * dashboard, users cannot tell the difference.
+ * Lets the dashboard install to a phone home screen (Android, iOS via "Add to
+ * Home Screen", Windows via Edge) without an app store. For a dashboard, a PWA
+ * is indistinguishable from a native app and costs nothing.
  *
- * The caching strategy is deliberately conservative, because getting this
- * wrong is worse than having no service worker at all:
+ * Caching is deliberately conservative, since getting it wrong is worse than
+ * having no service worker:
  *
- *  - API responses are NEVER cached. This dashboard's whole promise is that
- *    the numbers are real. Serving a cached /api/status would show yesterday's
- *    revenue as today's, which is exactly the kind of quiet lie the rest of the
- *    codebase goes out of its way to avoid.
+ *  - API responses are never cached. A cached /api/status would show
+ *    yesterday's numbers as today's.
  *
  *  - The HTML shell is network-first. Next.js chunk filenames are content
- *    hashed, so a cached index.html keeps pointing at OLD chunk names — the
- *    documented failure that made the HF Space serve a stale dashboard. Network
- *    first means a deploy is picked up immediately; the cache is only a
- *    fallback for being offline.
+ *    hashed, so a cached index.html keeps pointing at old chunk names and
+ *    serves a stale dashboard. Network-first picks up a deploy immediately;
+ *    the cache is only an offline fallback.
  *
  *  - Hashed static assets are cache-first. Their names change when their
  *    contents change, so they can never go stale.
@@ -34,7 +29,7 @@ const ASSETS = `${VERSION}-assets`;
 
 self.addEventListener("install", (event) => {
   // Take over immediately rather than waiting for every tab to close, so a
-  // fixed bug actually reaches the user on next load.
+  // fix reaches the user on the next load.
   self.skipWaiting();
   event.waitUntil(
     caches.open(SHELL).then((c) => c.addAll(["/", "/manifest.webmanifest"]))

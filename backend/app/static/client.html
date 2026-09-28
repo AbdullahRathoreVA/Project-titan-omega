@@ -144,9 +144,8 @@ pre{background:#0b0f18;border:1px solid var(--edge);border-radius:10px;
 </div>
 
 <div class="wrap" id="app" style="display:none">
-  <!-- Shown only when the server says this record carries is_demo. A visitor
-       cannot turn it off by editing the URL, because nothing about it comes
-       from the URL. -->
+  <!-- Shown only when the server says this record carries is_demo; nothing
+       about it comes from the URL. -->
   <div class="demobar" id="demobar" style="display:none">
     <b>Demonstration</b>
     <span id="demotext"></span>
@@ -243,17 +242,12 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g,
 let TOKEN = sessionStorage.getItem('client_token') || '';
 
 /* Plain-language layer. The audit speaks SEO; the owner speaks their own
-   trade. Every technical finding gets a human title, a line explaining what it
-   costs in customers, and an effort estimate so nothing feels open-ended.
+   trade. Every technical finding gets a plain title, a line on what it costs
+   in customers, and an effort estimate so nothing feels open-ended.
 
-   These lines used to speak RESTAURANT — "Label your food photos", "Mark up
-   your menu", "Most restaurant searches happen on a phone" — and every
-   business saw them, because nothing here has ever known what the customer
-   sells. Telling a wholesaler to label their food photos is not a translation
-   of the finding, it is a different finding about a business they do not run.
-   Each line now says the same true thing without naming a trade nobody
-   checked. The one place an industry IS known — the social playbook — says so
-   explicitly instead, via /api/client/social. */
+   This page doesn't know what the business sells, so the wording stays
+   trade-neutral. Industry-specific advice comes from the social playbook via
+   /api/client/social, which does know. */
 const PLAIN = {
   imprint: ["Add your legal details page",
     "Required by law in your country. Without it you can be fined, and a competitor can send you a legal warning and bill you for it.", "30 min"],
@@ -353,11 +347,10 @@ async function boot() {
 
   const me = await api('/client/me');
 
-  /* The honesty rule applies hardest here. This is the screen a prospect
-     decides on, so it says exactly what it is: a real business record whose
-     website is one of Titan's own pages, audited on the same schedule as a
-     paying customer's. The score below is that page's real score. Nothing on
-     this screen is invented, and the banner says which parts are ours. */
+  /* A prospect decides on this screen, so it says exactly what it is: a real
+     business record whose website is one of Titan's own pages, audited on the
+     same schedule as a paying customer's. The score is that page's real
+     score, and the banner says which parts are ours. */
   if (me.is_demo) {
     $('#demobar').style.display = 'block';
     $('#demotext').innerHTML =
@@ -375,8 +368,7 @@ async function boot() {
     [me.industry, me.city, me.country].filter(Boolean).join(' · ');
   if (me.logo_url) $('#logo').src = me.logo_url;
   if (me.is_demo) {
-    /* A demo business has a trial clock nobody is on. Showing "0 days left"
-       to a prospect is a number about nothing. */
+    /* A demo business has no trial, so don't show a countdown. */
     $('#trial').style.display = 'none';
   } else if (me.plan_name) {
     /* A subscriber's own business: access comes from their plan, and the
@@ -394,22 +386,13 @@ async function boot() {
          <div class="d">${new Date(a.ts * 1000).toLocaleString()}</div></div>`).join('')
     : '<div class="muted">Nothing logged yet.</div>';
 
-  /* Social plan, from GET /api/client/social.
-     This block used to hardcode a restaurant week in JavaScript — "Hero dish,
-     close and clean", highlights named "Weinkarte" — and showed it to every
-     business regardless of industry, while the endpoint that computes the real
-     localised plan existed, was registered, was served, and was called by
-     NOTHING. Eighth time something in this codebase shipped tested and
-     uninvoked.
-     The endpoint knows what the playbook was measured for. This page does not
-     get to guess. */
+  /* Social plan, from GET /api/client/social. The endpoint knows which
+     industries the playbook covers; this page doesn't guess. */
   const social = await api('/client/social');
   const cover = social.coverage || {covered: true};
 
   if (!cover.covered) {
-    /* Say what is missing and why. A blank panel and a broken panel look
-       identical, and restaurant advice with a wholesaler's name on it is
-       worse than either. */
+    /* Say what's missing and why; a blank panel would look broken. */
     $('#week').innerHTML =
       `<tr><td colspan="4" class="muted">${esc(cover.reason || '')}</td></tr>`;
     $('#highlights').innerHTML =

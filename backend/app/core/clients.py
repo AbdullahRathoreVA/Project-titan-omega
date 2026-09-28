@@ -1,23 +1,18 @@
-"""Multi-tenant client registry — turning Titan into something you can sell.
+"""Multi-tenant client registry.
 
-Context: a restaurant owner wants SEO and social media handled, with a 2-month
-free evaluation. That is a real customer, and it needs three things Titan did
-not have:
+Each client business needs:
 
-  1. Separate logins. The client sees THEIR business only — never Abdullah's
-     revenue, leads, or other clients' data.
-  2. Per-client configuration. Their website, their Instagram, their logo,
-     their brand voice, their locale.
-  3. Isolation that fails closed. A bug must not leak client A's data to
-     client B. Every lookup is scoped by client_id, and an unknown or expired
-     token resolves to nothing rather than to everything.
+  1. Its own login. A client sees only their business - never the founder's
+     revenue, leads or other clients' data.
+  2. Its own configuration: website, Instagram, logo, brand voice, locale.
+  3. Isolation that fails closed. Every lookup is scoped by client_id, and an
+     unknown or expired token resolves to nothing rather than everything.
 
-Trial handling is explicit because "2 months free" is a promise with a date
-attached: each client carries a trial_ends timestamp, and the dashboard shows
-days remaining so an expiry is never a surprise to either side.
+Each client carries a trial_ends timestamp, and the dashboard shows days
+remaining, so a trial expiry is never a surprise.
 
-Storage is the same in-memory store + JSON persistence the rest of the app
-uses, so this adds no new infrastructure to run or pay for.
+Storage is the same in-memory store + JSON persistence as the rest of the
+app, so there's no new infrastructure.
 """
 
 from __future__ import annotations
@@ -34,39 +29,35 @@ _lock = threading.RLock()
 
 # client_id -> record
 _clients: dict[str, dict] = {}
-# token -> (client_id, issued_at). The timestamp is the whole point: SESSION_TTL
-# below was declared with a reason attached and never once compared against
-# anything, so a portal token stayed valid for the entire life of the process.
-# On a free Space that rebuilds every few hours the defect was invisible; on any
-# container that stays up, every token ever handed out was still a live key.
+# token -> (client_id, issued_at). The timestamp is compared against
+# SESSION_TTL, so portal tokens expire instead of staying valid for the life
+# of the process.
 _sessions: dict[str, tuple[str, float]] = {}
 
-TRIAL_DAYS_DEFAULT = 60          # the "2 months free" the client asked for
+TRIAL_DAYS_DEFAULT = 60          # the default two-month free trial
 SESSION_TTL = 7 * 24 * 3600      # a week; they are business owners, not attackers
 
 
 def _secret() -> str:
-    # Reuse the app secret so tokens die on credential rotation. This used to
-    # fall back to TITAN_TOKEN and then to "titan-dev-secret" — a THIRD
-    # published default, different from the two in auth.py and sessions.py, so
-    # the same deployment could be signing different token kinds with different
-    # public keys. One door now: core/appsecret.py.
+    # Reuse the app secret (core/appsecret.py) so tokens die when credentials are
+    # rotated.
     from . import appsecret
     return appsecret.value()
 
 
 def _mint(cid: str) -> str:
-    """The only place a portal token is created. Both callers used to write
-    into _sessions directly, which is exactly how one of them would later be
-    added without an expiry."""
+    """The only place a portal token is created, so no caller can add one
+    without an expiry.
+    """
     token = secrets.token_urlsafe(32)
     _sessions[token] = (cid, time.time())
     return token
 
 
 def _hash_password(password: str, salt: str) -> str:
-    """PBKDF2. Not bcrypt because we add no dependency, but 200k rounds of
-    SHA-256 is far beyond adequate for a handful of business logins."""
+    """PBKDF2. Not bcrypt to avoid a dependency; 200k rounds of SHA-256 is plenty
+    for a handful of business logins.
+    """
     return hashlib.pbkdf2_hmac(
         "sha256", password.encode(), salt.encode(), 200_000
     ).hex()
@@ -87,7 +78,7 @@ def create_client(
     trial_days: int = TRIAL_DAYS_DEFAULT,
     notes: str = "",
 ) -> dict:
-    """Register a business. Returns the record WITHOUT the password hash."""
+    """Register a business. Returns the record without the password hash."""
     username = (username or "").strip().lower()
     if not username or not password:
         raise ValueError("username and password are required")
@@ -118,8 +109,8 @@ def create_client(
             "trial_ends": now + trial_days * 86400,
             "status": "trial",
             "last_login": None,
-            # Per-client work log. Everything Titan does FOR them lands here,
-            # which is what makes the client dashboard honest rather than a mock.
+            # Per-client work log. Everything Titan does for the client lands here, so
+            # the client dashboard shows real activity.
             "activity": [],
             "metrics": {
                 "seo_audits": 0, "posts_drafted": 0, "posts_approved": 0,
@@ -130,7 +121,7 @@ def create_client(
 
 
 def public(cid: str) -> dict:
-    """A client record safe to send over the wire — no secrets."""
+    """A client record safe to send over the wire, with no secrets."""
     c = _clients.get(cid)
     if not c:
         return {}
@@ -160,20 +151,16 @@ def authenticate(username: str, password: str) -> Optional[str]:
 
 
 def issue_session(cid: str) -> Optional[str]:
-    """A session for a business whose owner has ALREADY been authenticated.
+    """A session for a business whose owner has already been authenticated.
 
-    A subscriber's own business is deliberately created with a random,
-    unusable portal password — see /api/account/onboard, which says so — on the
-    reasoning that they already authenticate as the account holder. True, and
-    it left them with nowhere to go: /join is a three-step wizard, and the
-    dashboard at / is the founder's. A paying customer had no product surface
-    at all.
+    A subscriber's own business is created with a random, unusable portal
+    password (see /api/account/onboard), because they already authenticate as
+    the account holder. This mints a portal session for them directly.
 
-    This is the missing door. It mints a portal session directly, and it
-    performs NO authorisation of its own — the caller must have proved
+    It does no authorisation of its own - the caller must have proved
     ownership first (`_owned` in api/router.py). Kept that way on purpose: a
-    function that both mints sessions and decides who may have one is a
-    function somebody eventually calls from the wrong place.
+    function that both mints sessions and decides who gets one is easy to call
+    from the wrong place.
     """
     with _lock:
         if cid not in _clients:
@@ -184,11 +171,10 @@ def issue_session(cid: str) -> Optional[str]:
 
 
 def resolve(token: str) -> Optional[str]:
-    """Token -> client_id. Fails closed: unknown OR EXPIRED resolves to nothing.
+    """Token -> client_id. Fails closed: unknown or expired resolves to nothing.
 
-    SESSION_TTL used to be a constant with a comment and no comparison. An
-    expired token is dropped here rather than merely refused, so the dict does
-    not grow forever on a deployment that mints sessions for the public.
+    Expired tokens are removed here, not just refused, so the dict doesn't
+    grow forever on a deployment that issues sessions to the public.
     """
     if not token:
         return None
@@ -236,7 +222,7 @@ def update_raw(cid: str, **fields) -> None:
     """Set internal fields not exposed through the editable allow-list.
 
     Used for cached derived data (e.g. the last audit result) that the client
-    must be able to READ but never SET through the public update path.
+    can read but never set through the public update path.
     """
     with _lock:
         c = _clients.get(cid)
@@ -288,7 +274,7 @@ def _log(cid: str, kind: str, message: str, meta: dict | None = None) -> None:
     c["activity"].append({
         "ts": time.time(), "kind": kind, "message": message, "meta": meta,
     })
-    # Bounded so a long-running client cannot grow the state file forever.
+    # Bounded so a long-running client can't grow the state file forever.
     if len(c["activity"]) > 400:
         del c["activity"][:200]
 
@@ -308,10 +294,10 @@ def bump(cid: str, metric: str, n: int = 1) -> None:
 
 # ------------------------------------------------------------- overview -----
 def admin_overview(only=None) -> dict:
-    """Everything Abdullah needs on one screen.
+    """Everything the founder needs on one screen.
 
     `only` limits it to those client ids - a subscriber's cockpit asks for its
-    own businesses in exactly this shape (api/mine.py).
+    own businesses in this shape (api/mine.py).
     """
     with _lock:
         ids = [cid for cid in _clients if only is None or cid in only]
