@@ -97,11 +97,9 @@ export function Login({
     } else if (who === "founder") {
       onSuccess();
     } else if (who === "account") {
-      // A real customer, at the owner's door. Their session is already stored
-      // under the key /join reads, so this is a redirect and not a second
-      // password prompt. Sending them into the founder dashboard instead
-      // would show them somebody else's business.
-      window.location.href = "/join";
+      // A subscriber gets their own cockpit: the same screens, reading only
+      // their workspace through /api/me (see lib/session.ts).
+      onSuccess();
     } else {
       setError(
         identityMode === "identity"

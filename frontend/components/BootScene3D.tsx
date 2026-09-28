@@ -11,6 +11,16 @@ import { Stars } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { isCoarsePointer } from "@/lib/device";
+import { isGuest } from "@/lib/guest";
+import { displayName, isCustomer } from "@/lib/session";
+
+/** The founder is greeted by name; a subscriber by theirs; a demo visitor
+ *  by nobody's. (The demo used to be greeted as ABDULLAH too.) */
+function greeting(): string {
+  if (isGuest()) return "WELCOME";
+  if (isCustomer()) return `HELLO ${displayName().toUpperCase()}`.slice(0, 22);
+  return "HELLO ABDULLAH";
+}
 
 function sampleTextPoints(): Float32Array {
   const W = 960;
@@ -26,7 +36,7 @@ function sampleTextPoints(): Float32Array {
   g.font = "bold 96px 'Segoe UI', monospace";
   g.fillText("TITAN Ω", W / 2, 78);
   g.font = "bold 44px 'Segoe UI', monospace";
-  g.fillText("HELLO ABDULLAH", W / 2, 195);
+  g.fillText(greeting(), W / 2, 195);
   const data = g.getImageData(0, 0, W, H).data;
   const pts: number[] = [];
   for (let y = 0; y < H; y += 3) {

@@ -7,12 +7,14 @@ import type { StreamFrame } from "./types";
 // Subscribes to the core's live SSE stream. EventSource can't send headers, so
 // the auth token rides in the query string (the core whitelists it there). The
 // browser auto-reconnects on drop; the 5s poll in CommandCenter is the fallback.
-export function useTitanStream(): { frame: StreamFrame | null; live: boolean } {
+// `enabled` is false for a subscriber: the stream carries the founder's Store.
+export function useTitanStream(enabled = true): { frame: StreamFrame | null; live: boolean } {
   const [frame, setFrame] = useState<StreamFrame | null>(null);
   const [live, setLive] = useState(false);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
+    if (!enabled) return;
     const token = getToken();
     const url = token ? `/api/stream?token=${encodeURIComponent(token)}` : "/api/stream";
 
@@ -40,7 +42,7 @@ export function useTitanStream(): { frame: StreamFrame | null; live: boolean } {
       es.close();
       esRef.current = null;
     };
-  }, []);
+  }, [enabled]);
 
   return { frame, live };
 }

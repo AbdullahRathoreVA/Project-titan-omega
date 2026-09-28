@@ -2,6 +2,7 @@
 
 import { BrainCircuit, Hexagon, Wifi, WifiOff } from "lucide-react";
 import type { EmpireStatus, IntelligenceStatus } from "@/lib/types";
+import { customerProfile, isCustomer } from "@/lib/session";
 
 export function StatusBar({
   status,
@@ -13,6 +14,9 @@ export function StatusBar({
   intel: IntelligenceStatus | null;
 }) {
   const claude = intel?.claude_connected ?? false;
+  // A subscriber sees their plan, not the founder's model configuration.
+  const customer = isCustomer();
+  const plan = customerProfile()?.plan_name ?? "Free";
   return (
     <header className="flex flex-col gap-3 border-b border-edge/70 pb-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
@@ -27,7 +31,7 @@ export function StatusBar({
             TITAN<span className="text-hud-cyan"> OMEGA</span>
           </h1>
           <p className="text-[11px] tracking-wide text-slate-500">
-            Autonomous Founder Empire · Command Center
+            {customer ? "Your autonomous business · Command Center" : "Autonomous Founder Empire · Command Center"}
           </p>
         </div>
       </div>
@@ -53,13 +57,15 @@ export function StatusBar({
               : "border-edge text-slate-400"
           }`}
           title={
-            claude
-              ? `Agents thinking with ${intel?.model}`
-              : "Free mode — set ANTHROPIC_API_KEY to enable Claude reasoning"
+            customer
+              ? `Your plan: ${plan}`
+              : claude
+                ? `Agents thinking with ${intel?.model}`
+                : "Free mode — set ANTHROPIC_API_KEY to enable Claude reasoning"
           }
         >
           <BrainCircuit className="h-3.5 w-3.5" />
-          {claude ? "Claude online" : "Free mode"}
+          {customer ? `${plan} plan` : claude ? "Claude online" : "Free mode"}
         </div>
 
         <div

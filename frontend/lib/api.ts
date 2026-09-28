@@ -43,8 +43,26 @@ const EMPTY_INTEL: GrowthIntel = {
   last_run: null,
 };
 import { MOCK } from "./mock";
+import {
+  getCustomerToken,
+  isCustomer,
+  setCustomerProfile,
+  setCustomerToken,
+} from "./session";
 
 const TOKEN_KEY = "titan_token";
+
+/** Subscribers read their own workspace through /api/me; the founder and the
+ *  demo read /api. The backend only answers allowlisted routes under /api/me. */
+export function apiBase(): string {
+  return isCustomer() ? "/api/me" : "/api";
+}
+
+/** The founder cockpit falls back to sample figures when the core is
+ *  unreachable. A subscriber must never be shown those as if they were theirs. */
+function fb<T>(founder: T, customer: T): T {
+  return isCustomer() ? customer : founder;
+}
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -57,8 +75,30 @@ export function setToken(token: string | null) {
 }
 
 export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  const token = getToken();
+  const token = getCustomerToken() ?? getToken();
   return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
+
+/** Is the stored subscriber session still good? Saves their profile for the
+ *  greeting. A stale token is cleared so the sign-in screen shows. */
+export async function verifyCustomer(): Promise<boolean> {
+  const token = getCustomerToken();
+  if (!token) return false;
+  try {
+    const res = await fetch("/api/account", {
+      cache: "no-store",
+      headers: { "X-Account-Token": token },
+    });
+    if (!res.ok) {
+      if (res.status === 401) setCustomerToken(null);
+      return false;
+    }
+    const acct = (await res.json()) as { email: string; plan?: string; plan_name?: string };
+    setCustomerProfile({ email: acct.email, plan: acct.plan, plan_name: acct.plan_name });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function verifyToken(): Promise<boolean> {
@@ -71,9 +111,25 @@ export async function verifyToken(): Promise<boolean> {
   }
 }
 
+/** Questions about the session itself (is auth on? what is this founder
+ *  token?) always go to /api with the FOUNDER token, whoever is signed in. */
+async function getRoot<T>(path: string, fallback: T): Promise<T> {
+  try {
+    const token = getToken();
+    const res = await fetch(`/api${path}`, {
+      cache: "no-store",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`${res.status}`);
+    return (await res.json()) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 async function get<T>(path: string, fallback: T): Promise<T> {
   try {
-    const res = await fetch(`/api${path}`, { cache: "no-store", headers: authHeaders() });
+    const res = await fetch(`${apiBase()}${path}`, { cache: "no-store", headers: authHeaders() });
     if (!res.ok) throw new Error(`${res.status}`);
     return (await res.json()) as T;
   } catch {
@@ -83,7 +139,7 @@ async function get<T>(path: string, fallback: T): Promise<T> {
 
 async function post<T>(path: string, body?: unknown): Promise<T | null> {
   try {
-    const res = await fetch(`/api${path}`, {
+    const res = await fetch(`${apiBase()}${path}`, {
       method: "POST",
       headers: authHeaders(body ? { "Content-Type": "application/json" } : {}),
       body: body ? JSON.stringify(body) : undefined,
@@ -97,7 +153,7 @@ async function post<T>(path: string, body?: unknown): Promise<T | null> {
 
 async function del<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch(`/api${path}`, { method: "DELETE", headers: authHeaders() });
+    const res = await fetch(`${apiBase()}${path}`, { method: "DELETE", headers: authHeaders() });
     if (!res.ok) throw new Error(`${res.status}`);
     return (await res.json()) as T;
   } catch {
@@ -121,11 +177,11 @@ export const api = {
     get<any>(`/apis?q=${encodeURIComponent(q)}&limit=${limit}`,
       { total: 0, results: [] }),
 
-  status: () => get<EmpireStatus>("/status", MOCK.status),
-  divisions: () => get<DivisionView[]>("/divisions", MOCK.divisions),
-  agents: () => get<AgentView[]>("/agents", MOCK.agents),
-  opportunities: () => get<Opportunity[]>("/opportunities", MOCK.opportunities),
-  feed: (limit = 40) => get<FeedEvent[]>(`/feed?limit=${limit}`, MOCK.feed),
+  status: () => get<EmpireStatus | null>("/status", fb<EmpireStatus | null>(MOCK.status, null)),
+  divisions: () => get<DivisionView[]>("/divisions", fb(MOCK.divisions, [])),
+  agents: () => get<AgentView[]>("/agents", fb(MOCK.agents, [])),
+  opportunities: () => get<Opportunity[]>("/opportunities", fb(MOCK.opportunities, [])),
+  feed: (limit = 40) => get<FeedEvent[]>(`/feed?limit=${limit}`, fb(MOCK.feed, [])),
   deliverables: () => get<Deliverable[]>("/deliverables", []),
   executions: () => get<ExecutionItem[]>("/executions", []),
   decisions: () => get<DecisionEntry[]>("/decisions", []),
@@ -140,7 +196,7 @@ export const api = {
 
   // auth
   authStatus: () =>
-    get<{
+    getRoot<{
       required: boolean;
       demo: boolean;
       guest?: boolean;
@@ -165,7 +221,7 @@ export const api = {
   /** What kind of session does the stored token represent? Authoritative —
    *  never infer this from browser storage. */
   sessionKind: () =>
-    get<{ founder: boolean; guest: boolean }>("/session", { founder: false, guest: false }),
+    getRoot<{ founder: boolean; guest: boolean }>("/session", { founder: false, guest: false }),
   /** Start the public read-only demo session (no login). */
   async enterDemo(): Promise<boolean> {
     try {
@@ -215,17 +271,16 @@ export const api = {
     if (acct.status === 429 || res.status === 429) return "limited";
     if (!acct.ok) return null;
     const data = (await acct.json()) as { token: string };
-    // Same key and same storage /join uses, so the handoff is a redirect
-    // rather than a second password prompt. sessionStorage, not localStorage:
-    // that page gets opened on shared machines.
-    try {
-      window.sessionStorage.setItem("titan_account", data.token);
-    } catch {
-      /* private mode; /join simply asks again, which still works */
-    }
+    // A subscriber gets their own cockpit. The token is also mirrored to the
+    // key /join reads, so setting up a business there needs no second sign-in.
+    setCustomerToken(data.token);
+    await verifyCustomer();
     return "account";
   },
-  logout: () => setToken(null),
+  logout: () => {
+    setToken(null);
+    setCustomerToken(null);
+  },
 
   // actions (all auth-aware via post())
   schedulePost: (content: string, channels: string[], image_url?: string | null) =>

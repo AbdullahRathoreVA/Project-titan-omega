@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { bootSound, speak, unlockAudio } from "@/lib/sound";
+import { displayName, isCustomer } from "@/lib/session";
 
 const Scene = dynamic(() => import("./BootScene3D"), { ssr: false, loading: () => null });
 
@@ -58,7 +59,9 @@ export function BootSequence({ onDone }: { onDone: () => void }) {
     speak(
       isGuest()
         ? "Welcome to Titan Omega. Autonomous A I business system, online. All systems operational."
-        : "Welcome back Abdullah. Titan Founder A I is online. All systems operational.",
+        : isCustomer()
+          ? `Welcome, ${displayName()}. Your Titan workspace is online. All systems operational.`
+          : "Welcome back Abdullah. Titan Founder A I is online. All systems operational.",
     );
     setStarted(true);
   };

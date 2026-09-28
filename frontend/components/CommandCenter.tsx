@@ -17,8 +17,9 @@ import {
   Target,
   Zap,
 } from "lucide-react";
-import { api, authHeaders } from "@/lib/api";
+import { api, apiBase, authHeaders } from "@/lib/api";
 import { useTitanStream } from "@/lib/useTitanStream";
+import { displayName, isCustomer } from "@/lib/session";
 import type {
   AgentView,
   ChannelTile,
@@ -74,7 +75,14 @@ const Background3D = dynamic(() => import("./Background3D"), { ssr: false });
 
 const POLL_MS = 5000;
 
+// Tabs a subscriber's cockpit shows: those whose routes are open to customers
+// on the backend (core/cockpit_scope.ALLOWED). Each later phase adds its tab
+// here together with its routes there.
+const CUSTOMER_TABS = new Set<string>(["universe", "dashboard", "mission"]);
+
 export function CommandCenter() {
+  // Fixed for the life of the page: signing out reloads into the sign-in screen.
+  const [customer] = useState(() => isCustomer());
   const [status, setStatus] = useState<EmpireStatus | null>(null);
   const [divisions, setDivisions] = useState<DivisionView[]>([]);
   const [agents, setAgents] = useState<AgentView[]>([]);
@@ -106,7 +114,11 @@ export function CommandCenter() {
     const guest =
       typeof window !== "undefined" &&
       (window as unknown as { __TITAN_GUEST?: boolean }).__TITAN_GUEST === true;
-    const closer = guest ? "Explore the command center." : "Let's build, Abdullah.";
+    const closer = guest
+      ? "Explore the command center."
+      : isCustomer()
+        ? `Let's build, ${displayName()}.`
+        : "Let's build, Abdullah.";
     const s = statusRef.current;
     const line = s
       ? `${s.active_agents} of ${s.total_agents} agents are working. ` +
@@ -117,8 +129,10 @@ export function CommandCenter() {
         ? `Titan Omega ready. ${closer}`
         : `Dashboard ready. ${closer}`;
     // Premium ElevenLabs voice for the founder (if a key is set), else the free
-    // browser voice — audio is already unlocked by the boot tap.
-    void speakPremium(line, () => speak(line));
+    // browser voice — audio is already unlocked by the boot tap. Subscribers
+    // get the browser voice: /api/tts is the founder's key.
+    if (isCustomer()) speak(line);
+    else void speakPremium(line, () => speak(line));
   }, []);
 
   // Belt-and-suspenders: unlock audio on the first interaction anywhere, so the
@@ -133,13 +147,14 @@ export function CommandCenter() {
     };
   }, []);
 
-  // Live SSE stream — makes the dashboard move the instant it opens.
-  const { frame, live } = useTitanStream();
+  // Live SSE stream — makes the dashboard move the instant it opens. It
+  // streams the founder's Store, so a subscriber's cockpit polls instead.
+  const { frame, live } = useTitanStream(!customer);
 
   const refresh = useCallback(async () => {
     let isOnline = false;
     try {
-      const res = await fetch("/api/status", { cache: "no-store", headers: authHeaders() });
+      const res = await fetch(`${apiBase()}/status`, { cache: "no-store", headers: authHeaders() });
       isOnline = res.ok;
     } catch {
       isOnline = false;
@@ -262,7 +277,9 @@ export function CommandCenter() {
   const intensity = frame?.intensity ?? 0.35;
   const mrr = liveStatus?.mrr ?? 0;
   const mrrLabel = mrr === 0 ? "$0 — First order incoming" : money(mrr);
-  const mrrSub = mrr === 0 ? "Log your first order below" : "total earned · real revenue";
+  const mrrSub = customer
+    ? "revenue recorded in your workspace"
+    : mrr === 0 ? "Log your first order below" : "total earned · real revenue";
 
   return (
     <main className="mx-auto max-w-[1600px] px-3 py-4 sm:px-5">
@@ -336,11 +353,22 @@ export function CommandCenter() {
               between the header and the grid, which cost ~120px before the
               first number on a phone — the reader gets the figure, then the
               reason it is what it is. */}
-          {mrr === 0 && !isGuest() && (
+          {mrr === 0 && !isGuest() && !customer && (
             <div className="rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-4 py-3 text-xs text-hud-amber">
               <span className="font-semibold">Abdullah — your empire is live.</span>{" "}
               All numbers are real and start at $0. Got an order? Hit{" "}
               <span className="font-semibold">Log order</span> in the Revenue Ledger — your dashboard shows the truth.
+            </div>
+          )}
+          {customer && (
+            <div className="rounded-lg border border-hud-cyan/30 bg-hud-cyan/5 px-4 py-3 text-xs text-hud-cyan">
+              <span className="font-semibold">{displayName()} — your Titan workspace is live.</span>{" "}
+              Every number here is yours and starts at zero. Add your first business to
+              get its audit, fixes and monitoring:{" "}
+              <a href="/join" className="font-semibold underline underline-offset-2">
+                set up a business
+              </a>
+              .
             </div>
           )}
 
@@ -404,7 +432,9 @@ export function CommandCenter() {
               ["finance", "Finance", false],
               ["crm", "CRM", false],
               ["apis", "APIs", false],
-            ] as const).filter(([, , founderOnly]) => !(founderOnly && isGuest()))
+            ] as const)
+              .filter(([, , founderOnly]) => !(founderOnly && isGuest()))
+              .filter(([v]) => !customer || CUSTOMER_TABS.has(v))
             ).map(([v, label]) => (
               <button
                 key={v}
@@ -514,12 +544,29 @@ export function CommandCenter() {
             </section>
 
             <div className="h-[380px]">
-              <NextPost post={nextPost} onChange={refreshNextPost} />
+              {customer ? (
+                <section className="panel flex h-full flex-col justify-center gap-3 p-5">
+                  <div className="hud-label">Your first business</div>
+                  <p className="text-sm text-slate-300">
+                    Titan audits your website for SEO and legal compliance, drafts the
+                    fixes and keeps watching it. It all starts with one business.
+                  </p>
+                  <a
+                    href="/join"
+                    className="self-start rounded-lg border border-hud-cyan/50 bg-hud-cyan/10 px-4 py-2 text-sm text-hud-cyan hover:bg-hud-cyan/20"
+                  >
+                    Add a business
+                  </a>
+                </section>
+              ) : (
+                <NextPost post={nextPost} onChange={refreshNextPost} />
+              )}
             </div>
           </div>
 
-          <CommandBar onDispatched={refresh} />
+          {!customer && <CommandBar onDispatched={refresh} />}
 
+          {!customer && (
           <div className="flex flex-wrap gap-2">
             {[
               { key: "scan", label: "Scan opportunities", icon: RadarIcon, fn: () => api.scanOpportunities() },
@@ -539,6 +586,7 @@ export function CommandCenter() {
             ))}
             <UrduVoiceAssistant status={liveStatus} />
           </div>
+          )}
 
           {/* AI thinking visualization — shown while a command runs */}
           <AnimatePresence>
@@ -553,17 +601,22 @@ export function CommandCenter() {
             )}
           </AnimatePresence>
 
-          {/* Revenue ledger + Ask Titan */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <RevenueTracker total={mrr} onLogged={refresh} />
-            <AskTitan />
-          </div>
+          {/* Revenue ledger + Ask Titan. Founder-only until their customer
+              routes exist (core/cockpit_scope.ALLOWED). */}
+          {!customer && (
+            <>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <RevenueTracker total={mrr} onLogged={refresh} />
+                <AskTitan />
+              </div>
 
-          <GrowthStudio />
+              <GrowthStudio />
 
-          <ConnectedAssets connectors={connectors} />
+              <ConnectedAssets connectors={connectors} />
 
-          <Publishing posts={posts} onSchedule={schedulePost} onPublish={publishPost} />
+              <Publishing posts={posts} onSchedule={schedulePost} onPublish={publishPost} />
+            </>
+          )}
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
             <div className="space-y-4 xl:col-span-8">
@@ -601,7 +654,10 @@ export function CommandCenter() {
       </div>
 
       <footer className="mt-6 flex items-center justify-between border-t border-edge/60 pt-4 text-[11px] text-slate-600">
-        <span>Project Titan Omega · Executive Intelligence Core v0.3 · Abdullah&apos;s Empire</span>
+        <span>
+          Project Titan Omega · Executive Intelligence Core v0.3 ·{" "}
+          {customer ? `${displayName()}'s workspace` : "Abdullah's Empire"}
+        </span>
         <span className="font-mono">
           {liveStatus ? `updated ${new Date(liveStatus.updated_at).toLocaleTimeString()}` : "connecting…"}
         </span>

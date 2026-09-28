@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { AgentView, ChannelTile } from "@/lib/types";
+import { isCustomer } from "@/lib/session";
 import { AgentDetailModal } from "./AgentDetailModal";
 
 // lucide ships brand marks for some platforms but not all — sensible stand-ins
@@ -104,7 +105,9 @@ export function Sidebar({
         <div className="hud-label mb-2 px-1">Channels</div>
         <div className="space-y-1">
           {channels.length === 0 && (
-            <div className="px-1 py-2 text-[10px] text-slate-600">Connecting channels…</div>
+            <div className="px-1 py-2 text-[10px] text-slate-600">
+              {isCustomer() ? "No channels connected yet." : "Connecting channels…"}
+            </div>
           )}
           {channels.map((c) => {
             const Icon = ICONS[c.icon] ?? ExternalLink;

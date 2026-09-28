@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { LogOut } from "lucide-react";
-import { api, getToken, setToken, verifyToken } from "@/lib/api";
+import { api, getToken, setToken, verifyCustomer, verifyToken } from "@/lib/api";
+import { getCustomerToken, setCustomerToken } from "@/lib/session";
 import { Login } from "./Login";
 import { CommandCenter } from "./CommandCenter";
 
@@ -43,6 +44,19 @@ export function AuthGate() {
     setDemo(status.demo);
     setGuestAvailable(status.guest_available !== false);
     setIdentityMode(status.identity?.mode === "identity" ? "identity" : "legacy");
+
+    // A subscriber opens their own cockpit (reading /api/me), whatever the
+    // founder gate is set to. A stale session is cleared and falls through
+    // to the sign-in screen.
+    if (getCustomerToken()) {
+      if (await verifyCustomer()) {
+        markGuest(false);
+        setGuest(false);
+        setState("ready");
+        return;
+      }
+      setCustomerToken(null);
+    }
 
     // A whole-Space guest deploy (legacy TITAN_GUEST_MODE) needs no login.
     if (status.guest) {
@@ -140,6 +154,7 @@ export function AuthGate() {
   }
   const signOut = () => {
     setToken(null);
+    setCustomerToken(null);
     markGuest(false);
     setState("login");
   };

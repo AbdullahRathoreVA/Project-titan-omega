@@ -223,6 +223,55 @@ def test_every_route_not_on_the_allowlist_is_closed_to_customers(customer):
     assert checked > 100    # the walk really walked
 
 
+_FRONTEND = __import__("pathlib").Path(__file__).resolve().parents[2] / "frontend"
+
+# Which /api routes each customer-visible tab reads. A tab may be added to
+# CUSTOMER_TABS in CommandCenter.tsx only when all of its routes are on
+# cockpit_scope.ALLOWED - otherwise the customer gets a panel of 404s.
+TAB_ROUTES = {
+    "universe": ["/api/status", "/api/divisions", "/api/agents", "/api/posts",
+                 "/api/progress"],
+    "dashboard": ["/api/status", "/api/divisions", "/api/agents",
+                  "/api/opportunities", "/api/feed", "/api/deliverables"],
+    "mission": ["/api/status", "/api/agents", "/api/opportunities",
+                "/api/executions", "/api/decisions", "/api/feed"],
+}
+
+
+def _customer_tabs() -> set:
+    import re
+    src = (_FRONTEND / "components" / "CommandCenter.tsx").read_text(encoding="utf-8")
+    m = re.search(r"CUSTOMER_TABS = new Set<string>\(\[([^\]]*)\]\)", src)
+    assert m, "CUSTOMER_TABS not found in CommandCenter.tsx"
+    return set(re.findall(r'"([a-z]+)"', m.group(1)))
+
+
+def test_every_tab_a_customer_sees_reads_only_open_routes():
+    from app.core import cockpit_scope
+    tabs = _customer_tabs()
+    assert tabs, "no customer tabs at all"
+    for tab in tabs:
+        assert tab in TAB_ROUTES, f"{tab} has no route list in TAB_ROUTES"
+        for route in TAB_ROUTES[tab]:
+            assert cockpit_scope.allowed("GET", route), f"{tab} needs {route}"
+
+
+def test_a_customer_is_never_shown_the_founder_sample_data():
+    """The API client falls back to MOCK (founder sample figures) when a call
+    fails. For a subscriber every fallback must be empty instead, and the
+    founder's live stream must stay off."""
+    import re
+    api = (_FRONTEND / "lib" / "api.ts").read_text(encoding="utf-8")
+    uses = re.findall(r"get<[^>]+>\([^)]*MOCK\.\w+", api)
+    assert uses, "expected the founder cockpit to still use MOCK fallbacks"
+    for call in uses:
+        assert "fb(" in call or "fb<" in call, f"MOCK reaches customers: {call}"
+    assert 'isCustomer() ? "/api/me" : "/api"' in api
+    cc = (_FRONTEND / "components" / "CommandCenter.tsx").read_text(encoding="utf-8")
+    assert "useTitanStream(!customer)" in cc
+    assert ".filter(([v]) => !customer || CUSTOMER_TABS.has(v))" in cc
+
+
 def test_unbound_code_still_sees_the_founder_store():
     # The heartbeat, persistence and every founder request run unbound.
     assert st.current() is st.founder_store()
