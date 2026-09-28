@@ -10,11 +10,20 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
 import type { JobItem, JobsState } from "@/lib/types";
 
 // Job Radar page: live-found remote jobs/gigs, fit scores, tailored proposals.
 // Compliant by design — Titan finds + drafts, Abdullah clicks apply.
+//
+// In a subscriber's cockpit it hunts for work THEIR business could win -
+// projects, contracts, orders - from the profile they write here. The
+// founder's auto-apply links are for a personal job search and are not shown.
 export function JobRadar() {
+  const [customer] = useState(() => isCustomer());
+  const [profile, setProfile] = useState("");
+  const [savedProfile, setSavedProfile] = useState("");
+  const [note, setNote] = useState<string | null>(null);
   const [state, setState] = useState<JobsState | null>(null);
   const [query, setQuery] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -22,8 +31,23 @@ export function JobRadar() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setState(await api.jobs());
+    const next = await api.jobs();
+    setState(next);
+    if (next?.profile !== undefined) {
+      setProfile(next.profile ?? "");
+      setSavedProfile(next.profile ?? "");
+    }
   }, []);
+
+  const saveProfile = async () => {
+    const out = await api.jobsProfile(profile);
+    if (out) {
+      setSavedProfile(out.profile ?? "");
+      setNote(null);
+    } else {
+      setNote("Couldn't save your profile just now. Try again in a moment.");
+    }
+  };
 
   useEffect(() => {
     void refresh();
@@ -32,9 +56,17 @@ export function JobRadar() {
   const scan = async () => {
     if (scanning) return;
     setScanning(true);
+    setNote(null);
     try {
       const res = await api.jobsScan(query);
-      if (res) setState(res);
+      if (res) {
+        setState(res);
+        if (res.note) setNote(res.note);
+      } else {
+        setNote(customer
+          ? "That hunt didn't go through. Searches share an hourly limit on your plan; try again later."
+          : "That hunt didn't go through — try again in a moment.");
+      }
     } finally {
       setScanning(false);
     }
@@ -66,6 +98,39 @@ export function JobRadar() {
 
   return (
     <div className="space-y-4">
+      {customer && (
+        <section className="panel space-y-2 p-3">
+          <div className="hud-label">What you offer</div>
+          <textarea
+            value={profile}
+            onChange={(e) => setProfile(e.target.value)}
+            rows={3}
+            maxLength={1000}
+            placeholder="Your services, skills or products, and where you work — e.g. 'Artisan bakery in Lahore: bread, cakes and office catering.'"
+            className="scroll-thin w-full resize-none rounded-lg border border-edge bg-panel-2/60 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-hud-emerald/40 focus:outline-none"
+          />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => void saveProfile()}
+              disabled={profile === savedProfile}
+              className="rounded-lg border border-hud-emerald/40 bg-hud-emerald/10 px-3 py-1.5 text-xs text-hud-emerald hover:bg-hud-emerald/20 disabled:opacity-50"
+            >
+              Save profile
+            </button>
+            <span className="text-[10px] text-slate-600">
+              Titan scores finds and writes proposals from this - nothing else.
+            </span>
+          </div>
+        </section>
+      )}
+
+      {note && (
+        <div className="rounded-lg border border-hud-amber/30 bg-hud-amber/5 px-3 py-2 text-[11px] text-hud-amber">
+          {note}
+        </div>
+      )}
+
+      {!customer && (
       <section className="panel">
         <div className="flex flex-wrap items-center gap-3 p-3 text-[11px] text-slate-400">
           <span className="font-semibold text-slate-300">Real auto-apply (safe route):</span>
@@ -83,6 +148,7 @@ export function JobRadar() {
           auto-apply (bots = ban); use the drafted proposals below there.
         </div>
       </section>
+      )}
 
       <section className="panel">
         <header className="panel-header">
@@ -103,7 +169,9 @@ export function JobRadar() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void scan()}
-              placeholder="What to hunt (blank = remote AI/full-stack gigs)"
+              placeholder={customer
+                ? "What to hunt (blank = work matching your profile)"
+                : "What to hunt (blank = remote AI/full-stack gigs)"}
               className="flex-1 rounded-lg border border-edge bg-panel-2/60 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-hud-emerald/40 focus:outline-none"
             />
             <button
@@ -119,8 +187,12 @@ export function JobRadar() {
           {items.length === 0 && (
             <div className="py-6 text-center text-[11px] text-slate-600">
               {state?.live === false && state?.last_scan
-                ? "No live results — make sure TAVILY_API_KEY is set, then hunt again."
-                : "Hit Hunt jobs to find live openings matched to your real skills."}
+                ? customer
+                  ? "No live results this time — try a different search."
+                  : "No live results — make sure TAVILY_API_KEY is set, then hunt again."
+                : customer
+                  ? "Save what you offer above, then hit Hunt jobs to find work you could win."
+                  : "Hit Hunt jobs to find live openings matched to your real skills."}
             </div>
           )}
 

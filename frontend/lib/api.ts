@@ -358,6 +358,10 @@ export const api = {
   telegramStatus: () =>
     get<TelegramStatus>("/telegram/status", { configured: false, locked: false, handled: 0 }),
   telegramLog: (limit = 50) => get<TelegramLogEntry[]>(`/telegram/log?limit=${limit}`, []),
+  // A subscriber links their own chat to Titan's bot with a one-time code.
+  telegramLinkCode: () =>
+    post<{ code: string; expires_in: number; url: string }>("/telegram/link-code"),
+  telegramUnlink: () => del<{ unlinked: boolean }>("/telegram/link"),
 
   // financial center
   finance: () =>
@@ -395,6 +399,8 @@ export const api = {
   jobProposal: (title: string, url: string, why: string) =>
     post<{ proposal: string }>("/jobs/proposal", { title, url, why }),
   jobApplied: (id: string) => post<JobItem>(`/jobs/${id}/applied`),
+  // A subscriber's Job Radar works from what they say they offer.
+  jobsProfile: (profile: string) => post<JobsState>("/jobs/profile", { profile }),
 
   async command(text: string): Promise<CommandResponse> {
     const res = await post<CommandResponse>("/agent/act", { instruction: text });

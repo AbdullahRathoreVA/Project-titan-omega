@@ -82,6 +82,7 @@ const POLL_MS = 5000;
 const CUSTOMER_TABS = new Set<string>([
   "universe", "dashboard", "mission", "clients", "seo", "crm", "voice",
   "finance", "customers", "executive", "graph", "city", "warroom", "apis",
+  "telegram", "jobs",
 ]);
 
 export function CommandCenter() {

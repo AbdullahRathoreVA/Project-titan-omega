@@ -304,8 +304,19 @@ def poll_once(store: Store = STORE) -> int:
         if chat_id is None or not text:
             continue
 
+        # A subscriber's link attempt or linked chat never reaches the
+        # founder's handler below - it is answered from their own workspace.
+        from . import telegram_subscribers
+        theirs = telegram_subscribers.handle(chat_id, text, sender)
+        if theirs is not None:
+            _send(token, chat_id, theirs)
+            handled += 1
+            continue
+
         if allowed and str(chat_id) != allowed:
-            _send(token, chat_id, "⛔ This Titan instance is locked to its founder.")
+            _send(token, chat_id, "⛔ This bot answers linked Titan accounts only. If you "
+                                  "have one, open the Telegram tab in your Titan cockpit "
+                                  "to link this chat.")
             store.telegram_log.append({
                 "time": now().isoformat(), "from": sender, "chat_id": chat_id,
                 "command": text[:120], "reply": "(blocked — not the allowed chat id)",

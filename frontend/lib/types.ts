@@ -245,6 +245,9 @@ export interface TelegramStatus {
   configured: boolean;
   locked: boolean;
   handled: number;
+  /** A subscriber's view: Titan's bot, and whether their chat is linked. */
+  bot?: string;
+  linked?: boolean;
 }
 
 export interface TelegramLogEntry {
@@ -270,6 +273,9 @@ export interface JobsState {
   items: JobItem[];
   live: boolean;
   last_scan: string | null;
+  /** A subscriber's own profile (what they offer), and why a scan did nothing. */
+  profile?: string;
+  note?: string;
 }
 
 // Financial Center (GET /api/finance).

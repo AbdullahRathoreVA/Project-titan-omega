@@ -27,7 +27,7 @@ _METRICS = ("mrr", "traffic", "pipeline_value", "customers", "conversion_rate")
 # Room research and content packs. His heartbeat re-runs his research; nothing
 # re-runs a subscriber's, and their content packs exist nowhere else.
 _DURABLE = ("metrics", "revenue_entries", "expenses", "leads", "decisions",
-            "intel", "deliverables")
+            "intel", "deliverables", "jobs")
 _KEEP_DELIVERABLES = 50
 
 _lock = threading.RLock()
@@ -61,6 +61,8 @@ def _restore(ws: Store, snap: dict) -> None:
         ws.intel = snap["intel"]
     if isinstance(snap.get("deliverables"), dict):
         ws.deliverables = snap["deliverables"]
+    if isinstance(snap.get("jobs"), dict):
+        ws.jobs = snap["jobs"]
 
 
 def for_account(email: str) -> Store:
@@ -95,6 +97,8 @@ def export_state() -> dict:
                 "intel": ws.intel,
                 # Insertion order is creation order; keep the newest.
                 "deliverables": dict(list(ws.deliverables.items())[-_KEEP_DELIVERABLES:]),
+                # Their Job Radar profile and finds.
+                "jobs": ws.jobs,
             }
         return out
 

@@ -162,7 +162,7 @@ def test_api_me_refuses_everything_it_should(customer, monkeypatch):
     assert client.get("/api/me/status",
                       headers={"X-Account-Token": "nonsense"}).status_code == 401
     # Not on the allowlist: a founder route stays unreachable.
-    assert client.get("/api/me/telegram/status", headers=hdr).status_code == 404
+    assert client.get("/api/me/routing", headers=hdr).status_code == 404
     assert client.get("/api/me/admin/clients", headers=hdr).status_code == 404
     assert client.post("/api/me/connectors/refresh", headers=hdr).status_code == 404
     # With founder auth on, the customer's token opens no founder route.
@@ -199,6 +199,11 @@ def _plant_founder_canaries():
     f.intel = {"opportunities": [], "competitors": [], "keywords": [_CANARY],
                "headlines": [], "summary": f"{_CANARY} intel", "live": False,
                "last_run": None}
+    f.telegram_log.append({"time": "2026-09-28T00:00:00+00:00", "from": _CANARY,
+                           "chat_id": 1, "command": _CANARY, "reply": _CANARY})
+    f.jobs = {"items": [{"id": "job-c", "title": _CANARY, "url": "https://x.test",
+                         "why": _CANARY, "score": 1, "applied": False}],
+              "live": False, "last_scan": None}
     for rt in f.agents.values():
         rt.current_task = f"{_CANARY} task"
 
@@ -246,6 +251,8 @@ def test_no_customer_route_ever_shows_founder_data(customer, monkeypatch):
         f.metrics.clear(); f.revenue_entries.clear(); f.expenses.clear()
         f.leads.clear(); f.decisions.clear()
         f.intel = None
+        f.telegram_log.clear()
+        f.jobs = None
 
 
 def test_every_route_not_on_the_allowlist_is_closed_to_customers(customer):
@@ -669,9 +676,11 @@ def test_a_subscribers_war_room_is_rate_limited(customer, monkeypatch):
     codes = [client.post("/api/me/growth/scan", headers=hdr).status_code
              for _ in range(ratelimit.LIMITS["warroom"][0] + 1)]
     assert codes[:-1] == [200] * (len(codes) - 1) and codes[-1] == 429
-    # Lead finding runs on the same search key and shares the same hour.
+    # Lead finding and Job Radar run on the same search key and share the hour.
     assert client.post("/api/me/leads/find", headers=hdr,
                        json={"query": "cafes"}).status_code == 429
+    assert client.post("/api/me/jobs/scan", headers=hdr,
+                       json={"query": "catering"}).status_code == 429
     assert client.post("/api/growth/scan").status_code == 200   # founder: unlimited
 
 
@@ -753,6 +762,41 @@ def test_the_dashboard_speaks_for_the_subscriber(customer, monkeypatch):
         clients.delete_client(own)
 
 
+def test_the_command_bar_acts_for_the_subscriber(customer, monkeypatch):
+    """The command bar posts to /api/agent/act, whose every prompt promoted
+    Career Mind and Upwork and whose every reply began "Abdullah". A
+    subscriber's drafts are about their business and land in their workspace."""
+    from app.core import clients, llm
+    from app.engines import autonomous
+    client, token, workspaces = customer
+    hdr = {"X-Account-Token": token}
+    systems = []
+    monkeypatch.setattr(llm, "complete", lambda system="", prompt="", **kw:
+                        systems.append(system) or "Warm bread, 20% off this Friday!")
+    monkeypatch.setattr(autonomous, "growth_cycle", lambda store=None: {"summary": "ok"})
+    act = lambda text: client.post("/api/me/agent/act", headers=hdr,  # noqa: E731
+                                   json={"instruction": text}).json()
+
+    assert "Add your business" in act("post about our offer")["response"]
+    own = _make_client("Own Bakery", owner="cust@example.com")
+    clients.update(own, industry="bakery", city="Lahore")
+    try:
+        replies = [act("post about our weekend offer")["response"],
+                   act("scan for opportunities")["response"],
+                   act("write a weekly report")["response"],
+                   act("email a customer about our catering")["response"],
+                   act("what should I focus on?")["response"]]
+        ws = workspaces.for_account("cust@example.com")
+        assert len(ws.posts) == 1 and not st.founder_store().posts.get(next(iter(ws.posts)))
+        assert len(ws.deliverables) == 2               # the report and the outreach
+        assert any("Own Bakery" in s for s in systems)
+        for text in systems + replies:
+            for word in _FOUNDER_WORDS:
+                assert word not in text, (word, text[:100])
+    finally:
+        clients.delete_client(own)
+
+
 def test_a_subscribers_post_never_goes_through_the_founders_webhook(customer, monkeypatch):
     """The publishing webhook posts to the founder's own accounts."""
     import httpx
@@ -811,6 +855,173 @@ def test_the_founders_figures_and_ai_are_no_longer_public(customer, monkeypatch)
                       headers={"X-Account-Token": token}).status_code == 200
 
 
+@pytest.fixture
+def telegram(customer, monkeypatch):
+    """Titan's bot switched on, the founder's chat locked to 999."""
+    from app.core import telegram_links
+    telegram_links.reset()
+    monkeypatch.setenv("TITAN_TELEGRAM_BOT", "TitanTestBot")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "999")
+    monkeypatch.delenv("TITAN_WEBHOOK_SECRET", raising=False)
+    yield customer
+    telegram_links.reset()
+
+
+def _say(client, chat, text):
+    return client.post("/api/telegram/handle",
+                       json={"text": text, "chat_id": chat, "sender": "S"}).json()["reply"]
+
+
+def test_a_subscribers_telegram_is_linked_by_a_one_time_code(telegram):
+    """Titan cannot reach Telegram from its Space, so a subscriber uses Titan's
+    own bot through the same relay: a one-time code links their chat, and from
+    then on it is answered from their workspace only."""
+    from app.core import telegram_links
+    client, token, workspaces = telegram
+    hdr = {"X-Account-Token": token}
+    status = client.get("/api/me/telegram/status", headers=hdr).json()
+    assert status == {"configured": True, "locked": True, "bot": "TitanTestBot",
+                      "linked": False, "handled": 0}
+    code = client.post("/api/me/telegram/link-code", headers=hdr).json()
+    assert code["url"] == f"https://t.me/TitanTestBot?start={code['code']}"
+
+    founders_log = len(st.founder_store().telegram_log)
+    assert "Linked" in _say(client, "555", f"/start {code['code']}")
+    assert client.get("/api/me/telegram/status", headers=hdr).json()["linked"]
+    assert "not valid" in _say(client, "556", f"/start {code['code']}")   # used once
+
+    workspaces.for_account("cust@example.com").metrics["mrr"] = 40.0
+    reply = _say(client, "555", "/status")
+    assert "Plan:" in reply and "$40.00" in reply
+    for word in _FOUNDER_WORDS:
+        assert word not in reply
+    assert len(st.founder_store().telegram_log) == founders_log   # never his log
+    assert len(client.get("/api/me/telegram/log", headers=hdr).json()) == 2
+
+    # The founder's own chat is never linked to a subscriber.
+    again = client.post("/api/me/telegram/link-code", headers=hdr).json()["code"]
+    assert "not valid" in _say(client, "999", f"/start {again}")
+    assert telegram_links.account_for("999") is None
+    # A stranger's chat is refused, as before.
+    assert "linked Titan accounts only" in _say(client, "777", "/status")
+
+    # The link survives a restart, and unlinking ends it.
+    state = telegram_links.export_state()
+    telegram_links.reset()
+    telegram_links.import_state(state)
+    assert telegram_links.account_for("555") == "cust@example.com"
+    assert client.delete("/api/me/telegram/link", headers=hdr).json()["unlinked"]
+    assert "linked Titan accounts only" in _say(client, "555", "/status")
+
+
+def test_a_telegram_code_expires_and_cannot_be_guessed(telegram, monkeypatch):
+    from app.core import ratelimit, telegram_links
+    client, token, _ = telegram
+    hdr = {"X-Account-Token": token}
+    code = client.post("/api/me/telegram/link-code", headers=hdr).json()["code"]
+    monkeypatch.setattr(telegram_links, "CODE_TTL", -1)
+    assert "not valid" in _say(client, "555", f"/start {code}")
+    monkeypatch.setattr(ratelimit, "ENABLED", True)
+    ratelimit.reset()
+    replies = [_say(client, "555", f"/start {n:08d}") for n in range(13)]
+    assert "Too many tries" in replies[-1]
+
+
+def test_telegram_waits_until_titans_bot_is_named(customer, monkeypatch):
+    client, token, _ = customer
+    monkeypatch.delenv("TITAN_TELEGRAM_BOT", raising=False)
+    hdr = {"X-Account-Token": token}
+    assert client.get("/api/me/telegram/status", headers=hdr).json()["configured"] is False
+    assert client.post("/api/me/telegram/link-code", headers=hdr).status_code == 409
+
+
+def test_polling_never_answers_a_subscribers_chat_with_the_founders_data(
+        telegram, monkeypatch):
+    """Where Telegram is reachable the bot polls instead of using the relay.
+    That path must route a linked chat to the subscriber too."""
+    import httpx
+    from app.core import telegram_links
+    from app.engines import telegram_bot
+    client, token, _ = telegram
+    code = client.post("/api/me/telegram/link-code",
+                       headers={"X-Account-Token": token}).json()["code"]
+    telegram_links.redeem("555", code)
+
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            return {"result": [{"update_id": 1, "message": {
+                "chat": {"id": 555}, "text": "/status", "from": {"first_name": "S"}}}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, *a, **k):
+            return Resp()
+
+    sent = []
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(telegram_bot, "_send", lambda tok, chat, text: sent.append(text))
+    founder = st.founder_store()
+    before = (founder.telegram_offset, len(founder.telegram_log))
+    try:
+        telegram_bot.poll_once(founder)
+        assert sent and sent[0].startswith("Plan:")
+        assert len(founder.telegram_log) == before[1]
+    finally:
+        founder.telegram_offset = before[0]
+
+
+def test_job_radar_works_from_the_subscribers_own_profile(customer, monkeypatch):
+    """Job Radar scored and wrote proposals from the founder's CV. A
+    subscriber's works from the profile they write, and never his."""
+    from app.core import llm
+    from app.engines import jobs, research
+    client, token, workspaces = customer
+    hdr = {"X-Account-Token": token}
+    systems, searches = [], []
+
+    def fake(system="", prompt="", **kw):
+        systems.append(system)
+        return "80|Office catering contract|https://tender.test/1|Fits a bakery"
+
+    monkeypatch.setattr(llm, "complete", fake)
+    monkeypatch.setattr(research, "search", lambda q, n=8: searches.append(q) or [
+        {"title": "Catering contract", "url": "https://tender.test/1", "content": "bread"}])
+
+    # No profile yet: nothing is searched and nothing is spent.
+    out = client.post("/api/me/jobs/scan", headers=hdr, json={"query": ""}).json()
+    assert "Tell Titan what you offer" in out["note"] and searches == []
+
+    profile = "Artisan bakery in Lahore: bread, cakes and office catering."
+    assert client.post("/api/me/jobs/profile", headers=hdr,
+                       json={"profile": profile}).json()["profile"] == profile
+    found = client.post("/api/me/jobs/scan", headers=hdr, json={"query": ""}).json()
+    assert found["items"][0]["title"] == "Office catering contract"
+    assert found["profile"] == profile                    # kept across a scan
+    assert searches and "bakery" in searches[0].lower()
+    proposal = client.post("/api/me/jobs/proposal", headers=hdr,
+                           json={"title": "Office catering contract"}).json()["proposal"]
+    assert proposal
+    assert all(profile in s for s in systems)
+    for s in systems:
+        assert jobs.PROFILE not in s
+        for word in _FOUNDER_WORDS:
+            assert word not in s, word
+    # The founder's own radar is untouched and still his.
+    assert not (st.founder_store().jobs or {}).get("profile")
+    assert workspaces.export_state()["cust@example.com"]["jobs"]["profile"] == profile
+
+
 _FRONTEND = __import__("pathlib").Path(__file__).resolve().parents[2] / "frontend"
 
 # Which /api routes each customer-visible tab reads. A tab may be added to
@@ -838,6 +1049,8 @@ TAB_ROUTES = {
     "warroom": ["/api/growth/intel"],
     "apis": ["/api/apis/integrated", "/api/apis", "/api/apis/live/rates",
              "/api/apis/live/weather"],
+    "telegram": ["/api/telegram/status", "/api/telegram/log"],
+    "jobs": ["/api/jobs"],
 }
 
 
@@ -938,6 +1151,44 @@ def test_the_dashboard_never_names_the_founder_to_a_subscriber():
     urdu = read("UrduVoiceAssistant.tsx")
     assert 'isCustomer() ? "\U0001f399 اردو رپورٹ"' in urdu
     assert "`${apiBase()}/voice-report`" in urdu
+
+
+# Client methods a subscriber's cockpit never calls: the founder's own feeds
+# and engines, and the sign-in / demo calls made before anyone is a customer.
+# Everything else in lib/api.ts must reach a route open at /api/me - otherwise
+# a button in their cockpit fails with a 404 nobody can explain. That is how
+# the command bar (it posts to /agent/act, not /command) was nearly shipped
+# broken.
+_FOUNDER_ONLY_CLIENT = {
+    "authStatus", "sessionKind", "enterDemo",        # before sign-in
+    "connectors", "channels", "intelligence",        # his feeds (never requested)
+    "refreshConnectors", "scanOpportunities",         # his engines (buttons hidden)
+    "weeklyReport", "executeOpportunity", "openPr",
+}
+
+
+def _client_routes() -> dict:
+    import re
+    src = (_FRONTEND / "lib" / "api.ts").read_text(encoding="utf-8")
+    heads = [(m.start(), m.group(1)) for m in
+             re.finditer(r"^  (?:async\s+)?(\w+)\s*[:(]", src, re.M)]
+    verbs = {"get": "GET", "getRoot": "GET", "post": "POST", "del": "DELETE"}
+    out: dict = {}
+    for m in re.finditer(r"\b(getRoot|get|post|del)\s*<[^()]*?>\(\s*[`\"]([^`\"]+)", src):
+        name = [n for pos, n in heads if pos < m.start()][-1]
+        path = "/api" + re.sub(r"\$\{[^}]+\}", "x", m.group(2).split("?")[0])
+        out.setdefault(name, []).append((verbs[m.group(1)], path))
+    return out
+
+
+def test_every_client_call_a_subscriber_can_make_is_open_to_them():
+    from app.core import cockpit_scope
+    routes = _client_routes()
+    assert "command" in routes and len(routes) > 40      # the parser really parsed
+    closed = [f"{name}: {method} {path}"
+              for name, calls in routes.items() if name not in _FOUNDER_ONLY_CLIENT
+              for method, path in calls if not cockpit_scope.allowed(method, path)]
+    assert not closed, "closed to subscribers: " + "; ".join(closed)
 
 
 def test_unbound_code_still_sees_the_founder_store():

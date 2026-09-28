@@ -694,11 +694,90 @@ def _resp(intent: str, response: str, routed_to=None, actions=None) -> dict:
     }
 
 
+_POST_WORDS = ["post", "tweet", "linkedin", "instagram", "pinterest", "social", "share", "caption"]
+_SCAN_WORDS = ["scan", "opportunit", "find revenue", "find new", "leads", "prospect"]
+_REPORT_WORDS = ["report", "summary", "weekly"]
+_OUTREACH_WORDS = ["email", "outreach", "school", "university", "college", "business",
+                   "customer", "reply", "sell", "contact"]
+
+
+def _subscriber_act(text: str, businesses: list) -> dict:
+    """The command bar in a subscriber's cockpit: the same four actions, done
+    for their own business in their own workspace. Nothing is sent or posted
+    for them - drafts wait where they can copy them."""
+    low = text.lower()
+    desc = owner.describe(businesses) or "a small business"
+
+    if any(k in low for k in _POST_WORDS):
+        if not businesses:
+            return _resp("publish", "Add your business in the Clients tab first, and "
+                                    "Titan writes posts about it.", "marketing-head")
+        content = llm.complete(
+            system=(f"Write ONE punchy social media post (max 280 chars) for {desc}, "
+                    "based on the instruction. Include a clear call to action. "
+                    "Output only the post."),
+            prompt=text, max_tokens=160)
+        if not content:
+            return _resp("publish", quota.no_answer_note(""), "marketing-head")
+        post = publisher.schedule(content, ["linkedin"], None, None, store=STORE)
+        return _resp(
+            "publish",
+            f'Drafted a post and saved it to your queue: "{content[:140]}". Titan does '
+            "not post to your accounts - copy it from Publishing.",
+            "marketing-head", ["scheduled_post:" + str(post.get("id", ""))])
+
+    if any(k in low for k in _SCAN_WORDS):
+        from ..engines import autonomous
+        from .growth import limit_subscriber
+        limit_subscriber()
+        intel = autonomous.growth_cycle(STORE)
+        return _resp(
+            "intelligence",
+            ("Researched your market - the brief, competitors and keywords are in "
+             "the War Room." if businesses else intel["summary"]),
+            "intelligence-head", ["growth_research"])
+
+    if any(k in low for k in _REPORT_WORDS):
+        deliverables.generate("business_report", f"{text}\n\nThe business: {desc}",
+                              "executive-board-reporting-analyst", store=STORE)
+        return _resp("report", "Generated your report - open the Deliverables panel to read it.",
+                     "executive-board-reporting-analyst", ["created_deliverable"])
+
+    if any(k in low for k in _OUTREACH_WORDS):
+        if any(k in low for k in ["customer", "reply", "care", "support"]):
+            brief = f"Warm, professional customer-care reply from {desc} that resolves the issue."
+        else:
+            brief = f"Short, warm cold email from {desc} to a potential customer."
+        content = llm.complete(
+            system=(f"You are the sales and outreach writer for {desc}. Draft specific, "
+                    "professional, ready-to-send copy."),
+            prompt=brief + "\n\nWhat the owner asked: " + text, max_tokens=600)
+        if not content:
+            return _resp("outreach", quota.no_answer_note(""), "revenue-head")
+        deliverables.generate("outreach_email", brief + "\n\n" + content, "revenue-head",
+                              store=STORE)
+        return _resp("outreach", "Drafted it and saved it to Deliverables. Titan does not "
+                                 "send it - copy it into your email or chat.",
+                     "revenue-head", ["created_deliverable"])
+
+    answer = llm.complete(
+        system=(f"You are Titan, the AI assistant in the owner's cockpit for {desc}. Speak "
+                "to them as 'you'. Be concise and actionable. If they want an action, "
+                "tell them you can draft posts, research their market, write reports, or "
+                "draft outreach."),
+        prompt=text, max_tokens=400,
+    ) or quota.no_answer_note("")
+    return _resp("answer", answer, "executive-core")
+
+
 @router.post("/agent/act", tags=["system"])
 def agent_act(req: ActRequest) -> dict:
     """Interpret an instruction and perform a real in-app action."""
     text = req.instruction.strip()
     low = text.lower()
+    businesses = owner.subscriber_businesses()
+    if businesses is not None:
+        return _subscriber_act(text, businesses)
 
     if any(k in low for k in ["post", "tweet", "linkedin", "instagram", "pinterest", "social", "share", "caption"]):
         content = llm.complete(

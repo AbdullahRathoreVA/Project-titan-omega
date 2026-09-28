@@ -18,7 +18,8 @@ import tempfile
 
 from .core import (analytics, billing, clients, db, evidence, learning,
                    reflection, knowledge, routing, sessions, site_access,
-                   site_fix, traffic, voice_sessions, workspaces)
+                   site_fix, telegram_links, traffic, voice_sessions,
+                   workspaces)
 from .store import STORE, Store, founder_store
 
 
@@ -93,6 +94,9 @@ def save(store: Store = STORE) -> None:
             "evidence": evidence.export_state(),
             # Each subscriber's own cockpit ledger, keyed by account.
             "workspaces": workspaces.export_state(),
+            # Which Telegram chat belongs to which subscriber. Losing it would
+            # silently answer a linked chat as a stranger's.
+            "telegram_links": telegram_links.export_state(),
         }
         # One transaction for all fifteen subsystems. The JSON file could not
         # offer this: a crash mid-write left a truncated file that failed to
@@ -217,5 +221,8 @@ def load(store: Store = STORE) -> None:
         spaces = data.get("workspaces")
         if isinstance(spaces, dict):
             workspaces.import_state(spaces)
+        links = data.get("telegram_links")
+        if isinstance(links, dict):
+            telegram_links.import_state(links)
     except Exception:
         pass

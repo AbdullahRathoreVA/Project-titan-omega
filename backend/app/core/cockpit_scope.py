@@ -96,6 +96,10 @@ ALLOWED: Tuple[Tuple[str, str], ...] = (
     # (engines/owner.py); lead finding shares the War Room's hourly limit.
     ("POST", r"/api/agents/[^/]+/chat"),
     ("POST", r"/api/command"),
+    # The command bar itself posts here (lib/api.ts `command`); for a
+    # subscriber it acts on their business in their workspace
+    # (actions._subscriber_act) and never sends or posts anything.
+    ("POST", r"/api/agent/act"),
     ("GET", r"/api/voice-report"),
     ("POST", r"/api/intel/generate"),
     ("POST", r"/api/intel/news"),
@@ -106,6 +110,18 @@ ALLOWED: Tuple[Tuple[str, str], ...] = (
     ("POST", r"/api/next-post/(regenerate|approve)"),
     ("POST", r"/api/posts"),
     ("POST", r"/api/posts/[^/]+/publish"),
+    # Telegram: Titan's own bot, linked to the subscriber's chat by a one-time
+    # code; status and log are theirs (core/telegram_links.py). Job Radar
+    # works from the profile they write; its scans share the hourly limit.
+    ("GET", r"/api/telegram/status"),
+    ("GET", r"/api/telegram/log"),
+    ("POST", r"/api/telegram/link-code"),
+    ("DELETE", r"/api/telegram/link"),
+    ("GET", r"/api/jobs"),
+    ("POST", r"/api/jobs/profile"),
+    ("POST", r"/api/jobs/scan"),
+    ("POST", r"/api/jobs/proposal"),
+    ("POST", r"/api/jobs/[^/]+/applied"),
 )
 
 _COMPILED = tuple((m, re.compile(p + r"\Z")) for m, p in ALLOWED)

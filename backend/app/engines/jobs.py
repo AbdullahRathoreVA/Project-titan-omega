@@ -4,15 +4,20 @@ Compliant by design: it NEVER auto-applies (platform bots get accounts banned).
 It hunts listings on the live web (Tavily), scores each for Abdullah's real
 skills, and drafts a tailored proposal — he clicks apply himself. Applied
 status is tracked so the dashboard shows the pipeline.
+
+From a subscriber's cockpit it works from THEIR profile - what they offer,
+which they write themselves and which is kept with their workspace - and
+hunts for work they could win: projects, contracts, orders. Abdullah's CV
+below is never used for them.
 """
 
 from __future__ import annotations
 
 from typing import List, Optional
 
-from ..core import llm, model_router
+from ..core import llm, model_router, quota
 from ..store import STORE, Store, now
-from . import research
+from . import owner, research
 
 # Abdullah's REAL, verifiable profile — used for scoring + proposals. No lies.
 PROFILE = (
@@ -52,9 +57,38 @@ def _parse_scored(raw: str) -> List[dict]:
     return out
 
 
+def _subscriber() -> bool:
+    return owner.subscriber_businesses() is not None
+
+
+def profile_of(store: Store = STORE) -> str:
+    """The profile this hunt works from: the subscriber's own, or the founder's."""
+    if _subscriber():
+        return str((store.jobs or {}).get("profile") or "")
+    return PROFILE
+
+
+def set_profile(text: str, store: Store = STORE) -> dict:
+    """A subscriber describes what they offer. Kept with their workspace."""
+    jobs = dict(store.jobs or {"items": [], "live": False, "last_scan": None})
+    jobs["profile"] = str(text or "").strip()[:1000]
+    store.jobs = jobs
+    return state(store)
+
+
 def scan(query: str = "", store: Store = STORE) -> dict:
     """One live hunt. Returns and stores {items, live, last_scan}."""
-    queries = [query.strip()] if query.strip() else _DEFAULT_QUERIES
+    subscriber = _subscriber()
+    profile = profile_of(store)
+    if subscriber and not profile and not query.strip():
+        return {**state(store), "note": (
+            "Tell Titan what you offer first - your services, skills or "
+            "products - and it hunts for work you could win.")}
+    if subscriber:
+        queries = [query.strip()] if query.strip() else [
+            f"{profile[:120]} project OR contract OR tender OR bulk order hiring 2026"]
+    else:
+        queries = [query.strip()] if query.strip() else _DEFAULT_QUERIES
     results: List[dict] = []
     seen = set()
     for q in queries:
@@ -67,13 +101,14 @@ def scan(query: str = "", store: Store = STORE) -> dict:
     items: List[dict] = []
     if results:
         src = "\n".join(f"- {r['title']} | {r['url']}\n  {r['content']}" for r in results)
+        who = ("this business" if subscriber else "Abdullah")
         raw = llm.complete(
             system=(
                 "You are a job-hunting analyst. From the live results, pick the listings "
-                "that are REAL jobs/gigs Abdullah could win, score each 0-100 for fit, and "
+                f"that are REAL jobs/gigs {who} could win, score each 0-100 for fit, and "
                 "output ONE LINE PER JOB in exactly this format (no other text):\n"
                 "SCORE|TITLE|URL|WHY IT FITS\n"
-                f"His profile: {PROFILE}"
+                f"{'Their' if subscriber else 'His'} profile: {profile}"
             ),
             prompt=src,
             max_tokens=700,
@@ -90,7 +125,8 @@ def scan(query: str = "", store: Store = STORE) -> dict:
 
     prev = (store.jobs or {}).get("items", [])
     kept = [p for p in prev if p.get("applied")]  # keep the applied history
-    store.jobs = {"items": items + kept, "live": live, "last_scan": now().isoformat()}
+    store.jobs = {"items": items + kept, "live": live, "last_scan": now().isoformat(),
+                  **({"profile": profile} if subscriber else {})}
     store.emit("job-radar", "discovery",
                f"Job Radar: found {len(items)} openings ({'live web' if live else 'no live search'}).",
                "success" if items else "warn")
@@ -113,19 +149,30 @@ def mark_applied(job_id: str, store: Store = STORE) -> Optional[dict]:
 
 def proposal(title: str, url: str, why: str = "", store: Store = STORE) -> str:
     """Draft a tailored, truthful proposal/cover letter for one listing."""
-    text = llm.complete(
-        task=model_router.JOB_PROPOSAL,
-        system=(
+    if _subscriber():
+        profile = profile_of(store)
+        if not profile:
+            return "Add your profile first - Titan only writes what it knows to be true."
+        system = (
+            "Write a short, specific proposal (120-180 words) for the job or project "
+            "below, from the business described in this profile. Rules: 100% truthful "
+            "to the profile - never invent experience, clients or numbers - address the "
+            "job's actual need in the first sentence, end with a low-friction call to "
+            f"action. No hype, no buzzwords. Profile: {profile}")
+    else:
+        system = (
             "Write a short, specific proposal/cover letter (120-180 words) for the job "
             "below, from Abdullah. Rules: 100% truthful to his profile, mention ONE "
             "relevant shipped product with its live link, address the job's actual need "
             "in the first sentence, end with a low-friction call to action. No hype, no "
-            f"fake experience, no buzzwords. Profile: {PROFILE}"
-        ),
+            f"fake experience, no buzzwords. Profile: {PROFILE}")
+    text = llm.complete(
+        task=model_router.JOB_PROPOSAL,
+        system=system,
         prompt=f"Job: {title}\nURL: {url}\nWhy it fits: {why}",
         max_tokens=350,
     )
-    return text or (
+    return text or quota.no_answer_note(
         "AI drafting is unreachable right now (check /api/llm/health). "
         "Retry in a minute."
     )
