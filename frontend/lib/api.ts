@@ -99,70 +99,105 @@ export function adminFetch(path: string, init: RequestInit = {}): Promise<Respon
   });
 }
 
+/**
+ * The answer to "is this session good?". `unreachable` means the host didn't
+ * answer (Hugging Face's proxy fails in bursts), which says nothing about the
+ * session - so it must never sign anyone out.
+ */
+export type SessionCheck = "ok" | "invalid" | "unreachable";
+
+const GATEWAY_ERRORS = [502, 503, 504];
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** fetch() that tries again when the host answers with a gateway error or the
+ *  request fails outright. Only for requests that are safe to repeat; GETs are
+ *  already retried by the Cloudflare Worker. Null if the host never answered. */
+async function fetchRetrying(url: string, init: RequestInit, tries = 3): Promise<Response | null> {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url, init);
+      if (!GATEWAY_ERRORS.includes(res.status) || i === tries - 1) return res;
+    } catch {
+      if (i === tries - 1) return null;
+    }
+    await pause(1000 * (i + 1));
+  }
+  return null;
+}
+
 /** Is the stored subscriber session still good? Saves their profile for the
- *  greeting. A stale token is cleared so the sign-in screen shows. */
-export async function verifyCustomer(): Promise<boolean> {
+ *  greeting. The token is only cleared when the server rejects it. */
+export async function verifyCustomer(): Promise<SessionCheck> {
   const token = getCustomerToken();
-  if (!token) return false;
+  if (!token) return "invalid";
   try {
     const res = await fetch("/api/account", {
       cache: "no-store",
       headers: { "X-Account-Token": token },
     });
-    if (!res.ok) {
-      if (res.status === 401) setCustomerToken(null);
-      return false;
+    if (res.status === 401 || res.status === 403) {
+      setCustomerToken(null);
+      return "invalid";
     }
+    if (!res.ok) return "unreachable";
     const acct = (await res.json()) as {
       email: string; plan?: string; plan_name?: string; demo?: boolean;
     };
     setCustomerProfile({ email: acct.email, plan: acct.plan, plan_name: acct.plan_name,
                          demo: Boolean(acct.demo) });
-    return true;
+    return "ok";
   } catch {
-    return false;
+    return "unreachable";
   }
 }
 
 /** Open the public demo: the subscriber cockpit itself, on the read-only demo
- *  account that holds Titan's own demonstration businesses. */
-export async function enterCockpitDemo(): Promise<boolean> {
+ *  account that holds Titan's own demonstration businesses. Opening it twice
+ *  only issues a second demo session, so the request is safe to retry. */
+export async function enterCockpitDemo(): Promise<SessionCheck> {
+  const res = await fetchRetrying("/api/demo/cockpit", { method: "POST" });
+  if (!res || GATEWAY_ERRORS.includes(res.status)) return "unreachable";
+  if (!res.ok) return "invalid";
   try {
-    const res = await fetch("/api/demo/cockpit", { method: "POST" });
-    if (!res.ok) return false;
     const data = (await res.json()) as { token: string };
     setCustomerToken(data.token, false);
-    return await verifyCustomer();
+    // Marked as the demo straight away; the profile check fills in the rest
+    // when the host answers, and isn't needed to open the cockpit.
+    setCustomerProfile({ email: "", demo: true });
+    return (await verifyCustomer()) === "invalid" ? "invalid" : "ok";
   } catch {
-    return false;
+    return "unreachable";
   }
 }
 
-export async function verifyToken(): Promise<boolean> {
-  if (!getToken()) return false;
+export async function verifyToken(): Promise<SessionCheck> {
+  if (!getToken()) return "invalid";
   try {
     const res = await fetch("/api/status", { cache: "no-store", headers: authHeaders() });
-    return res.ok;
+    if (res.ok) return "ok";
+    return res.status === 401 || res.status === 403 ? "invalid" : "unreachable";
   } catch {
-    return false;
+    return "unreachable";
   }
 }
 
 /**
  * Questions about the session itself (is auth on? what is this founder
  * token?) always go to /api with the founder token, whoever is signed in.
+ * Null when the host didn't answer, so start-up never mistakes an outage for
+ * an answer.
  */
-async function getRoot<T>(path: string, fallback: T): Promise<T> {
+async function getRootOrNull<T>(path: string): Promise<T | null> {
   try {
     const token = getToken();
     const res = await fetch(`/api${path}`, {
       cache: "no-store",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (!res.ok) throw new Error(`${res.status}`);
+    if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
-    return fallback;
+    return null;
   }
 }
 
@@ -255,8 +290,9 @@ export const api = {
     }),
 
   // auth
+  /** Null when the host didn't answer; the caller retries rather than guess. */
   authStatus: () =>
-    getRoot<{
+    getRootOrNull<{
       required: boolean;
       demo: boolean;
       guest?: boolean;
@@ -274,18 +310,12 @@ export const api = {
         founder_account_exists: boolean;
         environment_gate_reachable: boolean;
       };
-    }>("/auth", {
-      required: false,
-      demo: true,
-      guest: false,
-      guest_available: true,
-    }),
+    }>("/auth"),
   /**
    * What kind of session the stored token represents. Authoritative - never
-   * infer this from browser storage.
+   * infer this from browser storage. Null when the host didn't answer.
    */
-  sessionKind: () =>
-    getRoot<{ founder: boolean; guest: boolean }>("/session", { founder: false, guest: false }),
+  sessionKind: () => getRootOrNull<{ founder: boolean; guest: boolean }>("/session"),
   /** Start the public read-only demo session (no login). */
   async enterDemo(): Promise<boolean> {
     try {
@@ -312,34 +342,42 @@ export const api = {
   async login(
     username: string,
     password: string,
-  ): Promise<"founder" | "account" | "limited" | null> {
-    const res = await fetch("/api/login", {
+  ): Promise<"founder" | "account" | "limited" | "unreachable" | null> {
+    // Checking a password changes nothing, so a gateway error is retried.
+    const json = { "Content-Type": "application/json" };
+    const res = await fetchRetrying("/api/login", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: json,
       body: JSON.stringify({ username, password }),
     });
-    if (res.ok) {
+    if (res && res.ok) {
       const data = (await res.json()) as { token: string };
       setToken(data.token);
       return "founder";
     }
 
     // Not the owner. Try the subscriber door before calling it a bad password.
-    const acct = await fetch("/api/account/login", {
+    const acct = await fetchRetrying("/api/account/login", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: json,
       body: JSON.stringify({ email: username, password }),
     });
     // Rate-limited isn't "wrong password"; saying so would send people round in
     // circles retyping a password that was right.
-    if (acct.status === 429 || res.status === 429) return "limited";
-    if (!acct.ok) return null;
-    const data = (await acct.json()) as { token: string };
-    // A subscriber gets their own cockpit. The token is also mirrored to the
-    // key /join reads, so setting up a business there needs no second sign-in.
-    setCustomerToken(data.token);
-    await verifyCustomer();
-    return "account";
+    if (acct?.status === 429 || res?.status === 429) return "limited";
+    if (acct && acct.ok) {
+      const data = (await acct.json()) as { token: string };
+      // A subscriber gets their own cockpit. The token is also mirrored to the
+      // key /join reads, so setting up a business there needs no second sign-in.
+      setCustomerToken(data.token);
+      await verifyCustomer();
+      return "account";
+    }
+    // "Wrong password" only when both doors actually answered and said no. A
+    // door that never answered may have held the right account.
+    const answered = (r: Response | null) => r !== null && !GATEWAY_ERRORS.includes(r.status)
+      && r.status < 500;
+    return answered(res) && answered(acct) ? null : "unreachable";
   },
   logout: () => {
     setToken(null);

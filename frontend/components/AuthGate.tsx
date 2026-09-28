@@ -37,24 +37,30 @@ export function AuthGate() {
   // would label the box "Email address" on a deployment that wants a username.
   const [identityMode, setIdentityMode] = useState<"identity" | "legacy">("legacy");
   const [guest, setGuest] = useState(false);
+  // True while the host isn't answering. Nothing is decided in that state -
+  // no sign-out, no guessing - the check just runs again shortly.
+  const [outage, setOutage] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
-  const probe = useCallback(async () => {
+  const probe = useCallback(async (): Promise<"done" | "retry"> => {
     const status = await api.authStatus();
+    if (!status) return "retry";
     setDemo(status.demo);
     setGuestAvailable(status.guest_available !== false);
     setIdentityMode(status.identity?.mode === "identity" ? "identity" : "legacy");
 
     // A subscriber opens their own cockpit (reading /api/me), whatever the
-    // founder gate is set to. A stale session is cleared and falls through
-    // to the sign-in screen.
+    // founder gate is set to. A session the server rejects is cleared and
+    // falls through to the sign-in screen.
     if (getCustomerToken()) {
-      if (await verifyCustomer()) {
+      const check = await verifyCustomer();
+      if (check === "unreachable") return "retry";
+      if (check === "ok") {
         markGuest(false);
         setGuest(false);
         setState("ready");
-        return;
+        return "done";
       }
-      setCustomerToken(null);
     }
 
     // A whole-Space guest deploy (legacy TITAN_GUEST_MODE) needs no login.
@@ -62,40 +68,58 @@ export function AuthGate() {
       markGuest(true);
       setGuest(true);
       setState("ready");
-      return;
+      return "done";
     }
 
     if (!status.required) {
       setState("ready");
-      return;
+      return "done";
     }
 
     const token = getToken();
     if (!token) {
       setState("login");
-      return;
+      return "done";
     }
 
-    // Verify the stored token really works; if it's stale, force a fresh login.
-    const ok = await verifyToken();
-    if (ok) {
-      // Ask the server what this token is instead of guessing from
-      // sessionStorage - in a new tab a restored demo token could otherwise be
-      // shown as the founder while still getting sample data.
-      const kind = await api.sessionKind();
-      markGuest(kind.guest);
-      setGuest(kind.guest);
-      setState("ready");
-    } else {
+    // Verify the stored token really works; only a token the server rejects
+    // is dropped, never one it simply didn't get to answer about.
+    const check = await verifyToken();
+    if (check === "unreachable") return "retry";
+    if (check === "invalid") {
       setToken(null);
       markGuest(false);
       setState("login");
+      return "done";
     }
+    // Ask the server what this token is instead of guessing from
+    // sessionStorage - in a new tab a restored demo token could otherwise be
+    // shown as the founder while still getting sample data.
+    const kind = await api.sessionKind();
+    if (!kind) return "retry";
+    markGuest(kind.guest);
+    setGuest(kind.guest);
+    setState("ready");
+    return "done";
   }, []);
 
   useEffect(() => {
-    void probe();
-  }, [probe]);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    void probe().then((result) => {
+      if (cancelled) return;
+      if (result === "retry") {
+        setOutage(true);
+        timer = setTimeout(() => setAttempt((n) => n + 1), 4000);
+      } else {
+        setOutage(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [probe, attempt]);
 
   if (state === "loading") {
     // This is what a crawler sees: the app is client-rendered, so the static
@@ -118,6 +142,13 @@ export function AuthGate() {
         <span className="mt-6 animate-pulseGlow font-mono text-xs text-hud-cyan">
           Booting the command centre…
         </span>
+        {outage && (
+          <p className="mt-3 max-w-md text-xs text-hud-amber">
+            Titan&apos;s server isn&apos;t answering right now - our hosting provider
+            is having a brief outage. Retrying automatically; you&apos;re still
+            signed in.
+          </p>
+        )}
         <nav className="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-slate-500">
           <a className="hover:text-hud-cyan" href="/pricing">Pricing</a>
           <a className="hover:text-hud-cyan" href="/privacy">Privacy</a>

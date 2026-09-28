@@ -11843,6 +11843,36 @@ def test_a_page_whose_scripts_failed_recovers_by_itself():
             in register)
 
 
+def test_an_outage_never_reads_as_a_wrong_password_or_a_sign_out():
+    """During a host outage every check fails with a gateway error. That must
+    not be reported as "Invalid password", must not delete a saved session,
+    and must not leave the boot screen stuck: sign-in says the server didn't
+    answer, and start-up keeps the session and tries again."""
+    comp = pathlib.Path(__file__).resolve().parents[2] / "frontend"
+    api = (comp / "lib" / "api.ts").read_text(encoding="utf-8")
+    gate = (comp / "components" / "AuthGate.tsx").read_text(encoding="utf-8")
+    login = (comp / "components" / "Login.tsx").read_text(encoding="utf-8")
+
+    # Sign-in: "wrong password" only when both doors answered and said no.
+    assert 'return answered(res) && answered(acct) ? null : "unreachable";' in api
+    assert 'const res = await fetchRetrying("/api/login", {' in api
+    assert 'const acct = await fetchRetrying("/api/account/login", {' in api
+    assert 'who === "unreachable"' in login
+    # A session is only dropped when the server rejects it.
+    assert 'return res.status === 401 || res.status === 403 ? "invalid" : "unreachable";' in api
+    assert ('if (res.status === 401 || res.status === 403) {\n'
+            '      setCustomerToken(null);') in api
+    # The demo request is retried and an outage says so.
+    assert 'const res = await fetchRetrying("/api/demo/cockpit", { method: "POST" });' in api
+    # Start-up: an unanswered check retries instead of deciding.
+    assert ('const check = await verifyCustomer();\n'
+            '      if (check === "unreachable") return "retry";') in gate
+    assert ('const check = await verifyToken();\n'
+            '    if (check === "unreachable") return "retry";') in gate
+    assert "if (!status) return \"retry\";" in gate
+    assert "timer = setTimeout(() => setAttempt((n) => n + 1), 4000);" in gate
+
+
 def test_the_worker_fetches_the_service_worker_past_cloudflares_cache():
     root = pathlib.Path(__file__).resolve().parents[2]
     worker = (root / "deploy" / "cloudflare-worker.js").read_text(encoding="utf-8")

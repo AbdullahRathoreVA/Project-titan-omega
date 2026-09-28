@@ -88,6 +88,11 @@ export function Login({
     setBusy(false);
     if (who === "limited") {
       setError("Too many sign-in attempts. Please wait a few minutes and try again.");
+    } else if (who === "unreachable") {
+      setError(
+        "Titan's server didn't answer - our hosting provider is having a brief " +
+          "outage. Your password wasn't rejected; please try again in a minute.",
+      );
     } else if (who === "founder") {
       onSuccess();
     } else if (who === "account") {
@@ -111,10 +116,15 @@ export function Login({
   async function startCockpitDemo() {
     setDemoBusy(true);
     setError("");
-    const ok = await enterCockpitDemo();
+    const result = await enterCockpitDemo();
     setDemoBusy(false);
-    if (ok) onSuccess();
-    else setError("The demo is unavailable right now.");
+    if (result === "ok") onSuccess();
+    else if (result === "unreachable") {
+      setError(
+        "Titan's server didn't answer - our hosting provider is having a brief " +
+          "outage. Please try again in a minute.",
+      );
+    } else setError("The demo is unavailable right now.");
   }
 
   const limitLine = (p: Plan) => {
