@@ -17,7 +17,7 @@ short_description: SEO, local ranking and legal compliance audits
 **SEO, local ranking and legal compliance — audited for any business, in any jurisdiction.**
 Multi-tenant platform with a voice-agent layer, built solo on a $0 stack.
 
-[**titanomega-ai.com**](https://titanomega-ai.com) · [Start free](https://titanomega-ai.com/join) · [Pricing](https://titanomega-ai.com/pricing)
+[**titanomega-ai.com**](https://titanomega-ai.com) · [Start free](https://titanomega-ai.com/join) · [Pricing](https://titanomega-ai.com/pricing) · Try the cockpit from the sign-in screen, no signup
 Built by [Abdullah Rathore](https://github.com/AbdullahRathoreVA)
 
 ![Titan Omega — Neural Command Universe](docs/media/demo.gif)
@@ -38,6 +38,23 @@ one finding that proves the product's value would sell nothing.
 
 16 verticals. `wholesale` and `manufacturer` are correctly `local_business=False`,
 because a B2B buyer finds a supplier by searching the product, never by proximity.
+
+## Every subscriber gets the whole cockpit
+
+Signing up opens the same sixteen-tab cockpit the founder runs — the boot and
+voice, the 3D universe, agents, War Room, CRM, Finance, Voice, Telegram, Job
+Radar — scoped to that subscriber's own data.
+
+It is served through one door, `/api/me`, behind an allowlist
+(`backend/app/core/cockpit_scope.py`). A route is unreachable there until it is
+added on purpose, together with a test that proves it reads only that
+account's workspace. Two tests keep it honest as the product grows: one fills
+the founder's data with marker values and fails if any subscriber route ever
+returns one; the other walks every client call in `frontend/lib/api.ts` and
+fails if a button a subscriber can press reaches a closed route.
+
+The public demo is that cockpit too, on a read-only demo account holding
+Titan's own demonstration businesses.
 
 ## The rule the whole codebase is built on
 
@@ -122,17 +139,22 @@ or a caller's own words.
 
 ## Payments
 
-Behind one adapter seam. **Dodo Payments** is preferred — a Merchant of Record
-that handles US sales tax and EU VAT and pays out to **Payoneer and Wise**,
-which is what makes it usable from Pakistan, where **PayPal cannot receive
-money at all**. PayPal remains supported for other markets.
+Behind one adapter seam. **Paddle** is the processor in use — a Merchant of
+Record that handles sales tax and VAT, and one that onboards a Pakistan-based
+seller. Checkout runs in Paddle's overlay; trials, upgrades and cancellations
+arrive by webhook, verified against the `Paddle-Signature` HMAC, and a stale
+or replayed event is refused. A paid plan is only ever set by a confirmed
+payment. Dodo Payments and PayPal remain as adapters behind the same seam.
 
-With neither configured, signup and the free tier work normally and the refusal
-names exactly which variables are missing. Titan never sees a card number.
+With no processor configured, signup and the free tier work normally and the
+refusal names exactly which variables are missing. Titan never sees a card
+number. Setup: [docs/PAYMENTS.md](docs/PAYMENTS.md).
 
 ## Engineering
 
-- **182 tests**, run before every push.
+- **722 backend tests**, run before every push, plus a mutation check
+  (`python -m evaluation.mutation_check`) that deletes each guard in turn and
+  fails if the suite still passes — a test that cannot fail protects nothing.
 - **Self-healing AI layer** — Groq → Gemini → OpenRouter with live model-catalog
   discovery, so provider retirements can't silence it. Every credential
   whitespace-hardened. `/api/doctor` reports what the running container actually
@@ -151,7 +173,7 @@ names exactly which variables are missing. Titan never sees a card number.
 ## Stack
 
 `Python` `FastAPI` `Next.js 14` `TypeScript` `Tailwind` `three.js / react-three-fiber`
-`framer-motion` `Web Speech API` `Web Audio` `SSE` `Tavily` `Dodo Payments` `Docker` `HF Spaces`
+`framer-motion` `Web Speech API` `Web Audio` `SSE` `Tavily` `Paddle` `Docker` `HF Spaces`
 
 ## Run it yourself
 
@@ -171,9 +193,16 @@ cd frontend && TITAN_STATIC=1 npm run build
 produces the dev variant and leaves a stale `out/` in place.
 
 Runs with no keys at all. Add `GROQ_API_KEY` for conversational AI,
-`TAVILY_API_KEY` for lead discovery, `DODO_PAYMENTS_API_KEY` for checkout.
+`TAVILY_API_KEY` for lead discovery, and the `PADDLE_*` variables in
+[docs/PAYMENTS.md](docs/PAYMENTS.md) for checkout. Tests:
+
+```bash
+cd backend && python -m pytest tests/ -q
+cd frontend && npm run typecheck
+```
 
 ## Status
 
-Live, tested, and **earning nothing yet**. The gap is distribution and a
-connected payment processor — not features.
+Live and tested. Payments work end to end in Paddle's sandbox; the live account
+is waiting on Paddle's review. **Earning nothing yet** — the gap is
+distribution, not features.

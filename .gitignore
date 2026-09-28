@@ -35,3 +35,6 @@ backend/evaluation/.mutation-in-progress
 # has no business in a public git history. The Worker source that matters is
 # deploy/cloudflare-worker.js and wrangler.toml, both tracked.
 .wrangler/
+
+# Local editor and assistant settings.
+.claude/
