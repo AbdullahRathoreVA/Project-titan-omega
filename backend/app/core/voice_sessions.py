@@ -35,6 +35,11 @@ state the store enforces rather than a convention someone has to remember.
 
 Transcripts are personal data. `/api/voice` is registered in
 `demo_data._SENSITIVE_PREFIXES` so a public demo visitor is refused outright.
+
+**Every session has an owner.** `account` is "" for the founder and the
+subscriber's email for a session started from their own cockpit (/api/me).
+Reads return only the caller's sessions, and a session someone else owns is
+reported exactly like one that does not exist, so ids cannot be probed.
 """
 
 from __future__ import annotations
@@ -85,6 +90,10 @@ SENSITIVE_TOOLS = frozenset({
 
 MAX_SESSIONS = 400          # bounded: free-tier container
 MAX_TURNS = 300             # per session
+# One subscriber cannot fill the store and push everyone else's history out.
+MAX_PER_ACCOUNT = 60
+
+FOUNDER = ""                # the owner of every session started at /api
 
 _lock = threading.RLock()
 _sessions: dict[str, dict] = {}
@@ -99,8 +108,22 @@ def _now() -> float:
     return time.time()
 
 
+def _owned(sid: str, account: str) -> dict:
+    """The session, if `account` owns it. Call with the lock held."""
+    s = _sessions.get(sid)
+    if not s or s.get("account", FOUNDER) != account:
+        raise KeyError(sid)
+    return s
+
+
+def _mine(account: str) -> list[dict]:
+    return [s for s in _sessions.values()
+            if s.get("account", FOUNDER) == account]
+
+
 def start(channel: str = "web", agent: str = "titan-voice",
-          language: str = "en", caller: str = "") -> dict:
+          language: str = "en", caller: str = "",
+          account: str = FOUNDER) -> dict:
     """Open a session. Returns the public record."""
     global _seq
     # Raised rather than returned, matching the channel check below: this
@@ -122,6 +145,7 @@ def start(channel: str = "web", agent: str = "titan-voice",
             # Free text the operator supplied (a number, an email, a handle).
             # Never derived, never enriched — this is not a tracking system.
             "caller": str(caller or "")[:120],
+            "account": account,
             "state": IDLE,
             "started_at": _now(),
             "ended_at": None,
@@ -136,6 +160,10 @@ def start(channel: str = "web", agent: str = "titan-voice",
             "cost_usd": None,          # only set if a provider reports one
             "error": None,
         }
+        if account != FOUNDER:
+            own = sorted(_mine(account), key=lambda r: r["started_at"])
+            for stale in own[:max(0, len(own) - MAX_PER_ACCOUNT)]:
+                del _sessions[stale["id"]]
         if len(_sessions) > MAX_SESSIONS:
             for stale in sorted(_sessions, key=lambda k: _sessions[k]["started_at"])[
                     :len(_sessions) - MAX_SESSIONS]:
@@ -146,15 +174,14 @@ def start(channel: str = "web", agent: str = "titan-voice",
     return public(sid)
 
 
-def set_state(sid: str, state: str, reason: str = "") -> dict:
+def set_state(sid: str, state: str, reason: str = "",
+              account: str = FOUNDER) -> dict:
     """Move the session. Refuses transitions the machine does not define."""
     state = (state or "").lower()
     if state not in STATES:
         raise ValueError(f"Unknown state: {state}. One of {list(STATES)}.")
     with _lock:
-        s = _sessions.get(sid)
-        if not s:
-            raise KeyError(sid)
+        s = _owned(sid, account)
         current = s["state"]
         if state == current:
             return _public_locked(s)
@@ -187,7 +214,8 @@ def set_state(sid: str, state: str, reason: str = "") -> dict:
 
 
 def add_turn(sid: str, role: str, text: str, language: str = "",
-             confidence: Optional[float] = None) -> dict:
+             confidence: Optional[float] = None,
+             account: str = FOUNDER) -> dict:
     """Append one transcript turn.
 
     `confidence` is whatever the recogniser reported, or None. Titan never
@@ -198,9 +226,7 @@ def add_turn(sid: str, role: str, text: str, language: str = "",
     if role not in ("user", "agent", "human"):
         raise ValueError("role must be user, agent or human")
     with _lock:
-        s = _sessions.get(sid)
-        if not s:
-            raise KeyError(sid)
+        s = _owned(sid, account)
         turn = {
             "role": role,
             "text": str(text or "")[:4000],
@@ -221,12 +247,11 @@ def add_turn(sid: str, role: str, text: str, language: str = "",
     return turn
 
 
-def record_tool(sid: str, name: str, args_summary: str = "") -> dict:
+def record_tool(sid: str, name: str, args_summary: str = "",
+                account: str = FOUNDER) -> dict:
     """Log a tool call. Sensitive ones land as `pending` and stay there."""
     with _lock:
-        s = _sessions.get(sid)
-        if not s:
-            raise KeyError(sid)
+        s = _owned(sid, account)
         needs = name in SENSITIVE_TOOLS
         call = {
             "id": f"{sid}-t{len(s['tools']) + 1}",
@@ -247,12 +272,13 @@ def record_tool(sid: str, name: str, args_summary: str = "") -> dict:
     return dict(call)
 
 
-def approve_tool(sid: str, call_id: str, approver: str) -> dict:
+def approve_tool(sid: str, call_id: str, approver: str,
+                 account: str = FOUNDER) -> dict:
     """A human authorises a sensitive call. Without this it cannot complete."""
     if not approver:
         raise ValueError("An approver is required — that is the whole point.")
     with _lock:
-        call = _find_tool(sid, call_id)
+        call = _find_tool(sid, call_id, account)
         if call["status"] not in ("pending",):
             raise ValueError(f"That call is {call['status']}, not pending.")
         call["status"] = "running"
@@ -264,11 +290,12 @@ def approve_tool(sid: str, call_id: str, approver: str) -> dict:
     return out
 
 
-def finish_tool(sid: str, call_id: str, ok: bool, error: str = "") -> dict:
+def finish_tool(sid: str, call_id: str, ok: bool, error: str = "",
+                account: str = FOUNDER) -> dict:
     """Close a tool call. A sensitive call still pending cannot be finished —
     that would let an unapproved action be reported as done."""
     with _lock:
-        call = _find_tool(sid, call_id)
+        call = _find_tool(sid, call_id, account)
         if call["requires_approval"] and call["approved_by"] is None:
             raise ValueError(
                 f"{call['name']} needs approval before it can be executed. "
@@ -284,21 +311,18 @@ def finish_tool(sid: str, call_id: str, ok: bool, error: str = "") -> dict:
     return out
 
 
-def escalate(sid: str, reason: str, to: str = "human") -> dict:
+def escalate(sid: str, reason: str, to: str = "human",
+             account: str = FOUNDER) -> dict:
     """Hand the conversation to a person, and say why."""
     with _lock:
-        s = _sessions.get(sid)
-        if not s:
-            raise KeyError(sid)
+        s = _owned(sid, account)
         s["escalation"] = {"reason": str(reason or "")[:300], "to": to,
                            "at": _now()}
-    return set_state(sid, ESCALATED, reason=reason)
+    return set_state(sid, ESCALATED, reason=reason, account=account)
 
 
-def _find_tool(sid: str, call_id: str) -> dict:
-    s = _sessions.get(sid)
-    if not s:
-        raise KeyError(sid)
+def _find_tool(sid: str, call_id: str, account: str) -> dict:
+    s = _owned(sid, account)
     for c in s["tools"]:
         if c["id"] == call_id:
             return c
@@ -338,7 +362,7 @@ def public(sid: str) -> dict:
         return _public_locked(s) if s else {}
 
 
-def awaiting_approval() -> list[dict]:
+def awaiting_approval(account: str = FOUNDER) -> list[dict]:
     """Every sensitive tool call sitting in `pending`, oldest first.
 
     `live()` reports `tools` as a COUNT, which is right for the 3D screen and
@@ -346,7 +370,7 @@ def awaiting_approval() -> list[dict]:
     the calls themselves, still without touching the transcript."""
     out = []
     with _lock:
-        for s in _sessions.values():
+        for s in _mine(account):
             for call in s["tools"]:
                 if call["status"] != "pending":
                     continue
@@ -362,11 +386,12 @@ def awaiting_approval() -> list[dict]:
     return sorted(out, key=lambda c: c["started_at"])
 
 
-def transcript(sid: str) -> dict:
+def transcript(sid: str, account: str = FOUNDER) -> dict:
     """Full replay payload: turns, tools and the state timeline."""
     with _lock:
-        s = _sessions.get(sid)
-        if not s:
+        try:
+            s = _owned(sid, account)
+        except KeyError:
             return {}
         return {
             **_public_locked(s),
@@ -376,14 +401,14 @@ def transcript(sid: str) -> dict:
         }
 
 
-def live() -> dict:
+def live(account: str = FOUNDER) -> dict:
     """What is happening right now — the payload the 3D screen renders.
 
     Every field here is counted from stored sessions. Nothing is sampled,
     smoothed or invented.
     """
     with _lock:
-        rows = [_public_locked(s) for s in _sessions.values()]
+        rows = [_public_locked(s) for s in _mine(account)]
     return summarise(rows)
 
 
@@ -478,9 +503,9 @@ def demo_rows() -> list:
     ]
 
 
-def history(limit: int = 50) -> list[dict]:
+def history(limit: int = 50, account: str = FOUNDER) -> list[dict]:
     with _lock:
-        rows = [_public_locked(s) for s in _sessions.values()]
+        rows = [_public_locked(s) for s in _mine(account)]
     rows.sort(key=lambda r: -r["started_at"])
     return rows[:limit]
 

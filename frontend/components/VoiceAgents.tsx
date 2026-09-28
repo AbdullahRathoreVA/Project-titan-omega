@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 import VoiceSphere from "./VoiceSphere";
 import { AskTitan } from "./AskTitan";
+import { apiBase, authHeaders } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
 
 type SessionRow = {
   id: string;
@@ -91,20 +93,14 @@ function tone(state: string) {
   return STATE_TONE[state] ?? STATE_TONE.idle;
 }
 
-function token(): string {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem("titan_token") || sessionStorage.getItem("titan_token") || "";
-}
-
+// A subscriber's cockpit reads /api/me/voice, which lists only their own
+// sessions; the founder's reads /api/voice.
 async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
-    const r = await fetch(`/api/voice${path}`, {
+    const r = await fetch(`${apiBase()}/voice${path}`, {
       ...init,
       cache: "no-store",
-      headers: {
-        Authorization: `Bearer ${token()}`,
-        ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      },
+      headers: authHeaders(init?.body ? { "Content-Type": "application/json" } : {}),
     });
     if (!r.ok) return null;
     return (await r.json()) as T;
@@ -295,7 +291,8 @@ export default function VoiceAgents() {
     setActing(callId);
     await call(`/sessions/${sid}/tool/${callId}/approve`, {
       method: "POST",
-      body: JSON.stringify({ approver: "abdullah" }),
+      // The server records a subscriber as their own approver whatever this says.
+      body: JSON.stringify({ approver: isCustomer() ? "me" : "abdullah" }),
     });
     setActing(null);
     void load();

@@ -54,6 +54,18 @@ ALLOWED: Tuple[Tuple[str, str], ...] = (
     ("POST", r"/api/mine/clients/[^/]+/watch"),
     ("GET", r"/api/mine/watch"),
     ("GET", r"/api/mine/discovery"),
+    # Voice. api/voice.py passes the subscriber down as the session owner, so
+    # they list, replay and act on their own sessions only.
+    ("GET", r"/api/voice/live"),
+    ("GET", r"/api/voice/capabilities"),
+    ("GET", r"/api/voice/sessions"),
+    ("GET", r"/api/voice/sessions/[^/]+"),
+    ("POST", r"/api/voice/sessions"),
+    ("POST", r"/api/voice/sessions/[^/]+/(state|turn|tool|escalate|end)"),
+    ("POST", r"/api/voice/sessions/[^/]+/tool/[^/]+/(approve|finish)"),
+    # Ask Titan answers from the subscriber's own workspace and businesses
+    # (router.assistant), and the call is metered against their plan.
+    ("POST", r"/api/assistant"),
 )
 
 _COMPILED = tuple((m, re.compile(p + r"\Z")) for m, p in ALLOWED)

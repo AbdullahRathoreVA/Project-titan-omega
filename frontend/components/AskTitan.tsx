@@ -6,6 +6,8 @@ import { Mic, MicOff, Send, Sparkles, Volume2 } from "lucide-react";
 import { langTag, loadVoices, speakText, usedUrduFallback } from "@/lib/voice";
 import { speakPremium } from "@/lib/sound";
 import { isGuest } from "@/lib/guest";
+import { apiBase, authHeaders } from "@/lib/api";
+import { isCustomer } from "@/lib/session";
 import VoiceSphere from "./VoiceSphere";
 import { VoiceSession } from "@/lib/voiceSession";
 
@@ -39,7 +41,10 @@ function getRecognition(): any {
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 export function AskTitan() {
-  const [lang, setLang] = useState<Lang>("ur");
+  // A subscriber asks about their own businesses (/api/me/assistant). The
+  // founder's assistant is briefed with his empire and greets him by name.
+  const [customer] = useState(() => isCustomer());
+  const [lang, setLang] = useState<Lang>(() => (isCustomer() ? "en" : "ur"));
   const [input, setInput] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
@@ -64,7 +69,10 @@ export function AskTitan() {
   // screen forever claiming to be in progress.
   useEffect(() => {
     const s = voiceRef.current;
+    const leave = () => s?.endOnExit();
+    window.addEventListener("pagehide", leave);
     return () => {
+      window.removeEventListener("pagehide", leave);
       void s?.end();
     };
   }, []);
@@ -87,9 +95,9 @@ export function AskTitan() {
       void vs?.turn("user", q, lang);
       void vs?.state("thinking");
       try {
-        const res = await fetch("/api/assistant", {
+        const res = await fetch(`${apiBase()}/assistant`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ question: q, lang }),
         });
         const data = res.ok ? await res.json() : null;
@@ -111,9 +119,10 @@ export function AskTitan() {
           // onEnd fires on the last chunk, so the screen stops showing
           // "speaking" at the moment the voice actually stops.
           const done = () => void vs?.state("idle");
-          if (lang === "en") {
+          if (lang === "en" && !customer) {
             // Founder gets the premium ElevenLabs voice for English (if a key is
             // set); everyone else, and every other language, uses the browser voice.
+            // A subscriber never spends the founder's ElevenLabs key.
             void speakPremium(answer, () => {
               void speakText(answer, "en", done).then((found) =>
                 setVoiceMissing(found ? null : "en"),
@@ -189,15 +198,19 @@ export function AskTitan() {
 
   const placeholder =
     lang === "ur"
-      ? "سوال پوचھیں… مثلاً: آج کتنے نئے یوزرز آئے؟"
-      : "Ask anything… e.g. How many new users today?";
+      ? customer
+        ? "سوال پوچھیں… مثلاً: میری ویب سائٹ کا SEO کیسا ہے؟"
+        : "سوال پوچھیں… مثلاً: آج کتنے نئے یوزرز آئے؟"
+      : customer
+        ? "Ask anything… e.g. How is my website's SEO?"
+        : "Ask anything… e.g. How many new users today?";
 
   return (
     <section className="panel">
       <header className="panel-header">
         <div className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-hud-violet" strokeWidth={1.6} />
-          <h2 className="text-sm font-medium text-slate-200">{isGuest() ? "Ask Titan" : "Ask Titan — عبداللہ"}</h2>
+          <h2 className="text-sm font-medium text-slate-200">{isGuest() || customer ? "Ask Titan" : "Ask Titan — عبداللہ"}</h2>
         </div>
         <div className="flex items-center gap-1.5">
           <select
@@ -233,9 +246,13 @@ export function AskTitan() {
       <div className="scroll-thin max-h-60 space-y-2 overflow-y-auto p-3" dir={RTL.has(lang) ? "rtl" : "ltr"}>
         {turns.length === 0 && (
           <p className="px-1 py-6 text-center text-xs text-slate-500">
-            {lang === "ur"
-              ? "عبداللہ، کوئی بھی سوال پوचھیں — آواز یا ٹیکسٹ سے۔"
-              : "Abdullah, ask me anything — by voice or text."}
+            {customer
+              ? lang === "ur"
+                ? "اپنے کاروبار کے بارے میں کوئی بھی سوال پوچھیں — آواز یا ٹیکسٹ سے۔"
+                : "Ask me anything about your business — by voice or text."
+              : lang === "ur"
+                ? "عبداللہ، کوئی بھی سوال پوچھیں — آواز یا ٹیکسٹ سے۔"
+                : "Abdullah, ask me anything — by voice or text."}
           </p>
         )}
         {turns.map((t, i) => (
@@ -257,7 +274,7 @@ export function AskTitan() {
         ))}
         {busy && (
           <div className="mr-auto max-w-[85%] rounded-lg border border-hud-violet/30 bg-hud-violet/5 p-2.5 text-xs text-slate-400">
-            {lang === "ur" ? "ٹائٹن سوच رہا ہے…" : "Titan is thinking…"}
+            {lang === "ur" ? "ٹائٹن سوچ رہا ہے…" : "Titan is thinking…"}
           </div>
         )}
         <div ref={endRef} />
@@ -292,7 +309,7 @@ export function AskTitan() {
       <div className="flex items-center gap-2 border-t border-edge/60 p-3">
         <button
           onClick={toggleMic}
-          title={lang === "ur" ? "بول کر پوचھیں" : "Speak your question"}
+          title={lang === "ur" ? "بول کر پوچھیں" : "Speak your question"}
           className={`rounded-lg border p-2 transition-colors ${
             listening
               ? "animate-pulse border-hud-rose/50 bg-hud-rose/10 text-hud-rose"

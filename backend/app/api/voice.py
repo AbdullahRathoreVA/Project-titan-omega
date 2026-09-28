@@ -7,6 +7,10 @@ one path from "something happened" to "something is drawn".
 
 The whole prefix is registered in `demo_data._SENSITIVE_PREFIXES`. Transcripts
 are the most personal data Titan holds and there is no demo-safe version.
+
+A subscriber reaches the session routes through /api/me/voice/*, and every
+route passes `_owner()` down, so they only ever see and touch their own
+sessions. The founder's /api/voice sees only the founder's.
 """
 
 from __future__ import annotations
@@ -17,10 +21,15 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .. import persistence
+from ..core import cockpit_scope
 from ..core import voice_sessions as vs
 from ..store import STORE
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
+
+
+def _owner() -> str:
+    return cockpit_scope.customer_email() or vs.FOUNDER
 
 
 class StartIn(BaseModel):
@@ -64,19 +73,19 @@ class EscalateIn(BaseModel):
 @router.get("/live")
 def live() -> dict:
     """What is happening right now. The 3D screen polls this."""
-    return vs.live()
+    return vs.live(account=_owner())
 
 
 @router.get("/sessions")
 def sessions(limit: int = Query(default=50, ge=1, le=400)) -> dict:
-    return {"sessions": vs.history(limit), "states": list(vs.STATES),
+    return {"sessions": vs.history(limit, account=_owner()), "states": list(vs.STATES),
             "channels": list(vs.CHANNELS)}
 
 
 @router.get("/sessions/{sid}")
 def session_detail(sid: str) -> dict:
     """Full replay: every turn, every tool call, the whole state timeline."""
-    data = vs.transcript(sid)
+    data = vs.transcript(sid, account=_owner())
     if not data:
         raise HTTPException(status_code=404, detail="No such session")
     return data
@@ -85,7 +94,8 @@ def session_detail(sid: str) -> dict:
 @router.post("/sessions")
 def start_session(req: StartIn) -> dict:
     try:
-        out = vs.start(req.channel, req.agent, req.language, req.caller)
+        out = vs.start(req.channel, req.agent, req.language, req.caller,
+                       account=_owner())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     persistence.save(STORE)
@@ -95,7 +105,7 @@ def start_session(req: StartIn) -> dict:
 @router.post("/sessions/{sid}/state")
 def change_state(sid: str, req: StateIn) -> dict:
     try:
-        return vs.set_state(sid, req.state, req.reason)
+        return vs.set_state(sid, req.state, req.reason, account=_owner())
     except KeyError:
         raise HTTPException(status_code=404, detail="No such session")
     except vs.TransitionError as e:
@@ -109,7 +119,8 @@ def change_state(sid: str, req: StateIn) -> dict:
 @router.post("/sessions/{sid}/turn")
 def add_turn(sid: str, req: TurnIn) -> dict:
     try:
-        return vs.add_turn(sid, req.role, req.text, req.language, req.confidence)
+        return vs.add_turn(sid, req.role, req.text, req.language,
+                           req.confidence, account=_owner())
     except KeyError:
         raise HTTPException(status_code=404, detail="No such session")
     except ValueError as e:
@@ -121,15 +132,20 @@ def record_tool(sid: str, req: ToolIn) -> dict:
     """Log a tool call. Sensitive names come back `pending` — see
     voice_sessions.SENSITIVE_TOOLS for which and why."""
     try:
-        return vs.record_tool(sid, req.name, req.args_summary)
+        return vs.record_tool(sid, req.name, req.args_summary,
+                              account=_owner())
     except KeyError:
         raise HTTPException(status_code=404, detail="No such session")
 
 
 @router.post("/sessions/{sid}/tool/{call_id}/approve")
 def approve(sid: str, call_id: str, req: ApproveIn) -> dict:
+    # A subscriber approves as themselves. The name in the body is only
+    # trusted from the founder, who is the one person already signed in here.
+    owner = _owner()
+    approver = owner or req.approver
     try:
-        out = vs.approve_tool(sid, call_id, req.approver)
+        out = vs.approve_tool(sid, call_id, approver, account=owner)
     except KeyError:
         raise HTTPException(status_code=404, detail="No such session or call")
     except ValueError as e:
@@ -141,7 +157,8 @@ def approve(sid: str, call_id: str, req: ApproveIn) -> dict:
 @router.post("/sessions/{sid}/tool/{call_id}/finish")
 def finish(sid: str, call_id: str, req: FinishIn) -> dict:
     try:
-        return vs.finish_tool(sid, call_id, req.ok, req.error)
+        return vs.finish_tool(sid, call_id, req.ok, req.error,
+                              account=_owner())
     except KeyError:
         raise HTTPException(status_code=404, detail="No such session or call")
     except ValueError as e:
@@ -152,7 +169,7 @@ def finish(sid: str, call_id: str, req: FinishIn) -> dict:
 @router.post("/sessions/{sid}/escalate")
 def escalate(sid: str, req: EscalateIn) -> dict:
     try:
-        out = vs.escalate(sid, req.reason, req.to)
+        out = vs.escalate(sid, req.reason, req.to, account=_owner())
     except KeyError:
         raise HTTPException(status_code=404, detail="No such session")
     except vs.TransitionError as e:
@@ -164,7 +181,7 @@ def escalate(sid: str, req: EscalateIn) -> dict:
 @router.post("/sessions/{sid}/end")
 def end_session(sid: str) -> dict:
     try:
-        out = vs.set_state(sid, vs.ENDED, "closed")
+        out = vs.set_state(sid, vs.ENDED, "closed", account=_owner())
     except KeyError:
         raise HTTPException(status_code=404, detail="No such session")
     except vs.TransitionError as e:
@@ -235,12 +252,17 @@ def capabilities() -> dict:
     import os
     from ..core import tools as tool_layer
 
+    # A subscriber's cockpit never runs on the founder's keys, so for them
+    # every keyed provider is reported as not ready - which is the truth.
+    customer = cockpit_scope.is_customer()
+
     def has(*names: str) -> bool:
-        return all(os.getenv(n, "").strip() for n in names)
+        return not customer and all(os.getenv(n, "").strip() for n in names)
 
     reg = {}
     try:
-        reg = tool_layer.registry_report()
+        if not customer:
+            reg = tool_layer.registry_report()
     except Exception:
         pass
 
@@ -267,7 +289,9 @@ def capabilities() -> dict:
         "telephony": {
             "ready": False,
             "cost": "paid, per minute",
-            "note": ("No telephony provider is configured. Real phone calls "
+            "note": ("Phone calls are not available on your plan yet."
+                     if customer else
+                     "No telephony provider is configured. Real phone calls "
                      "require an account in Abdullah's name with ID "
                      "verification — there is no free path to placing a call."),
         },

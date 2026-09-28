@@ -12,21 +12,15 @@
 // transitions a conversation genuinely makes; an illegal one comes back 409
 // and is swallowed rather than retried into a lie.
 
-const BASE = "/api/voice";
+import { apiBase, authHeaders } from "./api";
 
-function token(): string {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem("titan_token") || sessionStorage.getItem("titan_token") || "";
-}
-
+// A subscriber's conversations are recorded under their own account
+// (/api/me/voice), the founder's under /api/voice.
 async function post<T>(path: string, body?: unknown): Promise<T | null> {
   try {
-    const r = await fetch(`${BASE}${path}`, {
+    const r = await fetch(`${apiBase()}/voice${path}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token()}`,
-      },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body ?? {}),
     });
     if (!r.ok) return null;
@@ -68,8 +62,16 @@ export class VoiceSession {
     await this.opening;
   }
 
+  /** The first turn opens the session, and the `thinking` sent right after it
+   *  used to arrive before the id did and be dropped - so the first answer of
+   *  every conversation never had its latency measured. Wait for the open. */
+  private async opened(): Promise<boolean> {
+    if (this.opening) await this.opening;
+    return this.id !== null;
+  }
+
   async state(state: VoiceState, reason = ""): Promise<void> {
-    if (!this.id) return;
+    if (!(await this.opened())) return;
     await post(`/sessions/${this.id}/state`, { state, reason });
   }
 
@@ -92,13 +94,33 @@ export class VoiceSession {
   }
 
   async tool(name: string, argsSummary = ""): Promise<void> {
-    if (!this.id) return;
+    if (!(await this.opened())) return;
     await post(`/sessions/${this.id}/tool`, { name, args_summary: argsSummary });
   }
 
   async end(): Promise<void> {
-    if (!this.id) return;
+    if (!(await this.opened())) return;
     await post(`/sessions/${this.id}/end`);
+    this.id = null;
+    this.opening = null;
+  }
+
+  /** For a page that is going away: a reload or a closed tab never unmounts
+   *  the panel, so without this the session sat on the live screen for ever.
+   *  `keepalive` lets the request outlive the page, and unlike sendBeacon it
+   *  can carry the Authorization header. */
+  endOnExit(): void {
+    if (!this.id) return;
+    try {
+      void fetch(`${apiBase()}/voice/sessions/${this.id}/end`, {
+        method: "POST",
+        keepalive: true,
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: "{}",
+      });
+    } catch {
+      // Best effort, like every call here.
+    }
     this.id = null;
     this.opening = null;
   }

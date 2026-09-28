@@ -123,7 +123,7 @@ def _voice_tool_calls() -> list[dict]:
             "created_at": call["started_at"],
             "age_seconds": _age(call["started_at"]),
             "approve_with": f"POST /api/voice/sessions/{call['session_id']}"
-                            f"/tools/{call['call_id']}/approve",
+                            f"/tool/{call['call_id']}/approve",
             "needs_approver_name": True,
         })
     return out

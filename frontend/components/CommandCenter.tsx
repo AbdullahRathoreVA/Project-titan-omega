@@ -79,7 +79,7 @@ const POLL_MS = 5000;
 // on the backend (core/cockpit_scope.ALLOWED). Each later phase adds its tab
 // here together with its routes there.
 const CUSTOMER_TABS = new Set<string>([
-  "universe", "dashboard", "mission", "clients", "seo", "crm",
+  "universe", "dashboard", "mission", "clients", "seo", "crm", "voice",
 ]);
 
 export function CommandCenter() {
@@ -163,6 +163,11 @@ export function CommandCenter() {
     }
     setOnline(isOnline);
 
+    // Four feeds are the founder's alone: his connected assets, his AI
+    // provider, his social profile links, and a post the AI drafts on every
+    // request. A subscriber's cockpit does not ask for them at all - they are
+    // closed at /api/me, and the next-post draft would spend their AI calls.
+    const none = <T,>(v: T) => Promise.resolve(v);
     const [s, d, a, o, f, dv, cn, ps, ig, ch, np, ex, dc] = await Promise.all([
       api.status(),
       api.divisions(),
@@ -170,11 +175,11 @@ export function CommandCenter() {
       api.opportunities(),
       api.feed(40),
       api.deliverables(),
-      api.connectors(),
+      customer ? none<Connector[]>([]) : api.connectors(),
       api.posts(),
-      api.intelligence(),
-      api.channels(),
-      api.nextPost(),
+      customer ? none<IntelligenceStatus | null>(null) : api.intelligence(),
+      customer ? none({ channels: [] as ChannelTile[] }) : api.channels(),
+      customer ? none<NextPostType | null>(null) : api.nextPost(),
       api.executions(),
       api.decisions(),
     ]);
@@ -191,7 +196,7 @@ export function CommandCenter() {
     setNextPost(np);
     setExecutions(ex);
     setDecisions(dc);
-  }, []);
+  }, [customer]);
 
   const refreshNextPost = useCallback(async () => {
     const np = await api.nextPost();

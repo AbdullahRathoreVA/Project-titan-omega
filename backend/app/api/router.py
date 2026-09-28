@@ -16,7 +16,7 @@ from fastapi import (APIRouter, Header, HTTPException, Query, Request,
 from pydantic import BaseModel, Field
 
 from .. import persistence
-from ..core import auth, clients, executive, learning, llm
+from ..core import auth, clients, cockpit_scope, executive, learning, llm
 from ..domain.enums import Horizon
 from ..domain.schemas import (
     AgentView,
@@ -859,19 +859,32 @@ class AssistantRequest(BaseModel):
 def assistant(req: AssistantRequest) -> dict:
     """Answer Abdullah's question in his chosen language. Returns 'answer'
     (display) and 'spoken' (Devanagari for Urdu so the Hindi voice reads it;
-    identical to 'answer' for every other language)."""
-    c = _empire_context()
+    identical to 'answer' for every other language).
+
+    Asked from a subscriber's cockpit (/api/me/assistant) it answers about
+    their own businesses instead - see _subscriber_brief. The empire figures
+    below are Abdullah's and never reach a subscriber."""
     lang = req.lang if req.lang in ASSISTANT_LANGS else "en"
     is_urdu = lang == "ur"
+    subscriber = cockpit_scope.customer_email()
 
-    context = (
-        f"Live empire state — "
-        f"Total revenue earned: ${c['mrr']:.0f}. "
-        f"Career Mind AI: {c['cm_users']} total users, {c['cm_active']} active, {c['cm_signups']} new signups. "
-        f"Upwork: {c['fiverr_orders']} orders, {c['fiverr_impressions']} impressions. "
-        f"{c['active_agents']} of {c['total_agents']} AI agents active. "
-        f"{c['open_opportunities']} open opportunities. Empire health {c['health']:.0f}%."
-    )
+    if subscriber:
+        brief = _subscriber_brief(subscriber)
+        persona, context = brief["persona"], brief["context"]
+    else:
+        c = _empire_context()
+        persona = (
+            "You are Titan, the AI chief-of-staff for Abdullah's autonomous business "
+            "empire (Career Mind AI student platform + Upwork AI gigs). "
+            "Always address the founder simply as 'Abdullah'.")
+        context = (
+            f"Live empire state — "
+            f"Total revenue earned: ${c['mrr']:.0f}. "
+            f"Career Mind AI: {c['cm_users']} total users, {c['cm_active']} active, {c['cm_signups']} new signups. "
+            f"Upwork: {c['fiverr_orders']} orders, {c['fiverr_impressions']} impressions. "
+            f"{c['active_agents']} of {c['total_agents']} AI agents active. "
+            f"{c['open_opportunities']} open opportunities. Empire health {c['health']:.0f}%."
+        )
 
     if is_urdu:
         # The old prompt said "write the SAME reply in Hindi (Devanagari)",
@@ -896,9 +909,7 @@ def assistant(req: AssistantRequest) -> dict:
 
     raw = llm.complete(
         system=(
-            "You are Titan, the AI chief-of-staff for Abdullah's autonomous business "
-            "empire (Career Mind AI student platform + Upwork AI gigs). "
-            f"Always address the founder simply as 'Abdullah'. {instructions} "
+            f"{persona} {instructions} "
             "Be concise (2-4 sentences), concrete, and motivating. Use the live data below "
             "when relevant.\n\n" + context
         ),
@@ -924,7 +935,9 @@ def assistant(req: AssistantRequest) -> dict:
         answer = _strip_devanagari(answer) or _strip_devanagari(raw)
         spoken = spoken.strip() or answer
 
-    if not raw:
+    if not raw and subscriber:
+        answer, spoken = brief["fallback_ur"] if is_urdu else brief["fallback_en"]
+    elif not raw:
         if is_urdu:
             answer = (
                 f"عبداللہ، اس وقت آپ نے کل {c['mrr']:.0f} ڈالر کمائے ہیں اور "
@@ -942,8 +955,63 @@ def assistant(req: AssistantRequest) -> dict:
             )
             spoken = answer
 
-    STORE.emit("titan-assistant", "command", f'Abdullah asked: "{req.question[:80]}"', "info")
+    who = "You" if subscriber else "Abdullah"
+    STORE.emit("titan-assistant", "command", f'{who} asked: "{req.question[:80]}"', "info")
     return {"answer": answer, "spoken": spoken, "lang": lang}
+
+
+def _subscriber_brief(email: str) -> dict:
+    """What Ask Titan knows when a subscriber asks: their plan, their own
+    businesses and their own leads. Nothing of Abdullah's, nothing of anyone
+    else's - the model cannot repeat what it was never given."""
+    from ..core import billing, crm
+    from ..store import founder_store
+
+    acct = billing.public(email)
+    businesses = [clients.public(cid) for cid in billing.owned_clients(email)]
+    businesses = [b for b in businesses if b]
+    leads = crm.visible_to(founder_store().leads, email)
+    won = sum(1 for lead in leads if lead.get("status") == "won")
+
+    def describe(b: dict) -> str:
+        score = (b.get("last_audit") or {}).get("score")
+        site = b.get("website") or "no website"
+        audit = f"last SEO audit {score}/100" if isinstance(score, (int, float)) \
+            else "not audited yet"
+        return f"{b.get('business_name') or 'Unnamed'} ({site}, {audit})"
+
+    context = (
+        f"This subscriber's account - plan: {acct.get('plan_name', 'Free')}. "
+        f"AI answers used this month: {acct.get('usage', {}).get('ai_calls', 0)}. "
+        f"Their businesses on Titan ({len(businesses)}): "
+        f"{'; '.join(describe(b) for b in businesses) or 'none yet'}. "
+        f"Their CRM: {len(leads)} leads, {won} won. "
+        f"Revenue they have logged in Titan: ${float(STORE.metrics.get('mrr', 0) or 0):.0f}."
+    )
+    persona = (
+        "You are Titan, the AI assistant inside this subscriber's own Titan Omega "
+        "cockpit. Titan audits their websites, finds SEO problems, tracks their "
+        "leads and reports on their businesses. Speak to them as 'you'. Never "
+        "mention any other person, customer or business - you know only theirs, "
+        "and if the data below cannot answer, say what Titan would need.")
+
+    n, k = len(businesses), len(leads)
+    en = (f"You have {n} business{'es' if n != 1 else ''} on Titan and "
+          f"{k} lead{'s' if k != 1 else ''} in your CRM. ")
+    quota_verdict = billing.check_quota(email, "ai_calls", 1)
+    if not quota_verdict.get("allowed", True):
+        en += quota_verdict.get("reason") or "This month's AI answers are used up."
+    else:
+        en += "I couldn't reach the AI just now - please ask again in a moment."
+    return {
+        "persona": persona,
+        "context": context,
+        "fallback_en": (en, en),
+        "fallback_ur": (
+            f"Titan پر آپ کے {n} کاروبار ہیں اور آپ کے CRM میں {k} لیڈز ہیں۔",
+            f"Titan पर आपके {n} कारोबार हैं और आपके CRM में {k} लीड्स हैं।",
+        ),
+    }
 
 
 # --- Urdu script handling -------------------------------------------------

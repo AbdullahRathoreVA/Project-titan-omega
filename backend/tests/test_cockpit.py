@@ -179,11 +179,15 @@ def test_no_customer_route_ever_shows_founder_data(customer):
     """The one that matters. Fails OPEN: every route on the allowlist is
     called, including ones added later, and any founder canary in any body
     fails the suite."""
-    from app.core import clients, cockpit_scope
+    from app.core import clients, cockpit_scope, voice_sessions as vs
     client, token, _ = customer
     _plant_founder_canaries()
     founders_business = _make_client(f"{_CANARY} Founder Business")
     own = _make_client("Own Business", owner="cust@example.com")
+    founders_call = vs.start("phone", caller=f"{_CANARY} caller")["id"]
+    vs.add_turn(founders_call, "user", f"{_CANARY} said this")
+    vs.record_tool(founders_call, "send_email", _CANARY)
+    own_call = vs.start("web", account="cust@example.com")["id"]
     hdr = {"X-Account-Token": token}
     try:
         for method, pattern in cockpit_scope.ALLOWED:
@@ -191,14 +195,16 @@ def test_no_customer_route_ever_shows_founder_data(customer):
                 continue
             # Path parameters are filled with the customer's OWN ids, so every
             # route really runs; a leak would have to come from elsewhere.
+            own_id = own_call if "/voice/" in pattern else own
             path = "/api/me" + (pattern[len("/api"):]
-                                .replace("[^/]+", own).replace("\\.", "."))
+                                .replace("[^/]+", own_id).replace("\\.", "."))
             r = client.get(path, headers=hdr)
             assert r.status_code == 200, (path, r.status_code, r.text[:200])
             body = r.content.decode("latin-1")
             for word in _FOUNDER_WORDS:
                 assert word not in body, f"{path} leaked {word!r}"
     finally:
+        vs.reset()
         clients.delete_client(founders_business)
         clients.delete_client(own)
         f = st.founder_store()
@@ -366,6 +372,132 @@ def test_adding_a_business_from_the_cockpit_is_the_same_onboarding(customer):
     clients.delete_client(r.json()["client"]["id"])
 
 
+def test_voice_sessions_belong_to_whoever_started_them(customer, monkeypatch):
+    """Transcripts are the most personal data Titan holds. A subscriber sees
+    and acts on their own sessions only, and the founder does not see theirs."""
+    from app.core import approvals, voice_sessions as vs
+    client, token, _ = customer
+    hdr = {"X-Account-Token": token}
+    founders = vs.start("web", "titan-voice", "en", "founder caller")["id"]
+    try:
+        mine = client.post("/api/me/voice/sessions", headers=hdr,
+                           json={"channel": "web"}).json()["id"]
+        client.post(f"/api/me/voice/sessions/{mine}/turn", headers=hdr,
+                    json={"role": "user", "text": "customer words"})
+        call = client.post(f"/api/me/voice/sessions/{mine}/tool", headers=hdr,
+                           json={"name": "send_email"}).json()
+        listed = [s["id"] for s in client.get("/api/me/voice/sessions",
+                                              headers=hdr).json()["sessions"]]
+        assert listed == [mine]
+        assert client.get("/api/me/voice/live", headers=hdr).json()["total_sessions"] == 1
+        assert "customer words" in client.get(f"/api/me/voice/sessions/{mine}",
+                                              headers=hdr).text
+        # The founder's session does not exist, as far as they can tell.
+        assert client.get(f"/api/me/voice/sessions/{founders}", headers=hdr).status_code == 404
+        assert client.post(f"/api/me/voice/sessions/{founders}/end",
+                           headers=hdr).status_code == 404
+        # ...and the founder's screens and approval queue do not show theirs.
+        assert mine not in client.get("/api/voice/sessions").text
+        assert client.get(f"/api/voice/sessions/{mine}").status_code == 404
+        queue = [i["detail"]["session"] for i in approvals.pending()["items"]
+                 if i["surface"] == "voice"]
+        assert mine not in queue
+        assert [c["session_id"] for c in vs.awaiting_approval(
+            account="cust@example.com")] == [mine]
+        # They approve as themselves, whatever name the request carries.
+        ok = client.post(f"/api/me/voice/sessions/{mine}/tool/{call['id']}/approve",
+                         headers=hdr, json={"approver": "someone else"})
+        assert ok.status_code == 200
+        assert ok.json()["approved_by"] == "cust@example.com"
+        # Keyed providers are the founder's, so none is ready for them.
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "test-value")
+        monkeypatch.setenv("LIVEKIT_API_KEY", "test-value")
+        monkeypatch.setenv("LIVEKIT_API_SECRET", "test-value")
+        assert client.get("/api/voice/capabilities").json()["premium_tts"]["ready"]
+        caps = client.get("/api/me/voice/capabilities", headers=hdr).json()
+        assert not caps["livekit"]["ready"] and not caps["premium_tts"]["ready"]
+        assert caps["tool_registry"] == []
+        assert "Abdullah" not in caps["telephony"]["note"]
+    finally:
+        vs.reset()
+
+
+def test_one_subscriber_cannot_push_everyone_elses_calls_out():
+    from app.core import voice_sessions as vs
+    vs.reset()
+    try:
+        founders = vs.start("web")["id"]
+        for _ in range(vs.MAX_PER_ACCOUNT + 5):
+            vs.start("web", account="busy@example.com")
+        assert len(vs.history(400, account="busy@example.com")) == vs.MAX_PER_ACCOUNT
+        assert vs.transcript(founders)["id"] == founders
+    finally:
+        vs.reset()
+
+
+def test_the_approvals_queue_points_at_the_route_that_approves(customer):
+    """It linked to /tools/<id>/approve, which does not exist; the route is
+    /tool/<id>/approve. Following the link must actually approve."""
+    from app.core import approvals, voice_sessions as vs
+    client, _, _ = customer
+    vs.reset()
+    try:
+        sid = vs.start("web")["id"]
+        vs.record_tool(sid, "send_email")
+        item = next(i for i in approvals.pending()["items"] if i["surface"] == "voice")
+        method, path = item["approve_with"].split(" ", 1)
+        r = client.request(method, path, json={"approver": "abdullah"})
+        assert r.status_code == 200 and r.json()["approved_by"] == "abdullah"
+    finally:
+        vs.reset()
+
+
+def test_ask_titan_answers_a_subscriber_from_their_own_data(customer, monkeypatch):
+    """The founder's assistant is briefed with his empire figures and calls him
+    by name. A subscriber's is briefed with their own businesses only."""
+    from app.core import llm
+    client, token, workspaces = customer
+    hdr = {"X-Account-Token": token}
+    _plant_founder_canaries()
+    own = _make_client("Own Bakery", owner="cust@example.com")
+    seen = {}
+
+    def fake_complete(system="", prompt="", **kw):
+        seen["system"] = system
+        return "Your bakery site needs a meta description."
+
+    try:
+        monkeypatch.setattr(llm, "complete", fake_complete)
+        r = client.post("/api/me/assistant", headers=hdr,
+                        json={"question": "How is my site?", "lang": "en"})
+        assert r.status_code == 200
+        assert r.json()["answer"] == "Your bakery site needs a meta description."
+        assert "Own Bakery" in seen["system"]
+        for word in _FOUNDER_WORDS:
+            assert word not in seen["system"], word
+        # With no AI answer, the fallback is theirs too - in both scripts.
+        monkeypatch.setattr(llm, "complete", lambda **kw: None)
+        for lang in ("en", "ur"):
+            body = client.post("/api/me/assistant", headers=hdr,
+                               json={"question": "hi", "lang": lang}).text
+            for word in _FOUNDER_WORDS:
+                assert word not in body, (lang, word)
+        assert "1 business" in client.post(
+            "/api/me/assistant", headers=hdr,
+            json={"question": "hi", "lang": "en"}).json()["answer"]
+        # Their question lands in their own feed, not the founder's.
+        feed = [e["message"] for e in workspaces.for_account("cust@example.com").feed]
+        assert any("You asked" in m for m in feed)
+        assert not any("You asked" in e["message"] for e in st.founder_store().feed)
+    finally:
+        from app.core import clients
+        clients.delete_client(own)
+        f = st.founder_store()
+        f.agents.clear(); f.opportunities.clear(); f.feed.clear()
+        f.metrics.clear(); f.revenue_entries.clear(); f.expenses.clear()
+        f.leads.clear(); f.decisions.clear()
+
+
 _FRONTEND = __import__("pathlib").Path(__file__).resolve().parents[2] / "frontend"
 
 # Which /api routes each customer-visible tab reads. A tab may be added to
@@ -382,6 +514,8 @@ TAB_ROUTES = {
     "seo": ["/api/mine/clients", "/api/mine/watch", "/api/mine/clients/x",
             "/api/mine/clients/x/seo/schema"],
     "crm": ["/api/leads"],
+    "voice": ["/api/voice/live", "/api/voice/capabilities",
+              "/api/voice/sessions", "/api/voice/sessions/x"],
 }
 
 
@@ -416,7 +550,33 @@ def test_a_customer_is_never_shown_the_founder_sample_data():
     assert 'isCustomer() ? "/api/me" : "/api"' in api
     cc = (_FRONTEND / "components" / "CommandCenter.tsx").read_text(encoding="utf-8")
     assert "useTitanStream(!customer)" in cc
+    # The founder's own feeds are never requested from a subscriber's cockpit;
+    # the next-post one would draft a post with their AI calls.
+    for feed in ("none<Connector[]>([]) : api.connectors()",
+                 "none<IntelligenceStatus | null>(null) : api.intelligence()",
+                 "none({ channels: [] as ChannelTile[] }) : api.channels()",
+                 "none<NextPostType | null>(null) : api.nextPost()"):
+        assert f"customer ? {feed}" in cc, feed
     assert ".filter(([v]) => !customer || CUSTOMER_TABS.has(v))" in cc
+
+
+def test_the_voice_screens_use_the_subscribers_own_door():
+    """Voice Agents, the session recorder and Ask Titan all used hard-coded
+    /api paths, which in a subscriber's cockpit would record their calls under
+    the founder and brief their assistant with his figures."""
+    comp = _FRONTEND / "components"
+    assert "`${apiBase()}/voice${path}`" in (comp / "VoiceAgents.tsx").read_text(encoding="utf-8")
+    assert "`${apiBase()}/voice${path}`" in (
+        _FRONTEND / "lib" / "voiceSession.ts").read_text(encoding="utf-8")
+    ask = (comp / "AskTitan.tsx").read_text(encoding="utf-8")
+    assert "`${apiBase()}/assistant`" in ask
+    # The premium voice runs on the founder's ElevenLabs key.
+    assert 'lang === "en" && !customer' in ask
+    # A reload or a closed tab ends the session instead of leaving it "live".
+    assert 'window.addEventListener("pagehide", leave);' in ask
+    rec = (_FRONTEND / "lib" / "voiceSession.ts").read_text(encoding="utf-8")
+    # The first `thinking` waits for the session to open instead of vanishing.
+    assert rec.count("if (!(await this.opened())) return;") == 3
 
 
 def test_unbound_code_still_sees_the_founder_store():
