@@ -889,6 +889,22 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("clients: an expired session is dropped", "app/core/clients.py",
      "_sessions.pop(token, None)\n            return None",
      "return None", "forgotten_not_merely_refused"),
+    # --- the service worker never caches an error page ----------------------
+    ("sw: a chunk is only cached when it is real",
+     "../frontend/public/sw.js",
+     "if (isGoodAsset(res)) {", "if (true) {",
+     "never_caches_an_error_page"),
+    ("sw: an error page is not an offline shell",
+     "../frontend/public/sw.js",
+     "if (res.ok) {", "if (true) {",
+     "never_caches_an_error_page"),
+    ("sw: old poisoned caches are deleted",
+     "../frontend/public/sw.js",
+     'const VERSION = "titan-v2";', 'const VERSION = "titan-v1";',
+     "never_caches_an_error_page"),
+    ("sw: the script itself is never cached", "app/main.py",
+     'or request.url.path == "/sw.js"):', "or False):",
+     "service_worker_script_is_never_cached"),
 ]
 
 

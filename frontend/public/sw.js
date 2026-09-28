@@ -19,13 +19,25 @@
  *  - Hashed static assets are cache-first. Their names change when their
  *    contents change, so they can never go stale.
  *
+ *  - Only successful responses are stored. During an upstream outage the
+ *    edge answers with an HTML error page; cached under a content-hashed
+ *    chunk name it would be served forever and the app would never boot.
+ *
  *  - /api/stream (Server-Sent Events) is passed straight through. Intercepting
  *    a streaming response in a service worker is a reliable way to break it.
  */
 
-const VERSION = "titan-v1";
+// Bumped from v1 so activate() deletes caches that stored error pages as
+// chunks before responses were checked.
+const VERSION = "titan-v2";
 const SHELL = `${VERSION}-shell`;
 const ASSETS = `${VERSION}-assets`;
+
+// A chunk must be a real success and not HTML: a 502 page, or the 404 page
+// for a chunk an older build referenced, would otherwise replace the script.
+function isGoodAsset(res) {
+  return res.ok && !(res.headers.get("content-type") || "").includes("text/html");
+}
 
 self.addEventListener("install", (event) => {
   // Take over immediately rather than waiting for every tab to close, so a
@@ -63,8 +75,10 @@ self.addEventListener("fetch", (event) => {
       caches.match(request).then((hit) =>
         hit ||
         fetch(request).then((res) => {
-          const copy = res.clone();
-          caches.open(ASSETS).then((c) => c.put(request, copy));
+          if (isGoodAsset(res)) {
+            const copy = res.clone();
+            caches.open(ASSETS).then((c) => c.put(request, copy));
+          }
           return res;
         }),
       ),
@@ -76,8 +90,11 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     fetch(request)
       .then((res) => {
-        const copy = res.clone();
-        caches.open(SHELL).then((c) => c.put(request, copy));
+        // An error page is not a usable offline copy of the shell.
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(SHELL).then((c) => c.put(request, copy));
+        }
         return res;
       })
       .catch(() =>

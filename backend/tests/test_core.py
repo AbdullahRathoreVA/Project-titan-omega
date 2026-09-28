@@ -11651,3 +11651,103 @@ def test_terms_and_refund_policy_are_published_and_linked(client):
         assert 'href="/terms"' in html and 'href="/refunds"' in html, page
     sitemap = client.get("/sitemap.xml").text
     assert "/terms</loc>" in sitemap and "/refunds</loc>" in sitemap
+
+
+# -- the service worker never caches an error page ---------------------------
+# During an upstream outage the edge answers chunk requests with an HTML 502
+# page. Stored under a content-hashed chunk name, that page was served in place
+# of the script on every later visit, and the app sat on "Booting the command
+# centre..." forever.
+
+_SW_HARNESS = """
+const fs = require("fs");
+const vm = require("vm");
+const src = fs.readFileSync(process.argv[2], "utf8");
+const stores = {};
+const listeners = {};
+const keyOf = (req) => (typeof req === "string" ? "https://t.test" + req : req.url);
+const caches = {
+  open: async (name) => {
+    const m = (stores[name] = stores[name] || new Map());
+    return {
+      put: async (req, res) => { m.set(keyOf(req), res); },
+      addAll: async () => {},
+    };
+  },
+  match: async (req) => {
+    for (const m of Object.values(stores)) if (m.has(keyOf(req))) return m.get(keyOf(req));
+    return undefined;
+  },
+  keys: async () => Object.keys(stores),
+  delete: async (name) => delete stores[name],
+};
+let next;
+const self = {
+  location: { origin: "https://t.test" },
+  addEventListener: (type, fn) => { listeners[type] = fn; },
+  skipWaiting: () => {},
+  clients: { claim: async () => {} },
+};
+vm.runInNewContext(src, { self, caches, fetch: async () => next, URL, Promise });
+const reply = (status, type) => ({
+  ok: status >= 200 && status < 300, status,
+  headers: new Map([["content-type", type]]), clone() { return this; },
+});
+async function get(path, response) {
+  next = response;
+  let pending;
+  listeners.fetch({ request: { method: "GET", url: "https://t.test" + path },
+                    respondWith: (p) => { pending = p; } });
+  await pending;
+  await new Promise((r) => setTimeout(r, 0));
+}
+(async () => {
+  stores["titan-v1-assets"] = new Map([["https://t.test/_next/static/chunks/old.js", "poisoned"]]);
+  let activated;
+  listeners.activate({ waitUntil: (p) => { activated = p; } });
+  await activated;
+  const oldCacheGone = !("titan-v1-assets" in stores);
+  await get("/_next/static/chunks/a.js", reply(502, "text/html"));
+  await get("/_next/static/chunks/b.js", reply(200, "text/html"));
+  await get("/_next/static/chunks/c.js", reply(200, "application/javascript"));
+  await get("/", reply(502, "text/html"));
+  await get("/pricing", reply(200, "text/html"));
+  const cached = Object.values(stores).flatMap((m) => [...m.keys()])
+    .map((k) => k.replace("https://t.test", "")).sort();
+  console.log(JSON.stringify({ oldCacheGone, cached }));
+})();
+"""
+
+
+def test_the_service_worker_never_caches_an_error_page(tmp_path):
+    """Runs the real sw.js in Node with a fake network and cache: a 502 page
+    or an HTML body under a chunk name is never stored, a real chunk and a
+    good page are, and caches from the version that stored error pages are
+    deleted on activate."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    sw = pathlib.Path(__file__).resolve().parents[2] / "frontend" / "public" / "sw.js"
+    harness = tmp_path / "sw_harness.js"
+    harness.write_text(_SW_HARNESS, encoding="utf-8")
+    run = subprocess.run([node, str(harness), str(sw)], capture_output=True,
+                         text=True, timeout=60)
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert result["oldCacheGone"] is True
+    assert result["cached"] == ["/_next/static/chunks/c.js", "/pricing"]
+
+
+def test_the_service_worker_script_is_never_cached(client):
+    """A fix to sw.js only reaches browsers if no cache holds the old one."""
+    assert "no-cache" in client.get("/sw.js").headers.get("cache-control", "")
+
+
+def test_the_worker_fetches_the_service_worker_past_cloudflares_cache():
+    root = pathlib.Path(__file__).resolve().parents[2]
+    worker = (root / "deploy" / "cloudflare-worker.js").read_text(encoding="utf-8")
+    assert 'const isServiceWorker = url.pathname === "/sw.js";' in worker
+    assert '...(isServiceWorker ? { cache: "no-store" } : {}),' in worker

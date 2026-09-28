@@ -150,6 +150,10 @@ export default {
     headers.set("X-Forwarded-Host", url.hostname);
     headers.set("X-Forwarded-Proto", "https");
 
+    // The service worker script must never come from Cloudflare's cache: a fix
+    // to it would otherwise take hours to reach browsers.
+    const isServiceWorker = url.pathname === "/sw.js";
+
     const upstreamRequest = new Request(upstreamUrl.toString(), {
       method: request.method,
       headers,
@@ -157,6 +161,7 @@ export default {
         ? undefined
         : request.body,
       redirect: "manual",
+      ...(isServiceWorker ? { cache: "no-store" } : {}),
     });
 
     let response;
@@ -180,6 +185,7 @@ export default {
     });
 
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) out.headers.set(k, v);
+    if (isServiceWorker) out.headers.set("Cache-Control", "no-cache, must-revalidate");
 
     // Never let an intermediary buffer the live feed.
     if ((response.headers.get("content-type") || "").includes("event-stream")) {

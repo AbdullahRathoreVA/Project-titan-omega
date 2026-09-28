@@ -490,9 +490,13 @@ async def no_cache_html(request: Request, call_next):
     """Never let browsers cache the HTML shell. Next.js chunks are content-hashed
     (safe to cache forever), but a cached index.html keeps pointing at old
     chunks, which shows a stale dashboard.
+
+    The service worker script is the same kind of file: a fix to it only
+    reaches browsers if nothing between them and the app holds an old copy.
     """
     resp = await call_next(request)
-    if "text/html" in resp.headers.get("content-type", ""):
+    if ("text/html" in resp.headers.get("content-type", "")
+            or request.url.path == "/sw.js"):
         resp.headers["Cache-Control"] = "no-cache, must-revalidate"
     return resp
 
