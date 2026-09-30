@@ -11370,6 +11370,30 @@ def test_the_pricing_page_actually_opens_a_checkout():
     assert "cdn.paddle.com/paddle/v2/paddle.js" in js, "Paddle.js is not loaded"
 
 
+def test_the_checkout_opens_inside_the_page_not_in_a_popup():
+    """Customers pay without a Paddle window opening over Titan. Paddle's inline
+    mode puts its form in a frame inside the page, in the element frameTarget
+    names - so that element has to exist, or the checkout opens nowhere.
+    """
+    import pathlib
+    import re as _re
+
+    static = pathlib.Path(__file__).resolve().parents[1] / "app" / "static"
+    for name in ("pricing.html", "join.html"):
+        page = (static / name).read_text(encoding="utf-8")
+        assert _re.search(r"displayMode:\s*['\"]inline['\"]", page), (
+            f"{name} still opens the checkout as a pop-up")
+        target = _re.search(r"frameTarget:\s*['\"]([\w-]+)['\"]", page)
+        assert target, f"{name} doesn't say where the checkout goes"
+        assert f'class="{target.group(1)}"' in page, (
+            f"{name} has no element for the checkout frame to load into")
+        assert _re.search(r"allowLogout:\s*false", page), (
+            f"{name} lets the customer change the email that ties the "
+            f"payment to their Titan account")
+        assert "customData" in page, (
+            f"{name} no longer tells the webhook which account paid")
+
+
 def test_the_page_does_not_hardcode_the_processor():
     """Same rule as the prices: the processor comes from the server, never
     hardcoded.

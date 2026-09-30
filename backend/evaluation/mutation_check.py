@@ -956,6 +956,18 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
     ("sw: the script itself is never cached", "app/main.py",
      'or request.url.path == "/sw.js"):', "or False):",
      "service_worker_script_is_never_cached"),
+    ("checkout: pricing opens Paddle inside the page",
+     "app/static/pricing.html",
+     "displayMode: 'inline',", "displayMode: 'overlay',",
+     "checkout_opens_inside_the_page"),
+    ("checkout: join opens Paddle inside the page",
+     "app/static/join.html",
+     'displayMode: "inline",', 'displayMode: "overlay",',
+     "checkout_opens_inside_the_page"),
+    ("checkout: the payment stays tied to the Titan account",
+     "app/static/join.html",
+     "allowLogout: false,", "allowLogout: true,",
+     "checkout_opens_inside_the_page"),
 ]
 
 

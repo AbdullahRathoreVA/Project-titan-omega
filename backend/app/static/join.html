@@ -87,6 +87,18 @@
 
   .hidden{display:none}
 
+  /* In-page checkout: Paddle's form is a frame inside this card, so paying
+     never opens a pop-up or leaves the page. */
+  .pay{border-color:rgba(34,211,238,.45)}
+  .pay-grid{display:grid;gap:18px;grid-template-columns:minmax(200px,250px) 1fr;align-items:start;margin-top:14px}
+  @media(max-width:640px){.pay-grid{grid-template-columns:1fr}}
+  .pay-sum{border:1px solid var(--edge);border-radius:11px;padding:14px;background:var(--panel2)}
+  .pay-row{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:6px 0}
+  .pay-row + .pay-row{border-top:1px solid var(--edge)}
+  .pay-row b{font-variant-numeric:tabular-nums;text-align:right}
+  .pay-sum ul{margin:10px 0 0;padding-left:16px;font-size:11.5px;color:var(--mut)}
+  .checkout-container{min-height:450px}
+
   /* Result */
   .score{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
   .score .n{font-size:46px;font-weight:600;letter-spacing:-.03em;
@@ -140,6 +152,27 @@
 
     <button class="go" id="btnSignup">Create account</button>
     <div class="msg" id="m1"></div>
+  </section>
+
+  <!-- PAYMENT: shown above step 2 when a paid plan was chosen -------------- -->
+  <section class="card pay hidden" id="cardPay">
+    <h2 id="payPlan">Complete your upgrade</h2>
+    <p class="hint" id="payFor" style="margin-bottom:0"></p>
+    <div class="pay-grid">
+      <div class="pay-sum">
+        <div class="pay-row"><span>Due today</span><b id="payToday">…</b></div>
+        <div class="pay-row"><span id="payThenLabel">Then</span><b id="payThen">…</b></div>
+        <ul>
+          <li>Tax is added where your country charges it</li>
+          <li>Paddle, our payment provider, handles the payment and your receipt</li>
+          <li>Titan never sees your card number</li>
+          <li>Cancel any time</li>
+        </ul>
+      </div>
+      <div class="checkout-container"></div>
+    </div>
+    <div class="msg" id="mPay"></div>
+    <button class="ghost" id="paySkip" style="margin-top:14px">Continue on Free for now</button>
   </section>
 
   <!-- STEP 2 ------------------------------------------------------------ -->
@@ -209,6 +242,7 @@
   var CID = "";
   var MODE = "signup";
   var plan = "free";
+  var PLAN_NAMES = {};
 
   function $(id) { return document.getElementById(id); }
   function show(el, on) { el.classList.toggle("hidden", !on); }
@@ -254,6 +288,36 @@
     });
   }
 
+  function money(n, cur) {
+    try {
+      return new Intl.NumberFormat(undefined, { style: "currency", currency: cur }).format(n);
+    } catch (e) {
+      return cur + " " + n;
+    }
+  }
+
+  // An inline checkout shows no price of its own, so the summary beside it is
+  // filled from Paddle's events: the totals include the customer's tax and
+  // currency, which the list price can't know.
+  function showTotals(d) {
+    var item = (d.items || [])[0] || {};
+    var cur = d.currency_code || "USD";
+    var cycle = item.billing_cycle || {};
+    var per = !cycle.interval ? ""
+      : cycle.frequency > 1 ? " every " + cycle.frequency + " " + cycle.interval + "s"
+      : " / " + cycle.interval;
+    var trial = item.trial_period;
+    $("payToday").textContent = money((d.totals || {}).total || 0, cur);
+    $("payThenLabel").textContent = trial
+      ? "After the " + trial.frequency + "-" + trial.interval + " free trial" : "Then";
+    $("payThen").textContent = money((d.recurring_totals || {}).total || 0, cur) + per;
+  }
+
+  $("paySkip").addEventListener("click", function () {
+    try { Paddle.Checkout.close(); } catch (e) {}
+    show($("cardPay"), false);
+  });
+
   async function startCheckout(key) {
     var m = $("m2");
     try {
@@ -270,23 +334,55 @@
       if (out.processor === "paddle") {
         await loadScript("https://cdn.paddle.com/paddle/v2/paddle.js");
         if (!window.Paddle) throw new Error("Paddle.js did not initialise");
-        if (out.environment !== "production") Paddle.Environment.set("sandbox");
-        Paddle.Initialize({
-          token: out.client_token,
-          eventCallback: function (e) {
-            if (e && e.name === "checkout.completed") {
-              say(m, "Payment confirmed. Your plan switches in a moment; carry " +
-                "on setting up your business.", "ok");
+        var mp = $("mPay");
+        clear(mp);
+        // Paddle.Initialize() may only run once per page.
+        if (!window.__titanPaddle) {
+          if (out.environment !== "production") Paddle.Environment.set("sandbox");
+          Paddle.Initialize({
+            token: out.client_token,
+            eventCallback: function (e) {
+              if (!e) return;
+              if ((e.name === "checkout.loaded" || e.name === "checkout.updated") && e.data) {
+                showTotals(e.data);
+              }
+              if (e.name === "checkout.completed") {
+                say(mp, "Payment confirmed. Your plan switches in a moment; carry " +
+                  "on setting up your business below.", "ok");
+                $("paySkip").textContent = "Continue";
+              }
+              if (e.name === "checkout.error") {
+                say(mp, "The checkout reported a problem. You are on Free and " +
+                  "everything below works; try again from the pricing page.", "warn");
+              }
             }
-          }
-        });
+          });
+          window.__titanPaddle = true;
+        }
+        $("payPlan").textContent = "Complete your upgrade to " +
+          (PLAN_NAMES[key] || "your plan");
+        $("payFor").textContent = "Signed in as " + (out.customer_email || "") +
+          ". You stay on Free until the payment goes through.";
+        $("payToday").textContent = "…";
+        $("payThen").textContent = "…";
+        show($("cardPay"), true);
+        // The form opens inside .checkout-container in this card instead of an
+        // overlay window. allowLogout is off because the email ties the
+        // payment to this Titan account.
         Paddle.Checkout.open({
+          settings: {
+            displayMode: "inline",
+            variant: "one-page",
+            theme: "dark",
+            allowLogout: false,
+            frameTarget: "checkout-container",
+            frameInitialHeight: 450,
+            frameStyle: "width:100%;min-width:312px;background-color:transparent;border:none;"
+          },
           items: [{ priceId: out.price_id, quantity: 1 }],
           customer: { email: out.customer_email },
           customData: out.custom_data
         });
-        say(m, "Complete the purchase in the Paddle window. Your plan changes " +
-          "as soon as Paddle confirms it; until then you are on Free.", "ok");
         return;
       }
       if (out.checkout_url || out.url) {
@@ -308,6 +404,8 @@
       s.className = "step" + (i < n ? " done" : i === n ? " on" : "");
       show($("card" + i), i === n);
     });
+    // The payment card belongs to step 2; past it, the report takes over.
+    if (n !== 2) show($("cardPay"), false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -360,6 +458,7 @@
     var box = $("plans");
     box.innerHTML = "";
     (d.plans || []).forEach(function (p) {
+      PLAN_NAMES[p.key] = p.name;
       var b = document.createElement("button");
       b.type = "button";
       b.className = "plan" + (p.key === "free" ? " sel" : "");

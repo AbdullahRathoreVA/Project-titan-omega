@@ -160,7 +160,8 @@ manual grant, so a customer who paid stayed on Free. It is now
 - [ ] **`PADDLE_CLIENT_TOKEN`** — Paddle > Developer tools > Authentication.
       **This is a different credential from the API key and the checkout
       cannot open without it.** The API key configures the server; the browser
-      opens Paddle's overlay with a *client-side* token, which Paddle
+      opens Paddle's checkout inside the page (inline, not a pop-up) with a
+      *client-side* token, which Paddle
       documents as safe to publish in frontend code. This line was missing
       from the checklist until 2026-09-03, so following the old version left
       you server-ready and still unable to sell.

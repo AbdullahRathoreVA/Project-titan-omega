@@ -59,6 +59,23 @@
   .msg{font-size:12.5px;margin-top:12px;min-height:20px}
   .err{color:#fb7185}
   .ok{color:var(--emerald)}
+  /* In-page checkout. Paddle's form sits in the right-hand column as a frame,
+     so paying never opens a pop-up or leaves this page. */
+  .pay{background:var(--panel);border:1px solid rgba(34,211,238,.45);border-radius:14px;
+       padding:24px 20px;margin-bottom:28px;box-shadow:0 0 34px -12px rgba(34,211,238,.4)}
+  .pay[hidden]{display:none}
+  .pay-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px}
+  .pay-for{font-size:12.5px;color:var(--mut)}
+  .pay-grid{display:grid;gap:22px;grid-template-columns:minmax(220px,300px) 1fr;align-items:start}
+  @media(max-width:720px){.pay-grid{grid-template-columns:1fr}}
+  .pay-sum{border:1px solid var(--edge);border-radius:12px;padding:16px}
+  .pay-row{display:flex;justify-content:space-between;gap:10px;font-size:13.5px;padding:7px 0}
+  .pay-row + .pay-row{border-top:1px solid var(--edge)}
+  .pay-row b{font-variant-numeric:tabular-nums;text-align:right}
+  .pay-sum ul{margin:12px 0 0;flex:none}
+  .pay-sum li{font-size:12px;color:var(--mut)}
+  .checkout-container{min-height:450px}
+  button.linkish{width:auto;border:none;padding:4px 0;color:var(--mut);font-size:12.5px}
   footer{text-align:center;margin-top:44px;font-size:12px;color:var(--mut)}
   a{color:var(--cyan)}
 </style>
@@ -77,6 +94,31 @@
       paying for, so you see it before you decide.
     </p>
   </header>
+
+  <section class="pay" id="pay" hidden>
+    <div class="pay-head">
+      <div>
+        <div class="tag">Secure checkout</div>
+        <div class="name" id="payPlan">Your plan</div>
+        <div class="pay-for" id="payFor"></div>
+      </div>
+      <button class="linkish" id="payBack">Change plan</button>
+    </div>
+    <div class="pay-grid">
+      <div class="pay-sum">
+        <div class="pay-row"><span>Due today</span><b id="payToday">&hellip;</b></div>
+        <div class="pay-row"><span id="payThenLabel">Then</span><b id="payThen">&hellip;</b></div>
+        <ul>
+          <li>Tax is added where your country charges it</li>
+          <li>Paddle, our payment provider, handles the payment and your receipt</li>
+          <li>Titan never sees your card number</li>
+          <li>Cancel any time</li>
+        </ul>
+      </div>
+      <div class="checkout-container"></div>
+    </div>
+    <div class="msg" id="payMsg"></div>
+  </section>
 
   <div class="grid" id="plans">
     <div class="card"><div class="note">Loading plans&hellip;</div></div>
@@ -113,6 +155,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let chosen = 'free';
+let PLANS = [];
 
 const lim = n => n === -1 ? 'unlimited' : n;
 // Errors come back as a sentence, a rate-limit verdict object or FastAPI's
@@ -152,6 +195,7 @@ async function load() {
   // "individual" is highlighted because it is the first tier with monitoring
   // and CRM — the point where this stops being an audit tool and starts being
   // the thing an agency runs on.
+  PLANS = data.plans;
   $('#plans').innerHTML = data.plans.map(p => `
     <div class="card${p.key === 'individual' ? ' featured' : ''}">
       <div class="tag">${p.key === 'individual' ? 'Most complete' : ''}</div>
@@ -283,33 +327,104 @@ function loadScript(src) {
   });
 }
 
+// Paddle.Initialize() may only run once per page; later checkouts reuse it and
+// swap the handler below.
+let paddleReady = false;
+let onPaddle = () => {};
+
+async function paddleInit(out) {
+  await loadScript('https://cdn.paddle.com/paddle/v2/paddle.js');
+  if (!window.Paddle) throw new Error('Paddle.js did not initialise');
+  if (paddleReady) return;
+  // Sandbox unless the server says production. The server defaults to
+  // sandbox so a mistake cannot charge a real card.
+  if (out.environment !== 'production') Paddle.Environment.set('sandbox');
+  Paddle.Initialize({ token: out.client_token, eventCallback: e => onPaddle(e) });
+  paddleReady = true;
+}
+
+const money = (n, cur) => {
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur }).format(n);
+  } catch (e) {
+    return cur + ' ' + n;
+  }
+};
+
+// An inline checkout shows no price of its own, so the summary beside it is
+// filled from Paddle's events: the totals include the customer's tax and
+// currency, which the list price on this page can't know.
+function showTotals(d) {
+  const item = (d.items || [])[0] || {};
+  const cur = d.currency_code || 'USD';
+  const cycle = item.billing_cycle || {};
+  const per = cycle.interval
+    ? (cycle.frequency > 1 ? ` every ${cycle.frequency} ${cycle.interval}s` : ` / ${cycle.interval}`)
+    : '';
+  const trial = item.trial_period;
+  $('#payToday').textContent = money((d.totals || {}).total || 0, cur);
+  $('#payThenLabel').textContent = trial
+    ? `After the ${trial.frequency}-${trial.interval} free trial` : 'Then';
+  $('#payThen').textContent = money((d.recurring_totals || {}).total || 0, cur) + per;
+}
+
+$('#payBack').onclick = () => {
+  try { Paddle.Checkout.close(); } catch (e) {}
+  $('#pay').hidden = true;
+  $('#plans').scrollIntoView({ behavior: 'smooth' });
+};
+
 async function openCheckout(out, email, msg) {
   try {
     if (out.processor === 'paddle') {
-      await loadScript('https://cdn.paddle.com/paddle/v2/paddle.js');
-      if (!window.Paddle) throw new Error('Paddle.js did not initialise');
-      // Sandbox unless the server says production. The server defaults to
-      // sandbox so a mistake cannot charge a real card.
-      if (out.environment !== 'production') Paddle.Environment.set('sandbox');
-      Paddle.Initialize({
-        token: out.client_token,
+      await paddleInit(out);
+      const plan = PLANS.find(p => p.key === chosen) || {};
+      const pm = $('#payMsg');
+      pm.className = 'msg';
+      pm.textContent = '';
+      $('#payPlan').textContent = plan.name || 'Your plan';
+      $('#payFor').textContent = 'Signed in as ' + email;
+      $('#payToday').textContent = '…';
+      $('#payThen').textContent = '…';
+      $('#dlg').close();
+      $('#pay').hidden = false;
+      $('#pay').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      onPaddle = (e) => {
+        if (!e) return;
+        if ((e.name === 'checkout.loaded' || e.name === 'checkout.updated') && e.data) {
+          showTotals(e.data);
+        }
         // Send the customer on after paying. The plan itself is set by the
         // webhook, not here.
-        eventCallback: (e) => {
-          if (e && e.name === 'checkout.completed') {
-            msg.className = 'msg ok';
-            msg.textContent = 'Payment confirmed. Taking you to set up your business…';
-            setTimeout(() => { window.location.href = '/join'; }, 3000);
-          }
-        },
-      });
+        if (e.name === 'checkout.completed') {
+          pm.className = 'msg ok';
+          pm.textContent = 'Payment confirmed. Taking you to set up your business…';
+          setTimeout(() => { window.location.href = '/join'; }, 3000);
+        }
+        if (e.name === 'checkout.error') {
+          pm.className = 'msg err';
+          pm.textContent = 'The checkout reported a problem. Your account is on ' +
+            'the free plan and works in full; please try again or contact us.';
+        }
+      };
+      // The form opens inside .checkout-container on this page instead of an
+      // overlay window. allowLogout is off because the email ties the payment
+      // to this Titan account.
       Paddle.Checkout.open({
+        settings: {
+          displayMode: 'inline',
+          variant: 'one-page',
+          theme: 'dark',
+          allowLogout: false,
+          frameTarget: 'checkout-container',
+          frameInitialHeight: 450,
+          frameStyle: 'width:100%;min-width:312px;background-color:transparent;border:none;',
+        },
         items: [{ priceId: out.price_id, quantity: 1 }],
         customer: { email: email },
         // Tells the webhook WHICH Titan account paid (api/webhooks/billing).
         customData: out.custom_data || { titan_email: email }
       });
-      msg.textContent = 'Complete your purchase in the Paddle window.';
       return;
     }
     // Any processor that hands back a URL the customer opens themselves.
