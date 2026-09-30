@@ -134,10 +134,10 @@ export function AuthGate() {
           TITAN<span className="text-hud-cyan"> OMEGA</span>
         </h1>
         <p className="mt-3 max-w-lg text-sm text-slate-400">
-          SEO, local ranking and legal compliance audits for any business, in
-          any jurisdiction. Technical, local and legal findings are scored
-          separately — never averaged into one number that hides the expensive
-          one.
+          Your AI business command centre. Titan Omega finds leads and drafts
+          your outreach, writes your posts, answers you by voice in 12
+          languages, scans your market, tracks your revenue, and watches your
+          website for SEO and legal risk around the clock.
         </p>
         <span className="mt-6 animate-pulseGlow font-mono text-xs text-hud-cyan">
           Booting the command centre…

@@ -151,12 +151,15 @@ export function Login({
             </h1>
           </div>
           <h2 className="mx-auto max-w-2xl text-balance text-2xl font-semibold leading-tight text-slate-100 sm:text-3xl">
-            SEO, local ranking and legal compliance — audited for any business,
-            in any jurisdiction
+            Your AI business command centre
           </h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-slate-400">
-            Add your website and get a full technical, local and legal audit in
-            under a minute. The free tier includes the legal findings in full.
+          <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-slate-400">
+            Titan Omega runs the work around your business. It finds leads and
+            drafts your outreach, writes your posts with images, answers you by
+            voice in 12 languages, scans your market, finds freelance work you
+            could win, tracks your revenue, and watches your website for SEO and
+            legal risk around the clock. All from one 3D cockpit with 102 AI
+            agents. Start free.
           </p>
         </header>
 

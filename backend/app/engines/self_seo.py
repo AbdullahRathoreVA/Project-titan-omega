@@ -126,10 +126,16 @@ def structured_data() -> dict:
                 "operatingSystem": "Web",
                 "url": SITE,
                 "description": (
-                    "SEO, local ranking and legal compliance audits for any "
-                    "business in any jurisdiction. Technical, local and legal "
-                    "findings are scored separately, never averaged."),
+                    "Your AI business command centre: lead finding and CRM, "
+                    "posts with images, a voice assistant in 12 languages, "
+                    "market scans, Job Radar, revenue tracking, and 24/7 "
+                    "website SEO and legal checks. Start free."),
                 "featureList": [
+                    "Lead finding and CRM pipeline",
+                    "Social post drafts with images and a ready-to-post queue",
+                    "Ask Titan by voice or text in 12 languages",
+                    "Market scan and Job Radar",
+                    "Revenue and expense tracking",
                     "Technical SEO audit",
                     "Local ranking factor scoring on published 2026 weights",
                     "Legal compliance across 9 jurisdictions "
