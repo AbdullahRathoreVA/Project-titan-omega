@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { Rocket, Copy, Check, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
-import { isCustomer } from "@/lib/session";
+import { isCustomer, isDemo } from "@/lib/session";
 
 // School and job-seeker outreach sell the founder's Career Mind. A
 // subscriber's studio offers only the kinds that fit any business.
@@ -41,7 +41,13 @@ export function GrowthStudio() {
       } else {
         res = await api.intelGenerate(kind, topic);
       }
-      setOut(res?.content ?? "No output — is the core online and an LLM key set?");
+      // The demo refuses AI work; say so instead of blaming the server.
+      setOut(
+        res?.content ??
+          (isDemo()
+            ? "This is the demo, so Titan does not generate here. Sign up free to run it for your own business."
+            : "No output — is the core online and an LLM key set?"),
+      );
     } finally {
       setBusy(false);
     }

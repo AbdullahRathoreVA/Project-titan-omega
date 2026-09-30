@@ -11394,6 +11394,19 @@ def test_the_checkout_opens_inside_the_page_not_in_a_popup():
             f"{name} no longer tells the webhook which account paid")
 
 
+def test_the_demo_growth_studio_says_it_is_the_demo():
+    """The demo refuses AI work. Without its own message a visitor pressing
+    Generate was told the server might be down, on the page meant to sell it.
+    """
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[2] / "frontend"
+           / "components" / "GrowthStudio.tsx").read_text(encoding="utf-8")
+    assert "isDemo()" in src and "This is the demo" in src, (
+        "a demo visitor is told the core may be offline instead of being "
+        "told this is the demo")
+
+
 def test_the_page_does_not_hardcode_the_processor():
     """Same rule as the prices: the processor comes from the server, never
     hardcoded.
