@@ -206,3 +206,7 @@ cd frontend && npm run typecheck
 Live and tested. Payments work end to end in Paddle's sandbox; the live account
 is waiting on Paddle's review. **Earning nothing yet** — the gap is
 distribution, not features.
+
+## Case study
+
+Screenshots, the design rules and the engineering behind it: [docs/CASE_STUDY.md](docs/CASE_STUDY.md).
